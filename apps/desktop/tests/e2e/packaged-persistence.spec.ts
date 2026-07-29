@@ -108,6 +108,15 @@ test.describe("packaged desktop verification", () => {
           name: "Packaged Persistence Demo"
         })
       ).toBeVisible();
+      const createdNotice = firstPage.getByText(
+        "Created Packaged Persistence Demo.",
+        { exact: true }
+      );
+      await expect(createdNotice).toBeVisible();
+      await firstPage
+        .getByRole("button", { name: "Dismiss notification" })
+        .click();
+      await expect(createdNotice).toBeHidden();
 
       await first.evaluate(({ dialog }, selectedFixture) => {
         dialog.showOpenDialog = () =>

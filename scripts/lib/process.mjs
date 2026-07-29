@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 
 const MAX_CAPTURE_BYTES = 1024 * 1024;
+const TRUSTED_CMD_ARGUMENT = /^[A-Za-z0-9@_./:=+,*-]+$/u;
 
 export function platformCommand(command) {
   return process.platform === "win32" && command === "pnpm"
@@ -8,9 +10,44 @@ export function platformCommand(command) {
     : command;
 }
 
+export function normalizedInvocation(
+  command,
+  args,
+  platform = process.platform,
+) {
+  if (platform !== "win32" || !command.toLowerCase().endsWith(".cmd")) {
+    return { command, args };
+  }
+  if (
+    command.toLowerCase() !== "pnpm.cmd" ||
+    args.some((argument) => !TRUSTED_CMD_ARGUMENT.test(argument))
+  ) {
+    throw new Error(
+      "Refusing to pass an untrusted command or argument through the Windows pnpm shim.",
+    );
+  }
+  const commandInterpreter =
+    process.env.ComSpec ??
+    path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe");
+  if (
+    !path.win32.isAbsolute(commandInterpreter) ||
+    path.win32.basename(commandInterpreter).toLowerCase() !== "cmd.exe"
+  ) {
+    throw new Error("The Windows command interpreter path is invalid.");
+  }
+  // Node 24 refuses to execute .cmd files directly. Only the fixed pnpm shim and
+  // strictly allow-listed build arguments cross this adapter; application
+  // subprocesses continue to launch directly without a shell.
+  return {
+    command: commandInterpreter,
+    args: ["/d", "/s", "/c", command, ...args],
+  };
+}
+
 export function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const invocation = normalizedInvocation(command, args);
+    const child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
       env: options.env,
       shell: false,
@@ -33,7 +70,8 @@ export function run(command, args, options = {}) {
 
 export function capture(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const invocation = normalizedInvocation(command, args);
+    const child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
       env: options.env,
       shell: false,

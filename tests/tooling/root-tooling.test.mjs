@@ -4,6 +4,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { normalizedInvocation } from "../../scripts/lib/process.mjs";
+
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -62,4 +64,31 @@ test("private local roots track placeholders only", async () => {
     assert.match(ignore, new RegExp(`^${directory}/\\*$`, "m"));
     assert.match(ignore, new RegExp(`^!${directory}/\\.gitkeep$`, "m"));
   }
+});
+
+test("Windows pnpm shim adapter rejects shell metacharacters", () => {
+  const invocation = normalizedInvocation(
+    "pnpm.cmd",
+    ["--filter", "@cinematic-story-studio/desktop", "run", "lint"],
+    "win32",
+  );
+  assert.equal(path.win32.basename(invocation.command).toLowerCase(), "cmd.exe");
+  assert.deepEqual(invocation.args, [
+    "/d",
+    "/s",
+    "/c",
+    "pnpm.cmd",
+    "--filter",
+    "@cinematic-story-studio/desktop",
+    "run",
+    "lint",
+  ]);
+  assert.throws(
+    () => normalizedInvocation("pnpm.cmd", ["run", "lint & whoami"], "win32"),
+    /untrusted/u,
+  );
+  assert.throws(
+    () => normalizedInvocation("other.cmd", ["--version"], "win32"),
+    /untrusted/u,
+  );
 });

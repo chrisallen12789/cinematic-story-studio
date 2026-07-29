@@ -22,10 +22,24 @@ pnpm test
 pnpm build
 ```
 
-The install hook creates `apps/local-service/.venv` and runs its Python as an argument-array subprocess:
+The install hook creates `apps/local-service/.venv`, installs the exact,
+hash-verified transitive set in `apps/local-service/requirements.lock`, installs
+the local package without resolving a second dependency graph, and runs
+`pip check`. Direct pins in `requirements.in` stay aligned with
+`pyproject.toml`; regenerate the lock from Python 3.12 after an intentional
+dependency review:
+
+```powershell
+pnpm service:python -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 'Lock generation requires Python 3.12.x')"
+pnpm service:python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file apps/local-service/requirements.lock apps/local-service/requirements.in
+```
+
+Each Python process is started with an argument array:
 
 ```text
-python -m pip install --disable-pip-version-check -e apps/local-service[dev]
+python -m pip install --disable-pip-version-check --require-hashes --requirement apps/local-service/requirements.lock
+python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e apps/local-service
+python -m pip check
 ```
 
 The command runs with the repository as its working directory and passes every value as a separate argument, so spaces in the checkout path are safe. No shell string is used. Dependencies belong in the owning package manifest, need a documented product or development purpose, and must be maintained and narrowly scoped. Commit the resulting `pnpm-lock.yaml`; do not hand-edit it.

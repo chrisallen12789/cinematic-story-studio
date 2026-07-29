@@ -97,10 +97,14 @@ export async function requireServicePython() {
 
 export async function installServiceDevelopmentDependencies() {
   const pyproject = path.join(serviceRoot, "pyproject.toml");
+  const requirementsLock = path.join(serviceRoot, "requirements.lock");
   try {
     await access(pyproject, fsConstants.R_OK);
+    await access(requirementsLock, fsConstants.R_OK);
   } catch {
-    throw new Error("apps/local-service/pyproject.toml is required before installing Python dependencies.");
+    throw new Error(
+      "apps/local-service/pyproject.toml and requirements.lock are required before installing Python dependencies.",
+    );
   }
 
   const python = await ensureServiceVenv();
@@ -111,14 +115,36 @@ export async function installServiceDevelopmentDependencies() {
       "pip",
       "install",
       "--disable-pip-version-check",
-      "-e",
-      "apps/local-service[dev]",
+      "--require-hashes",
+      "--requirement",
+      "apps/local-service/requirements.lock",
     ],
     {
       cwd: repositoryRoot,
-      label: "Local-service development dependency install",
+      label: "Locked local-service dependency install",
     },
   );
+  await run(
+    python,
+    [
+      "-m",
+      "pip",
+      "install",
+      "--disable-pip-version-check",
+      "--no-build-isolation",
+      "--no-deps",
+      "-e",
+      "apps/local-service",
+    ],
+    {
+      cwd: repositoryRoot,
+      label: "Editable local-service install",
+    },
+  );
+  await run(python, ["-m", "pip", "check"], {
+    cwd: repositoryRoot,
+    label: "Local-service dependency consistency check",
+  });
   return python;
 }
 

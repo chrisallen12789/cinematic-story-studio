@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   verify-and-build:
-    name: Lint, test, and unpackaged build
+    name: Lint, test, build, and packaged E2E
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -63,21 +63,132 @@ jobs:
         run: pnpm test
 
       - name: Build the staged service and unpackaged desktop
+        id: build
         run: pnpm build
 
+      - name: Resolve packaged E2E evidence paths
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $desktopPackage = Get-Content -LiteralPath "apps/desktop/package.json" -Raw | ConvertFrom-Json
+          $version = [string]$desktopPackage.version
+          if ($version -cnotmatch "^[0-9A-Za-z][0-9A-Za-z.+-]{0,79}$") {
+            throw "The desktop package version is invalid."
+          }
+
+          $workspaceRoot = [IO.Path]::GetFullPath((Get-Location))
+          $releaseRoot = [IO.Path]::GetFullPath(
+            (Join-Path $workspaceRoot "apps/desktop/release/$version")
+          )
+          $relativeReleaseRoot = [IO.Path]::GetRelativePath(
+            $workspaceRoot,
+            $releaseRoot
+          )
+          if (
+            [IO.Path]::IsPathRooted($relativeReleaseRoot) -or
+            $relativeReleaseRoot -eq ".." -or
+            $relativeReleaseRoot.StartsWith("..$([IO.Path]::DirectorySeparatorChar)")
+          ) {
+            throw "The desktop release root escaped the workspace."
+          }
+          $executable = Join-Path $releaseRoot "win-unpacked/Cinematic Story Studio.exe"
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+            throw "The expected packaged desktop executable is missing."
+          }
+
+          $screenshotPath = Join-Path $releaseRoot "packaged-e2e.png"
+          $resultPath = Join-Path $releaseRoot "packaged-e2e-result.json"
+          $manifestPath = Join-Path $releaseRoot "build-evidence.json"
+          foreach ($generatedEvidence in @($screenshotPath, $resultPath, $manifestPath)) {
+            if (Test-Path -LiteralPath $generatedEvidence) {
+              if (-not (Test-Path -LiteralPath $generatedEvidence -PathType Leaf)) {
+                throw "A generated evidence target was not a file."
+              }
+              Remove-Item -LiteralPath $generatedEvidence -Force
+            }
+          }
+
+          "CSS_PACKAGED_E2E_EXECUTABLE=$executable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CSS_PACKAGED_E2E_EVIDENCE_PATH=$screenshotPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CSS_PACKAGED_E2E_RESULT_PATH=$resultPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run packaged persistence E2E with isolated application data
+        id: packaged_e2e
+        continue-on-error: true
+        run: pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged
+
+      - name: Generate deterministic build-evidence manifest
+        if: ${{ always() && !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        env:
+          CSS_BUILD_WORKFLOW_HEAD_SHA: ${{ github.sha }}
+          CSS_BUILD_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          CSS_PACKAGED_E2E_STEP_OUTCOME: ${{ steps.packaged_e2e.outcome }}
+          CSS_BUILD_EVIDENCE_RUNNER_NAME: ${{ runner.name }}
+          CSS_BUILD_EVIDENCE_RUNNER_OS: ${{ runner.os }}
+          CSS_BUILD_EVIDENCE_RUNNER_ARCH: ${{ runner.arch }}
+          CSS_BUILD_EVIDENCE_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          CSS_BUILD_EVIDENCE_RUN_ID: ${{ github.run_id }}
+          CSS_BUILD_EVIDENCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CSS_BUILD_EVIDENCE_WORKFLOW: ${{ github.workflow }}
+          CSS_BUILD_EVIDENCE_JOB: ${{ github.job }}
+        run: |
+          $testedCheckoutSha = (& git rev-parse HEAD).Trim()
+          if (
+            $LASTEXITCODE -ne 0 -or
+            $testedCheckoutSha -cne $env:CSS_BUILD_WORKFLOW_HEAD_SHA
+          ) {
+            throw "The checked-out commit does not match the workflow head SHA."
+          }
+          $env:CSS_BUILD_TESTED_CHECKOUT_SHA = $testedCheckoutSha
+          $env:CSS_BUILD_EVIDENCE_TIMESTAMP = [DateTimeOffset]::UtcNow.ToString(
+            "O",
+            [Globalization.CultureInfo]::InvariantCulture
+          )
+          node scripts/ci/build-evidence.mjs
+
+      - name: Print packaged E2E and build evidence
+        if: ${{ always() && !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $manifestPath = Join-Path (
+            Split-Path -Parent $env:CSS_PACKAGED_E2E_RESULT_PATH
+          ) "build-evidence.json"
+          if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+            Write-Output "::group::Build evidence manifest"
+            Get-Content -LiteralPath $manifestPath -Raw
+            Write-Output "::endgroup::"
+          }
+          if (Test-Path -LiteralPath $env:CSS_PACKAGED_E2E_RESULT_PATH -PathType Leaf) {
+            Write-Output "::group::Packaged E2E machine result"
+            Get-Content -LiteralPath $env:CSS_PACKAGED_E2E_RESULT_PATH -Raw
+            Write-Output "::endgroup::"
+          }
+
       - name: Re-scan tracked content
+        id: tracked_scan
         run: pnpm scan:tracked
 
       - name: Verify checks did not modify tracked files
+        id: clean_check
         run: node scripts/git-check.mjs --clean
 
       - name: Upload short-lived development artifact
+        if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' }}
         uses: actions/upload-artifact@v6
         with:
-          name: cinematic-story-studio-windows-unpacked-${{ github.sha }}
+          name: cinematic-story-studio-windows-unpacked-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             apps/desktop/release/*/win-unpacked/**
             apps/desktop/build-resources/service/**
+            apps/desktop/release/*/build-evidence.json
+            apps/desktop/release/*/packaged-e2e-result.json
+            apps/desktop/release/*/packaged-e2e.png
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+
+      - name: Enforce packaged E2E result
+        if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.packaged_e2e.outcome != 'success' }}
+        shell: pwsh
+        run: throw "The packaged persistence E2E gate failed. Inspect the uploaded build evidence."

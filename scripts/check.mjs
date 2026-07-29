@@ -89,6 +89,7 @@ async function testAll() {
     [
       "--test",
       "schemas/tests/schema-structure.test.mjs",
+      "tests/tooling/build-evidence.test.mjs",
       "tests/tooling/repository-policy.test.mjs",
       "tests/tooling/root-tooling.test.mjs",
       "tests/tooling/synthetic-fixture.test.mjs",

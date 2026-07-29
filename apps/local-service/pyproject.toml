@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cinematic-story-service"
+version = "0.1.0"
+description = "Loopback-only local backend for Cinematic Story Studio"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.141.0",
+  "pydantic==2.13.4",
+  "python-multipart==0.0.32",
+  "sqlalchemy==2.0.51",
+  "uvicorn==0.52.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "mypy==1.20.2",
+  "pyinstaller==6.21.0",
+  "pytest==9.0.3",
+  "pytest-cov==6.3.0",
+  "ruff==0.16.0",
+]
+
+[project.scripts]
+cinematic-story-service = "cinematic_story_service.launcher:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cinematic_story_service"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+ignore = [
+  "S101", # assertions are appropriate in tests
+  "S603", # subprocess calls use reviewed argv arrays with shell disabled
+  "S607", # PATH lookup for ffmpeg is an explicit, reported capability origin
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S105", "S106"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
+packages = ["cinematic_story_service"]
+
+[[tool.mypy.overrides]]
+module = ["multipart.*"]
+ignore_missing_imports = true

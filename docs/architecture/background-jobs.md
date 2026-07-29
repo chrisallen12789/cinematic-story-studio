@@ -49,6 +49,12 @@ paused -> queued                  (resume; future user-controlled pause)
 
 ## Claiming and execution
 
+The Phase 0 execution lease is the non-blocking OS lock held on the canonical data directory for
+the entire `Database` lifetime. A second service process cannot open or reconcile the same SQLite
+store while that lock is owned. In-process repositories still use conditional SQL transitions,
+atomic event allocation, and a DB-unique active-job key; the process lock is not a substitute for
+those concurrency controls.
+
 1. Creation and idempotency record commit before a worker can claim the job.
 2. A worker transaction atomically claims an eligible job with an instance ID and expiring lease.
 3. Work runs outside the claim transaction against the frozen input revision.

@@ -1,0 +1,80 @@
+name: Phase 0 Windows CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-0-windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-build:
+    name: Lint, test, and unpackaged build
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUTF8: "1"
+
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/local-service/pyproject.toml
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install locked Node and Python development dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint TypeScript, Python, and repository content
+        run: pnpm lint
+
+      - name: Type-check TypeScript and Python
+        run: pnpm typecheck
+
+      - name: Run schema, tooling, service, and desktop tests
+        run: pnpm test
+
+      - name: Build the staged service and unpackaged desktop
+        run: pnpm build
+
+      - name: Re-scan tracked content
+        run: pnpm scan:tracked
+
+      - name: Verify checks did not modify tracked files
+        run: node scripts/git-check.mjs --clean
+
+      - name: Upload short-lived development artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: cinematic-story-studio-windows-unpacked-${{ github.sha }}
+          path: |
+            apps/desktop/release/*/win-unpacked/**
+            apps/desktop/build-resources/service/**
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

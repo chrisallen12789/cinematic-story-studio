@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   lstat,
@@ -6,11 +5,11 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
-  writeFile
+  rm
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -19,6 +18,32 @@ import {
   test,
   type ElectronApplication
 } from "@playwright/test";
+
+import {
+  isolatedEnvironmentNames,
+  packagedE2eSchemaVersion,
+  packagedFailureCode,
+  packagedFixture,
+  packagedFlow,
+  runPackagedE2eEvidenceStep,
+  writePackagedE2eMachineResult,
+  type MachineLaunchEvidence,
+  type PackagedFailureCode,
+  type PackagedFailureStage
+} from "../../src/verification/packaged-e2e-evidence";
+import {
+  adoptVerifiedProcessTree,
+  appExecutableName,
+  containsProcessIdentity,
+  createPackagedProcessInventory,
+  defaultProcessInventoryPolicy,
+  matchesPackagedProcessPath,
+  remainingOwnedProcesses,
+  serviceExecutableName,
+  type OwnedProcess,
+  type PackagedProcessPaths,
+  type ProcessIdentity
+} from "../../src/verification/packaged-process-inventory";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -31,12 +56,8 @@ const fixturePath = path.resolve(
 const packagedExecutableEnvironment = "CSS_PACKAGED_E2E_EXECUTABLE";
 const evidencePathEnvironment = "CSS_PACKAGED_E2E_EVIDENCE_PATH";
 const resultPathEnvironment = "CSS_PACKAGED_E2E_RESULT_PATH";
-const appExecutableName = "Cinematic Story Studio.exe";
-const serviceExecutableName = "cinematic-story-service.exe";
-const relevantProcessNames = new Set([
-  appExecutableName,
-  serviceExecutableName
-]);
+const processInventory = createPackagedProcessInventory();
+const monotonicNow = () => performance.now();
 
 test.describe("packaged desktop verification", () => {
   test.skip(
@@ -47,58 +68,131 @@ test.describe("packaged desktop verification", () => {
   );
 
   test("runs the synthetic persistence flow in the packaged application", async () => {
-    test.setTimeout(180_000);
+    test.setTimeout(240_000);
     const packaged = await requirePackagedExecutable(
       requiredEnvironment(packagedExecutableEnvironment)
     );
     const evidencePath = requireEvidencePath(
-      requiredEnvironment(evidencePathEnvironment)
+      requiredEnvironment(evidencePathEnvironment),
+      packaged
     );
     const resultPath = requireResultPath(
-      requiredEnvironment(resultPathEnvironment)
+      requiredEnvironment(resultPathEnvironment),
+      packaged
     );
-    const preexistingProcesses = await queryRelevantProcesses();
-    const isolationRoot = await mkdtemp(
-      path.join(tmpdir(), "css-packaged-e2e-")
-    );
-    const localAppData = path.join(isolationRoot, "LocalAppData");
-    const roamingAppData = path.join(isolationRoot, "AppData");
-    const temporaryDirectory = path.join(isolationRoot, "Temp");
-    await Promise.all([
-      mkdir(localAppData, { recursive: true }),
-      mkdir(roamingAppData, { recursive: true }),
-      mkdir(temporaryDirectory, { recursive: true }),
-      mkdir(path.dirname(evidencePath), { recursive: true }),
-      mkdir(path.dirname(resultPath), { recursive: true })
-    ]);
 
+    let isolationRoot: string | null = null;
+    let preexistingProcesses: readonly ProcessIdentity[] | null = null;
     let first: ElectronApplication | null = null;
     let second: ElectronApplication | null = null;
     let firstOwnership: LaunchOwnership | null = null;
     let secondOwnership: LaunchOwnership | null = null;
     let operationError: Error | null = null;
+    let failureStage: PackagedFailureStage | null = null;
+    let failureCode: PackagedFailureCode | null = null;
+    let currentStage: PackagedFailureStage = "isolation_setup";
     let screenshotCaptured = false;
     const cleanupErrors: unknown[] = [];
-    const launchEvidence: LaunchEvidence[] = [];
-    try {
-      first = await launchPackaged(packaged.executablePath, {
-        localAppData,
-        roamingAppData,
-        temporaryDirectory
+    const launchEvidence: MachineLaunchEvidence[] = [];
+    const begunLaunches = new Set<1 | 2>();
+    const ownedLaunches = new Set<1 | 2>();
+    const writeMachineResult = async (
+      status: "passed" | "failed",
+      cleanupCompleted: boolean
+    ) => {
+      await writePackagedE2eMachineResult(resultPath, {
+        schemaVersion: packagedE2eSchemaVersion,
+        completedAt: new Date().toISOString(),
+        status,
+        failureStage: status === "passed" ? null : failureStage,
+        failureCode: status === "passed" ? null : failureCode,
+        packagedVersion: packaged.version,
+        executable: `release/${packaged.version}/win-unpacked/${appExecutableName}`,
+        fixture: packagedFixture,
+        isolationEnvironment: isolatedEnvironmentNames,
+        completedLaunches: launchEvidence
+          .map((item) => item.launch)
+          .sort((left, right) => left - right),
+        applicationLaunchBegan: begunLaunches.size > 0,
+        ownershipEstablished:
+          begunLaunches.size > 0 &&
+          begunLaunches.size === ownedLaunches.size,
+        cleanupCompleted,
+        preexistingRelevantProcesses:
+          preexistingProcesses === null
+            ? null
+            : preexistingProcesses
+                .map(redactPreexistingProcess)
+                .sort(compareEvidenceProcess),
+        flow: packagedFlow,
+        screenshot: {
+          artifactId: "packaged-ui-screenshot",
+          captured: screenshotCaptured
+        },
+        launches: [...launchEvidence].sort(
+          (left, right) => left.launch - right.launch
+        )
       });
+    };
+    const checkpointStage = async (stage: PackagedFailureStage) => {
+      currentStage = stage;
+      failureStage = stage;
+      failureCode = packagedFailureCode(stage, undefined);
+      await writeMachineResult("failed", false);
+    };
+    try {
+      await Promise.all([
+        mkdir(path.dirname(evidencePath), { recursive: true }),
+        mkdir(path.dirname(resultPath), { recursive: true })
+      ]);
+      await checkpointStage("prelaunch_inventory_1");
+      preexistingProcesses = await runPackagedE2eEvidenceStep(
+        "prelaunch_inventory_1",
+        () => queryRelevantProcesses(),
+        async (stage, code) => {
+          failureStage = stage;
+          failureCode = code;
+          await writeMachineResult("failed", false);
+        }
+      );
+      await checkpointStage("isolation_setup");
+      isolationRoot = await mkdtemp(
+        path.join(tmpdir(), "css-packaged-e2e-")
+      );
+      const isolatedPaths: IsolatedPaths = {
+        localAppData: path.join(isolationRoot, "LocalAppData"),
+        roamingAppData: path.join(isolationRoot, "AppData"),
+        temporaryDirectory: path.join(isolationRoot, "Temp")
+      };
+      await Promise.all([
+        mkdir(isolatedPaths.localAppData, { recursive: true }),
+        mkdir(isolatedPaths.roamingAppData, { recursive: true }),
+        mkdir(isolatedPaths.temporaryDirectory, { recursive: true })
+      ]);
+
+      begunLaunches.add(1);
+      await checkpointStage("launch_1");
+      first = await launchPackaged(packaged.executablePath, {
+        ...isolatedPaths
+      });
+      await checkpointStage("root_ownership_1");
       firstOwnership = await establishRootOwnership(
         first,
         preexistingProcesses,
         packaged
       );
+      await checkpointStage("readiness_1");
       const firstPage = await first.firstWindow();
       await expect(
         firstPage.getByText("Backend ready", { exact: true }).first()
       ).toBeVisible({ timeout: 45_000 });
+      await checkpointStage("service_ownership_1");
       firstOwnership = await expandOwnership(
         firstOwnership,
         true
       );
+      ownedLaunches.add(1);
+      await checkpointStage("workflow_1");
       await firstPage
         .getByLabel("New production")
         .fill("Packaged Persistence Demo");
@@ -176,36 +270,43 @@ test.describe("packaged desktop verification", () => {
         firstPage.getByText("Speaker correction saved as human provenance.")
       ).toBeVisible({ timeout: 20_000 });
 
+      await checkpointStage("shutdown_1");
       const firstExitProof = await closeOwnedElectron(
         first,
         firstOwnership
       );
+      expect(firstExitProof.graceful).toBe(true);
       launchEvidence.push(
         machineLaunchEvidence(1, firstOwnership, firstExitProof)
       );
-      expect(firstExitProof.graceful).toBe(true);
       first = null;
       firstOwnership = null;
 
+      await checkpointStage("prelaunch_inventory_2");
       const beforeSecondLaunch = await queryRelevantProcesses();
+      begunLaunches.add(2);
+      await checkpointStage("launch_2");
       second = await launchPackaged(packaged.executablePath, {
-        localAppData,
-        roamingAppData,
-        temporaryDirectory
+        ...isolatedPaths
       });
+      await checkpointStage("root_ownership_2");
       secondOwnership = await establishRootOwnership(
         second,
         beforeSecondLaunch,
         packaged
       );
+      await checkpointStage("readiness_2");
       const secondPage = await second.firstWindow();
       await expect(
         secondPage.getByText("Backend ready", { exact: true }).first()
       ).toBeVisible({ timeout: 45_000 });
+      await checkpointStage("service_ownership_2");
       secondOwnership = await expandOwnership(
         secondOwnership,
         true
       );
+      ownedLaunches.add(2);
+      await checkpointStage("restore_2");
       await expect(
         secondPage.getByRole("heading", {
           name: "Packaged Persistence Demo"
@@ -217,6 +318,7 @@ test.describe("packaged desktop verification", () => {
       await expect(
         secondPage.getByText("Human correction").first()
       ).toBeVisible({ timeout: 20_000 });
+      await checkpointStage("screenshot");
       await secondPage.screenshot({
         path: evidencePath,
         fullPage: true,
@@ -227,14 +329,15 @@ test.describe("packaged desktop verification", () => {
       expect(evidence.size).toBeGreaterThan(0);
       screenshotCaptured = true;
 
+      await checkpointStage("shutdown_2");
       const secondExitProof = await closeOwnedElectron(
         second,
         secondOwnership
       );
+      expect(secondExitProof.graceful).toBe(true);
       launchEvidence.push(
         machineLaunchEvidence(2, secondOwnership, secondExitProof)
       );
-      expect(secondExitProof.graceful).toBe(true);
       second = null;
       secondOwnership = null;
     } catch (error) {
@@ -242,79 +345,52 @@ test.describe("packaged desktop verification", () => {
         error instanceof Error
           ? error
           : new Error("Packaged verification failed.");
+      failureStage = currentStage;
+      failureCode = packagedFailureCode(currentStage, error);
+      try {
+        await writeMachineResult("failed", false);
+      } catch (checkpointError) {
+        cleanupErrors.push(checkpointError);
+      }
     } finally {
-      for (const [launch, application, ownership] of [
-        [2, second, secondOwnership],
-        [1, first, firstOwnership]
+      for (const [application, ownership] of [
+        [second, secondOwnership],
+        [first, firstOwnership]
       ] as const) {
         try {
-          const exitProof = await closeOwnedElectron(
-            application,
-            ownership
-          );
-          if (
-            ownership !== null &&
-            !launchEvidence.some((item) => item.launch === launch)
-          ) {
-            launchEvidence.push(
-              machineLaunchEvidence(launch, ownership, exitProof)
-            );
-          }
+          await closeOwnedElectron(application, ownership);
         } catch (error) {
           cleanupErrors.push(error);
         }
       }
+      if (isolationRoot !== null) {
+        try {
+          assertOwnedTemporaryRoot(isolationRoot);
+          await rm(isolationRoot, {
+            recursive: true,
+            force: true,
+            maxRetries: 40,
+            retryDelay: 250
+          });
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      const cleanupCompleted = cleanupErrors.length === 0;
+      if (operationError === null && !cleanupCompleted) {
+        failureStage = "cleanup";
+        failureCode = "CLEANUP_FAILED";
+      }
       try {
-        assertOwnedTemporaryRoot(isolationRoot);
-        await rm(isolationRoot, {
-          recursive: true,
-          force: true,
-          maxRetries: 40,
-          retryDelay: 250
-        });
+        await writeMachineResult(
+          operationError === null && cleanupCompleted
+            ? "passed"
+            : "failed",
+          cleanupCompleted
+        );
       } catch (error) {
         cleanupErrors.push(error);
       }
-    }
-    try {
-      await writeMachineEvidence(resultPath, {
-        schemaVersion: "1.0.0",
-        completedAt: new Date().toISOString(),
-        status:
-          operationError === null && cleanupErrors.length === 0
-            ? "passed"
-            : "failed",
-        packagedVersion: packaged.version,
-        executable: `release/${packaged.version}/win-unpacked/${appExecutableName}`,
-        fixture: "fixtures/synthetic-story/sample-story.md",
-        isolationEnvironment: ["APPDATA", "LOCALAPPDATA", "TEMP", "TMP"],
-        preexistingRelevantProcesses: preexistingProcesses
-          .map(redactPreexistingProcess)
-          .sort(compareEvidenceProcess),
-        flow: [
-          "create",
-          "import_synthetic_fixture",
-          "analyze",
-          "correct_speaker",
-          "close",
-          "restart",
-          "restore",
-          "close"
-        ],
-        screenshot: {
-          artifactId: "packaged-ui-screenshot",
-          captured: screenshotCaptured
-        },
-        launches: [...launchEvidence].sort(
-          (left, right) => left.launch - right.launch
-        ),
-        error:
-          operationError === null && cleanupErrors.length === 0
-            ? null
-            : safeEvidenceError(operationError, cleanupErrors)
-      });
-    } catch (error) {
-      cleanupErrors.push(error);
     }
     if (operationError !== null) {
       if (cleanupErrors.length > 0) {
@@ -340,22 +416,8 @@ interface IsolatedPaths {
   readonly temporaryDirectory: string;
 }
 
-interface PackagedPaths {
-  readonly executablePath: string;
-  readonly serviceExecutablePath: string;
+interface PackagedPaths extends PackagedProcessPaths {
   readonly version: string;
-}
-
-interface ProcessIdentity {
-  readonly pid: number;
-  readonly parentPid: number;
-  readonly name: string;
-  readonly executablePath: string | null;
-  readonly creationDate: string;
-}
-
-interface OwnedProcess extends ProcessIdentity {
-  readonly kind: "app" | "service";
 }
 
 interface LaunchOwnership {
@@ -371,15 +433,6 @@ interface ExitProof {
   readonly graceful: boolean;
   readonly forcedPids: readonly number[];
   readonly remainingPids: readonly number[];
-}
-
-interface LaunchEvidence {
-  readonly launch: number;
-  readonly preexistingRelevantProcesses: readonly ReturnType<
-    typeof redactPreexistingProcess
-  >[];
-  readonly ownership: ReturnType<typeof evidenceOwnership>;
-  readonly exitProof: ExitProof;
 }
 
 async function launchPackaged(
@@ -426,7 +479,9 @@ async function closeOwnedElectron(
     try {
       verifiedOwnership = await expandOwnership(
         verifiedOwnership,
-        false
+        false,
+        monotonicNow() +
+          defaultProcessInventoryPolicy.totalDeadlineMs
       );
     } catch (error) {
       ownershipError =
@@ -470,30 +525,33 @@ async function closeOwnedElectron(
     throw new Error("The packaged Electron process did not exit.");
   }
 
-  if (verifiedOwnership === null) {
+  if (ownership === null || verifiedOwnership === null) {
     throw new Error(
-      "Packaged process ownership was not established; descendant termination was not attempted."
+      "Packaged process ownership was not established; owned-process exit could not be verified."
     );
   }
   if (ownershipError !== null) {
     throw ownershipError;
   }
-  verifiedOwnership = await expandOwnership(verifiedOwnership, false);
-  let remaining = await waitForOwnedProcessesGone(
-    verifiedOwnership.processes,
-    10_000
+  const shutdownInventoryDeadline =
+    monotonicNow() +
+    defaultProcessInventoryPolicy.totalDeadlineMs;
+  verifiedOwnership = await expandOwnership(
+    verifiedOwnership,
+    false,
+    shutdownInventoryDeadline
   );
-  if (remaining.length > 0) {
-    for (const owned of remaining) {
-      if (await terminateExactOwnedProcess(owned)) {
-        forcedPids.push(owned.pid);
-      }
-    }
-    remaining = await waitForOwnedProcessesGone(
-      verifiedOwnership.processes,
-      5_000
-    );
-  }
+  const exitObservation = await waitForOwnedProcessesGone(
+    verifiedOwnership,
+    20_000,
+    shutdownInventoryDeadline
+  );
+  verifiedOwnership = {
+    ...verifiedOwnership,
+    processes: exitObservation.processes
+  };
+  ownership.processes = verifiedOwnership.processes;
+  const remaining = exitObservation.remaining;
   if (remaining.length > 0) {
     throw new Error(
       `Owned packaged processes did not exit: ${remaining
@@ -501,12 +559,15 @@ async function closeOwnedElectron(
         .join(", ")}.`
     );
   }
+  if (outcome !== "closed" || forcedPids.length > 0) {
+    throw new Error(
+      "The packaged Electron launcher did not complete graceful shutdown."
+    );
+  }
   return {
     ownedPids: verifiedOwnership.processes.map((item) => item.pid),
-    graceful: outcome === "closed" && forcedPids.length === 0,
-    forcedPids: [...new Set(forcedPids)].sort(
-      (left, right) => left - right
-    ),
+    graceful: true,
+    forcedPids: [],
     remainingPids: []
   };
 }
@@ -524,15 +585,18 @@ async function establishRootOwnership(
   if (!Number.isSafeInteger(rootPid) || rootPid <= 0) {
     throw new Error("Electron did not expose a valid packaged root PID.");
   }
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const current = await queryRelevantProcesses();
+  const deadline =
+    monotonicNow() +
+    defaultProcessInventoryPolicy.totalDeadlineMs;
+  while (monotonicNow() < deadline) {
+    const current = await queryRelevantProcesses(deadline);
     const rootMatches = current.filter(
       (item) =>
         item.pid === rootPid &&
-        item.executablePath !== null &&
-        samePath(item.executablePath, packaged.executablePath) &&
-        !containsIdentity(beforeLaunch, item)
+        item.parentPid === launcherPid &&
+        item.name === appExecutableName &&
+        matchesPackagedProcessPath(item, packaged) &&
+        !containsProcessIdentity(beforeLaunch, item)
     );
     if (rootMatches.length > 1) {
       throw new Error("The packaged Electron root identity was ambiguous.");
@@ -547,53 +611,29 @@ async function establishRootOwnership(
         packaged
       };
     }
-    await delay(100);
+    await delayWithinDeadline(100, deadline);
   }
   throw new Error("The packaged Electron root identity could not be proven.");
 }
 
 async function expandOwnership(
   ownership: LaunchOwnership,
-  requireService: boolean
+  requireService: boolean,
+  deadlineAt = monotonicNow() +
+    defaultProcessInventoryPolicy.totalDeadlineMs
 ): Promise<LaunchOwnership> {
-  const current = await queryRelevantProcesses();
-  const root = ownership.processes.find(
-    (item) => item.pid === ownership.rootPid && item.kind === "app"
-  );
-  if (root === undefined) {
+  const current = await queryRelevantProcesses(deadlineAt);
+  const owned = adoptVerifiedProcessTree({
+    current,
+    baseline: ownership.baseline,
+    owned: ownership.processes,
+    rootPid: ownership.rootPid,
+    packaged: ownership.packaged
+  });
+  if (owned.length === 0) {
     throw new Error("The packaged Electron root identity was lost.");
   }
-  const rootIsCurrent = containsIdentity(current, root);
-  const byPid = new Map(current.map((item) => [item.pid, item]));
-  const adopted = rootIsCurrent
-    ? current
-        .filter(
-          (item) =>
-            item.executablePath !== null &&
-            item.creationDate >= root.creationDate &&
-            matchesPackagedProcessPath(item, ownership.packaged) &&
-            (containsIdentity(ownership.processes, item) ||
-              isDescendantOf(
-                item,
-                root,
-                byPid,
-                ownership.packaged
-              )) &&
-            !containsIdentity(ownership.baseline, item)
-        )
-        .map<OwnedProcess>((item) => ({
-          ...item,
-          kind:
-            item.name === serviceExecutableName ? "service" : "app"
-        }))
-    : [];
-  const owned = [...ownership.processes];
-  for (const item of adopted) {
-    if (!containsIdentity(owned, item)) {
-      owned.push(item);
-    }
-  }
-  owned.sort((left, right) => left.pid - right.pid);
+  ownership.processes = owned;
   if (
     requireService &&
     (!owned.some((item) => item.kind === "service") ||
@@ -609,7 +649,6 @@ async function expandOwnership(
   ) {
     throw new Error("The owned packaged service process was not identified.");
   }
-  ownership.processes = owned;
   return ownership;
 }
 
@@ -663,227 +702,60 @@ async function requirePackagedExecutable(
   };
 }
 
-async function queryRelevantProcesses(): Promise<readonly ProcessIdentity[]> {
-  if (process.platform !== "win32") {
-    throw new Error("Packaged process ownership verification requires Windows.");
-  }
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
-    "$records = foreach ($processName in @('Cinematic Story Studio.exe', 'cinematic-story-service.exe')) {",
-    "  Get-CimInstance Win32_Process -Filter (\"Name = '\" + $processName + \"'\") | ForEach-Object {",
-    "    [PSCustomObject]@{",
-    "      pid = [int]$_.ProcessId",
-    "      parentPid = [int]$_.ParentProcessId",
-    "      name = [string]$_.Name",
-    "      executablePath = if ($null -eq $_.ExecutablePath) { $null } else { [string]$_.ExecutablePath }",
-    "      creationDate = $_.CreationDate.ToUniversalTime().ToString('O', [Globalization.CultureInfo]::InvariantCulture)",
-    "    }",
-    "  }",
-    "}",
-    "[Console]::Out.Write((ConvertTo-Json -InputObject @($records) -Compress))"
-  ].join("\n");
-  const output = await runBoundedProcess(
-    "powershell.exe",
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-    10_000,
-    1024 * 1024
-  );
-  const parsed = JSON.parse(output.length === 0 ? "[]" : output) as unknown;
-  if (!Array.isArray(parsed) || parsed.length > 256) {
-    throw new Error("Relevant packaged process inventory was invalid.");
-  }
-  return parsed.map(parseProcessIdentity);
+async function queryRelevantProcesses(
+  deadlineAt?: number
+): Promise<readonly ProcessIdentity[]> {
+  return processInventory.query({ deadlineAt });
 }
 
 async function waitForOwnedProcessesGone(
-  owned: readonly OwnedProcess[],
-  timeoutMs: number
-): Promise<readonly OwnedProcess[]> {
-  const deadline = Date.now() + timeoutMs;
-  let remaining: readonly OwnedProcess[] = owned;
-  while (Date.now() < deadline) {
-    const current = await queryRelevantProcesses();
-    remaining = owned.filter((item) => containsIdentity(current, item));
-    if (remaining.length === 0) {
-      return [];
-    }
-    await delay(200);
-  }
-  return remaining;
-}
-
-async function terminateExactOwnedProcess(
-  owned: OwnedProcess
-): Promise<boolean> {
-  const current = await queryRelevantProcesses();
-  if (!containsIdentity(current, owned)) {
-    return false;
-  }
-  try {
-    await runBoundedProcess(
-      "taskkill.exe",
-      ["/PID", String(owned.pid), "/F"],
-      5_000,
-      64 * 1024
-    );
-    return true;
-  } catch (error) {
-    const after = await queryRelevantProcesses();
-    if (!containsIdentity(after, owned)) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-async function runBoundedProcess(
-  command: string,
-  arguments_: readonly string[],
+  ownership: LaunchOwnership,
   timeoutMs: number,
-  maximumOutputBytes: number
-): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn(command, [...arguments_], {
-      shell: false,
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true
-    });
-    const chunks: Buffer[] = [];
-    let total = 0;
-    let settled = false;
-    const finish = (error: Error | null, value = "") => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      if (error === null) {
-        resolve(value);
-      } else {
-        reject(error);
-      }
-    };
-    const timeout = setTimeout(() => {
-      child.kill();
-      finish(new Error("A packaged ownership command timed out."));
-    }, timeoutMs);
-    child.stdout.on("data", (chunk: Buffer) => {
-      total += chunk.byteLength;
-      if (total > maximumOutputBytes) {
-        child.kill();
-        finish(new Error("Packaged ownership output exceeded its limit."));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    child.once("error", () => {
-      finish(new Error("A packaged ownership command could not start."));
-    });
-    child.once("exit", (code) => {
-      if (code !== 0) {
-        finish(new Error("A packaged ownership command failed."));
-        return;
-      }
-      finish(null, Buffer.concat(chunks, total).toString("utf8").trim());
-    });
-  });
-}
-
-function parseProcessIdentity(value: unknown): ProcessIdentity {
-  const record = parseRecord(value, "process identity");
-  if (
-    !Number.isSafeInteger(record.pid) ||
-    (record.pid as number) <= 0 ||
-    !Number.isSafeInteger(record.parentPid) ||
-    (record.parentPid as number) < 0 ||
-    typeof record.name !== "string" ||
-    !relevantProcessNames.has(record.name) ||
-    (record.executablePath !== null &&
-      (typeof record.executablePath !== "string" ||
-        !path.isAbsolute(record.executablePath))) ||
-    typeof record.creationDate !== "string" ||
-    record.creationDate.length === 0 ||
-    record.creationDate.length > 128
-  ) {
-    throw new Error("A relevant packaged process identity was invalid.");
-  }
-  return {
-    pid: record.pid as number,
-    parentPid: record.parentPid as number,
-    name: record.name,
-    executablePath: record.executablePath,
-    creationDate: record.creationDate
-  };
-}
-
-function isDescendantOf(
-  candidate: ProcessIdentity,
-  root: ProcessIdentity,
-  byPid: ReadonlyMap<number, ProcessIdentity>,
-  packaged: PackagedPaths
-): boolean {
-  let child = candidate;
-  const visited = new Set<number>();
-  while (child.parentPid > 0 && !visited.has(child.parentPid)) {
-    const parent = byPid.get(child.parentPid);
-    if (
-      parent === undefined ||
-      parent.executablePath === null ||
-      parent.creationDate > child.creationDate ||
-      !matchesPackagedProcessPath(parent, packaged)
-    ) {
-      return false;
-    }
-    if (sameIdentity(parent, root)) {
-      return true;
-    }
-    visited.add(child.parentPid);
-    child = parent;
-  }
-  return false;
-}
-
-function matchesPackagedProcessPath(
-  candidate: ProcessIdentity,
-  packaged: PackagedPaths
-): boolean {
-  if (candidate.executablePath === null) {
-    return false;
-  }
-  return candidate.name === appExecutableName
-    ? samePath(candidate.executablePath, packaged.executablePath)
-    : candidate.name === serviceExecutableName &&
-        samePath(
-          candidate.executablePath,
-          packaged.serviceExecutablePath
-        );
-}
-
-function containsIdentity(
-  values: readonly ProcessIdentity[],
-  expected: ProcessIdentity
-): boolean {
-  return values.some((value) => sameIdentity(value, expected));
-}
-
-function sameIdentity(
-  left: ProcessIdentity,
-  right: ProcessIdentity
-): boolean {
-  return (
-    left.pid === right.pid &&
-    left.creationDate === right.creationDate &&
-    left.executablePath !== null &&
-    right.executablePath !== null &&
-    samePath(left.executablePath, right.executablePath)
+  callerDeadline: number
+): Promise<{
+  readonly processes: readonly OwnedProcess[];
+  readonly remaining: readonly OwnedProcess[];
+}> {
+  const deadline = Math.min(
+    callerDeadline,
+    monotonicNow() + timeoutMs
   );
+  let processes = ownership.processes;
+  let remaining: readonly OwnedProcess[] = processes;
+  let consecutiveAbsenceObservations = 0;
+  while (monotonicNow() < deadline) {
+    const current = await queryRelevantProcesses(deadline);
+    processes = adoptVerifiedProcessTree({
+      current,
+      baseline: ownership.baseline,
+      owned: processes,
+      rootPid: ownership.rootPid,
+      packaged: ownership.packaged
+    });
+    ownership.processes = processes;
+    remaining = remainingOwnedProcesses(current, processes);
+    if (remaining.length === 0) {
+      consecutiveAbsenceObservations += 1;
+      if (consecutiveAbsenceObservations >= 2) {
+        return { processes, remaining: [] };
+      }
+    } else {
+      consecutiveAbsenceObservations = 0;
+    }
+    await delayWithinDeadline(200, deadline);
+  }
+  if (remaining.length === 0) {
+    throw new Error(
+      "Owned packaged process absence was not confirmed by two inventories."
+    );
+  }
+  return { processes, remaining };
 }
 
 function samePath(left: string, right: string): boolean {
   return (
-    path.resolve(left).toLocaleLowerCase() ===
-    path.resolve(right).toLocaleLowerCase()
+    path.win32.resolve(left).toLowerCase() ===
+    path.win32.resolve(right).toLowerCase()
   );
 }
 
@@ -902,10 +774,10 @@ function evidenceOwnership(ownership: LaunchOwnership) {
 }
 
 function machineLaunchEvidence(
-  launch: number,
+  launch: 1 | 2,
   ownership: LaunchOwnership,
   exitProof: ExitProof
-): LaunchEvidence {
+): MachineLaunchEvidence {
   return {
     launch,
     preexistingRelevantProcesses: ownership.baseline
@@ -931,32 +803,6 @@ function compareEvidenceProcess(
   return left.pid - right.pid;
 }
 
-function safeEvidenceError(
-  operationError: Error | null,
-  cleanupErrors: readonly unknown[]
-) {
-  const selected =
-    operationError ??
-    cleanupErrors.find((item): item is Error => item instanceof Error);
-  return {
-    name: selected?.name ?? "Error",
-    message:
-      operationError === null
-        ? "Packaged verification cleanup failed."
-        : "Packaged verification failed."
-  };
-}
-
-async function writeMachineEvidence(
-  resultPath: string,
-  value: unknown
-): Promise<void> {
-  await writeFile(resultPath, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600
-  });
-}
-
 function parseRecord(
   value: unknown,
   field: string
@@ -971,18 +817,36 @@ function parseRecord(
   return value as Record<string, unknown>;
 }
 
-function requireEvidencePath(value: string): string {
+function requireEvidencePath(
+  value: string,
+  packaged: PackagedPaths
+): string {
   const candidate = requireAbsolutePath(value, evidencePathEnvironment);
-  if (path.extname(candidate).toLocaleLowerCase() !== ".png") {
-    throw new Error(`${evidencePathEnvironment} must end in .png.`);
+  const expected = path.join(
+    path.dirname(path.dirname(packaged.executablePath)),
+    "packaged-e2e.png"
+  );
+  if (!samePath(candidate, expected)) {
+    throw new Error(
+      `${evidencePathEnvironment} must be the exact release evidence path.`
+    );
   }
   return candidate;
 }
 
-function requireResultPath(value: string): string {
+function requireResultPath(
+  value: string,
+  packaged: PackagedPaths
+): string {
   const candidate = requireAbsolutePath(value, resultPathEnvironment);
-  if (path.extname(candidate).toLocaleLowerCase() !== ".json") {
-    throw new Error(`${resultPathEnvironment} must end in .json.`);
+  const expected = path.join(
+    path.dirname(path.dirname(packaged.executablePath)),
+    "packaged-e2e-result.json"
+  );
+  if (!samePath(candidate, expected)) {
+    throw new Error(
+      `${resultPathEnvironment} must be the exact release result path.`
+    );
   }
   return candidate;
 }
@@ -1033,4 +897,14 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
+}
+
+async function delayWithinDeadline(
+  milliseconds: number,
+  deadlineAt: number
+): Promise<void> {
+  const remaining = deadlineAt - monotonicNow();
+  if (remaining > 0) {
+    await delay(Math.min(milliseconds, remaining));
+  }
 }

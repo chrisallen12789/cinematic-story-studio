@@ -71,6 +71,30 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     packagedE2eEvidenceComplete: true,
   });
   assert.equal(first.manifest.packagedE2e.result, "passed");
+  assert.deepEqual(
+    first.manifest.packagedE2e.machineResult.completedLaunches,
+    [1, 2],
+  );
+  assert.equal(
+    first.manifest.packagedE2e.machineResult.applicationLaunchBegan,
+    true,
+  );
+  assert.equal(
+    first.manifest.packagedE2e.machineResult.ownershipEstablished,
+    true,
+  );
+  assert.equal(
+    first.manifest.packagedE2e.machineResult.cleanupCompleted,
+    true,
+  );
+  assert.equal(
+    first.manifest.packagedE2e.machineResult.failureStage,
+    null,
+  );
+  assert.equal(
+    first.manifest.packagedE2e.machineResult.failureCode,
+    null,
+  );
   assert.equal(
     first.manifest.packagedE2e.screenshot.path,
     "apps/desktop/release/0.1.0/packaged-e2e.png",
@@ -176,6 +200,41 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   );
 });
 
+test("accepts a shutdown-adopted descendant when identity and exit proof agree", async (t) => {
+  const fixture = await createFixture(t);
+  const value = JSON.parse(await readFile(fixture.resultPath, "utf8"));
+  value.launches[0].ownership.processes.push({
+    pid: 4102,
+    parentPid: 4100,
+    kind: "app",
+    executableName: "Cinematic Story Studio.exe",
+    creationDate: "2026-07-29T18:15:21.5000000Z",
+  });
+  value.launches[0].exitProof.ownedPids.push(4102);
+  await writeFile(
+    fixture.resultPath,
+    `${JSON.stringify(value)}\n`,
+    "utf8",
+  );
+
+  const { manifest } = await generateBuildEvidence(
+    generationOptions(fixture, "success"),
+  );
+
+  assert.equal(
+    manifest.packagedE2e.machineResult.contractValid,
+    true,
+  );
+  assert.deepEqual(
+    manifest.packagedE2e.launches[0].exitProof.ownedPids,
+    [4100, 4101, 4102],
+  );
+  assert.equal(
+    manifest.assertions.packagedE2eOwnershipExitProven,
+    true,
+  );
+});
+
 test("records and rejects a staged service that differs from the embedded service", async (t) => {
   const fixture = await createFixture(t);
   await writeFile(fixture.embeddedServicePath, "different-service", "utf8");
@@ -254,6 +313,22 @@ test("rejects a successful step without exact harness ownership evidence", async
         );
       },
     },
+    {
+      name: "forced owned PID",
+      mutate(value) {
+        value.launches[0].exitProof.forcedPids.push(
+          value.launches[0].ownership.rootPid,
+        );
+      },
+    },
+    {
+      name: "remaining owned PID",
+      mutate(value) {
+        value.launches[0].exitProof.remainingPids.push(
+          value.launches[0].ownership.rootPid,
+        );
+      },
+    },
   ];
   for (const malformed of malformedResults) {
     const value = structuredClone(validResult);
@@ -284,6 +359,287 @@ test("rejects a successful step without exact harness ownership evidence", async
   }
 });
 
+test("accepts structured prelaunch failure while keeping the packaged gate incomplete", async (t) => {
+  const fixture = await createFixture(t);
+  await rm(fixture.screenshotPath);
+  await writeFile(
+    fixture.resultPath,
+    `${JSON.stringify({
+      schemaVersion: "2.0.0",
+      completedAt: COMPLETED_AT,
+      status: "failed",
+      failureStage: "prelaunch_inventory_1",
+      failureCode: "PROCESS_INVENTORY_TIMEOUT",
+      packagedVersion: APP_VERSION,
+      executable:
+        "release/0.1.0/win-unpacked/Cinematic Story Studio.exe",
+      fixture: "fixtures/synthetic-story/sample-story.md",
+      isolationEnvironment: ["APPDATA", "LOCALAPPDATA", "TEMP", "TMP"],
+      completedLaunches: [],
+      applicationLaunchBegan: false,
+      ownershipEstablished: false,
+      cleanupCompleted: true,
+      preexistingRelevantProcesses: null,
+      flow: [
+        "create",
+        "import_synthetic_fixture",
+        "analyze",
+        "correct_speaker",
+        "close",
+        "restart",
+        "restore",
+        "close",
+      ],
+      screenshot: {
+        artifactId: "packaged-ui-screenshot",
+        captured: false,
+      },
+      launches: [],
+    })}\n`,
+    "utf8",
+  );
+
+  const { manifest } = await generateBuildEvidence(
+    generationOptions(fixture, "failure"),
+  );
+
+  assert.equal(manifest.packagedE2e.result, "failed");
+  assert.equal(manifest.packagedE2e.machineResult.exists, true);
+  assert.equal(
+    manifest.packagedE2e.machineResult.contractValid,
+    true,
+  );
+  assert.equal(
+    manifest.packagedE2e.machineResult.reportedStatus,
+    "failed",
+  );
+  assert.equal(
+    manifest.packagedE2e.machineResult.failureStage,
+    "prelaunch_inventory_1",
+  );
+  assert.equal(
+    manifest.packagedE2e.machineResult.failureCode,
+    "PROCESS_INVENTORY_TIMEOUT",
+  );
+  assert.equal(
+    manifest.packagedE2e.machineResult.applicationLaunchBegan,
+    false,
+  );
+  assert.equal(
+    manifest.packagedE2e.machineResult.ownershipEstablished,
+    false,
+  );
+  assert.equal(
+    manifest.packagedE2e.machineResult.cleanupCompleted,
+    true,
+  );
+  assert.deepEqual(
+    manifest.packagedE2e.machineResult.completedLaunches,
+    [],
+  );
+  assert.equal(
+    manifest.assertions.packagedE2eHarnessResultMatchesStepOutcome,
+    true,
+  );
+  assert.equal(
+    manifest.assertions.packagedE2eOwnershipExitProven,
+    false,
+  );
+  assert.equal(
+    manifest.assertions.packagedE2eEvidenceComplete,
+    false,
+  );
+  assert.equal(manifest.testTimestamp, COMPLETED_AT);
+});
+
+test("validates exact failed progress and rejects contradictory v2 evidence", async (t) => {
+  const fixture = await createFixture(t);
+  const firstLaunch = launchEvidence(1, 4100, 4101);
+  const secondLaunch = launchEvidence(2, 4200, 4201);
+  const validFailures = [
+    {
+      name: "first application launch failed before ownership",
+      value: failedMachineResult({
+        failureStage: "launch_1",
+        failureCode: "APPLICATION_LAUNCH_FAILED",
+        applicationLaunchBegan: true,
+        cleanupCompleted: false,
+      }),
+      ownershipExitProven: false,
+    },
+    {
+      name: "first application readiness failed before service ownership",
+      value: failedMachineResult({
+        failureStage: "readiness_1",
+        failureCode: "APPLICATION_READINESS_FAILED",
+        applicationLaunchBegan: true,
+      }),
+      ownershipExitProven: false,
+    },
+    {
+      name: "inventory helper exit was unconfirmed before launch",
+      value: failedMachineResult({
+        failureCode: "PROCESS_INVENTORY_HELPER_EXIT_UNCONFIRMED",
+        cleanupCompleted: false,
+      }),
+      ownershipExitProven: false,
+    },
+    {
+      name: "second prelaunch inventory failed after launch one completed",
+      value: failedMachineResult({
+        failureStage: "prelaunch_inventory_2",
+        failureCode: "PROCESS_INVENTORY_TIMEOUT",
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+        completedLaunches: [1],
+        launches: [firstLaunch],
+      }),
+      ownershipExitProven: false,
+    },
+    {
+      name: "cleanup failed after both ownership exits were proven",
+      value: failedMachineResult({
+        failureStage: "cleanup",
+        failureCode: "CLEANUP_FAILED",
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+        cleanupCompleted: false,
+        completedLaunches: [1, 2],
+        screenshotCaptured: true,
+        launches: [firstLaunch, secondLaunch],
+      }),
+      ownershipExitProven: true,
+    },
+  ];
+
+  for (const candidate of validFailures) {
+    await writeFile(
+      fixture.resultPath,
+      `${JSON.stringify(candidate.value)}\n`,
+      "utf8",
+    );
+    const { manifest } = await generateBuildEvidence(
+      generationOptions(fixture, "failure"),
+    );
+    assert.equal(
+      manifest.packagedE2e.machineResult.contractValid,
+      true,
+      candidate.name,
+    );
+    assert.equal(
+      manifest.assertions.packagedE2eHarnessResultMatchesStepOutcome,
+      true,
+      candidate.name,
+    );
+    assert.equal(
+      manifest.assertions.packagedE2eOwnershipExitProven,
+      candidate.ownershipExitProven,
+      candidate.name,
+    );
+    assert.equal(
+      manifest.assertions.packagedE2eEvidenceComplete,
+      false,
+      candidate.name,
+    );
+  }
+
+  const malformedBaseline = failedMachineResult();
+  malformedBaseline.preexistingRelevantProcesses = [
+    {
+      pid: 3000,
+      name: "Cinematic Story Studio.exe",
+      creationDate: "2026-07-29T18:15:19.0000000Z",
+      executablePath: "C:\\private\\unrelated.exe",
+    },
+  ];
+  const invalidFailures = [
+    {
+      name: "malformed non-null baseline presented as unavailable",
+      value: malformedBaseline,
+    },
+    {
+      name: "failure code does not match its stage",
+      value: failedMachineResult({
+        failureCode: "SCREENSHOT_CAPTURE_FAILED",
+      }),
+    },
+    {
+      name: "readiness stage reports an inventory-only code",
+      value: failedMachineResult({
+        failureStage: "readiness_1",
+        failureCode: "PROCESS_INVENTORY_TIMEOUT",
+        applicationLaunchBegan: true,
+      }),
+    },
+    {
+      name: "launch one claims ownership before ownership was established",
+      value: failedMachineResult({
+        failureStage: "launch_1",
+        failureCode: "APPLICATION_LAUNCH_FAILED",
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+      }),
+    },
+    {
+      name: "second inventory has no completed first launch",
+      value: failedMachineResult({
+        failureStage: "prelaunch_inventory_2",
+        failureCode: "PROCESS_INVENTORY_TIMEOUT",
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+      }),
+    },
+    {
+      name: "second shutdown claims progress without launch evidence",
+      value: failedMachineResult({
+        failureStage: "shutdown_2",
+        failureCode: "SHUTDOWN_VERIFICATION_FAILED",
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+        screenshotCaptured: true,
+      }),
+    },
+    {
+      name: "cleanup failure claims cleanup completed",
+      value: failedMachineResult({
+        failureStage: "cleanup",
+        failureCode: "CLEANUP_FAILED",
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+        completedLaunches: [1, 2],
+        screenshotCaptured: true,
+        launches: [firstLaunch, secondLaunch],
+      }),
+    },
+  ];
+
+  for (const candidate of invalidFailures) {
+    await writeFile(
+      fixture.resultPath,
+      `${JSON.stringify(candidate.value)}\n`,
+      "utf8",
+    );
+    const { manifest } = await generateBuildEvidence(
+      generationOptions(fixture, "failure"),
+    );
+    assert.equal(
+      manifest.packagedE2e.machineResult.contractValid,
+      false,
+      candidate.name,
+    );
+    assert.equal(
+      manifest.assertions.packagedE2eHarnessResultMatchesStepOutcome,
+      false,
+      candidate.name,
+    );
+    assert.equal(
+      manifest.assertions.packagedE2eOwnershipExitProven,
+      false,
+      candidate.name,
+    );
+  }
+});
+
 test("preserves failed-gate evidence when screenshot and result files are absent", async (t) => {
   const fixture = await createFixture(t);
   await Promise.all([
@@ -300,6 +656,10 @@ test("preserves failed-gate evidence when screenshot and result files are absent
   assert.equal(manifest.packagedE2e.machineResult.exists, false);
   assert.equal(
     manifest.assertions.packagedE2eHarnessResultMatchesStepOutcome,
+    false,
+  );
+  assert.equal(
+    manifest.assertions.packagedE2eEvidenceComplete,
     false,
   );
 });
@@ -362,14 +722,21 @@ async function createFixture(t) {
     writeFile(
       resultPath,
       `${JSON.stringify({
-        schemaVersion: "1.0.0",
+        schemaVersion: "2.0.0",
         completedAt: COMPLETED_AT,
         status: "passed",
+        failureStage: null,
+        failureCode: null,
         packagedVersion: APP_VERSION,
         executable:
           "release/0.1.0/win-unpacked/Cinematic Story Studio.exe",
         fixture: "fixtures/synthetic-story/sample-story.md",
         isolationEnvironment: ["APPDATA", "LOCALAPPDATA", "TEMP", "TMP"],
+        completedLaunches: [1, 2],
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+        cleanupCompleted: true,
+        preexistingRelevantProcesses: [],
         flow: [
           "create",
           "import_synthetic_fixture",
@@ -467,5 +834,50 @@ function launchEvidence(launch, appPid, servicePid) {
       forcedPids: [],
       remainingPids: [],
     },
+  };
+}
+
+function failedMachineResult({
+  failureStage = "prelaunch_inventory_1",
+  failureCode = "PROCESS_INVENTORY_TIMEOUT",
+  applicationLaunchBegan = false,
+  ownershipEstablished = false,
+  cleanupCompleted = true,
+  completedLaunches = [],
+  screenshotCaptured = false,
+  launches = [],
+} = {}) {
+  return {
+    schemaVersion: "2.0.0",
+    completedAt: COMPLETED_AT,
+    status: "failed",
+    failureStage,
+    failureCode,
+    packagedVersion: APP_VERSION,
+    executable:
+      "release/0.1.0/win-unpacked/Cinematic Story Studio.exe",
+    fixture: "fixtures/synthetic-story/sample-story.md",
+    isolationEnvironment: ["APPDATA", "LOCALAPPDATA", "TEMP", "TMP"],
+    completedLaunches,
+    applicationLaunchBegan,
+    ownershipEstablished,
+    cleanupCompleted,
+    preexistingRelevantProcesses:
+      failureStage === "prelaunch_inventory_1" ? null : [],
+    flow: [
+      "create",
+      "import_synthetic_fixture",
+      "analyze",
+      "correct_speaker",
+      "close",
+      "restart",
+      "restore",
+      "close",
+    ],
+    screenshot: {
+      artifactId: "packaged-ui-screenshot",
+      captured: screenshotCaptured,
+    },
+    launches,
   };
 }

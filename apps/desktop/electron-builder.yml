@@ -1,0 +1,31 @@
+appId: com.cinematicstorystudio.desktop
+productName: Cinematic Story Studio
+copyright: Copyright (c) 2026
+asar: true
+compression: normal
+directories:
+  output: release/${version}
+  buildResources: .runtime/build-assets
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: build-resources/service
+    to: service
+    filter:
+      - "**/*"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: .runtime/build-assets/icon.ico
+  artifactName: Cinematic-Story-Studio-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Cinematic Story Studio
+publish: null

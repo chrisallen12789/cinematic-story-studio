@@ -1,0 +1,19 @@
+# Keep direct versions aligned with pyproject.toml. This input also includes the
+# editable-build backend and pinned lock compiler because the root bootstrap
+# disables build isolation and documents a self-contained regeneration command.
+hatchling==1.31.0
+editables==0.6
+pip-tools==7.6.0
+
+fastapi==0.141.0
+pydantic==2.13.4
+python-multipart==0.0.32
+sqlalchemy==2.0.51
+uvicorn==0.52.0
+
+httpx==0.28.1
+mypy==1.20.2
+pyinstaller==6.21.0
+pytest==9.0.3
+pytest-cov==6.3.0
+ruff==0.16.0

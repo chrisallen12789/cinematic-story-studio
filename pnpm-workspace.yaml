@@ -1,0 +1,16 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Keep the desktop-packager toolchain on the patched expansion implementation;
+# the API remains compatible with its older minimatch consumers.
+overrides:
+  brace-expansion: 5.0.8
+
+# pnpm 11 blocks dependency lifecycle scripts unless they are allow-listed.
+# Electron, electron-winstaller, and esbuild need their pinned official install
+# scripts to fetch or select platform-specific development binaries.
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true

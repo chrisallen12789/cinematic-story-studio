@@ -1,0 +1,56 @@
+{
+  "server": {
+    "port": 8765
+  },
+  "openai": {
+    "api_key": "",
+    "model": "gpt-4o-mini-tts",
+    "custom_voices": [],
+    "narrator_instructions": "",
+    "character_instructions": ""
+  },
+  "elevenlabs": {
+    "api_key": "",
+    "model": "eleven_multilingual_v2"
+  },
+  "azure": {
+    "api_key": "",
+    "region": "eastus",
+    "endpoint": ""
+  },
+  "google": {
+    "api_key": ""
+  },
+  "aws": {
+    "access_key_id": "",
+    "secret_access_key": "",
+    "session_token": "",
+    "region": "us-east-1"
+  },
+  "deepgram": {
+    "api_key": ""
+  },
+  "murf": {
+    "api_key": "",
+    "model": "falcon-2"
+  },
+  "cartesia": {
+    "api_key": "",
+    "version": "2026-03-01",
+    "model": "sonic-3.5"
+  },
+  "playht": {
+    "api_key": "",
+    "user_id": "",
+    "voice_engine": "Play3.0-mini"
+  },
+  "local_openai": {
+    "base_url": "http://127.0.0.1:8880/v1",
+    "api_key": "",
+    "model": "kokoro"
+  },
+  "piper": {
+    "executable": "piper",
+    "voice_models_dir": "piper_voices"
+  }
+}

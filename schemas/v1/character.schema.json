@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v1/character.schema.json",
+  "title": "Character",
+  "$ref": "definitions.schema.json#/$defs/Character"
+}

@@ -1,0 +1,24 @@
+{
+  "server": {
+    "port": 8766
+  },
+  "director": {
+    "provider": "heuristic",
+    "openai_model": "gpt-5-mini",
+    "store_openai_responses": false
+  },
+  "sound": {
+    "provider": "procedural",
+    "elevenlabs_model": "eleven_text_to_sound_v2",
+    "prompt_influence": 0.35,
+    "ambience_volume_db": -27,
+    "music_volume_db": -31,
+    "sfx_volume_db": -13
+  },
+  "render": {
+    "sample_rate": 44100,
+    "speech_pause_ms": 165,
+    "scene_pause_ms": 850,
+    "target_loudness_lufs": -18
+  }
+}

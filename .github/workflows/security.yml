@@ -1,0 +1,54 @@
+name: Security safeguards
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "31 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-and-secret-scan:
+    name: Private-content policy and Gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out full history without persisted credentials
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Scan tracked paths and content without printing values
+        run: node scripts/repo-scan.mjs --tracked
+
+      - name: Download checksum-pinned Gitleaks
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location \
+            --output "${RUNNER_TEMP}/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  ${RUNNER_TEMP}/gitleaks.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "${RUNNER_TEMP}/gitleaks.tar.gz" \
+            --directory "${RUNNER_TEMP}" gitleaks
+
+      - name: Scan Git history with secret values redacted
+        shell: bash
+        run: >-
+          "${RUNNER_TEMP}/gitleaks"
+          git
+          --redact
+          --no-banner
+          --exit-code 1
+          .

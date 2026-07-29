@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v1/music-cue.schema.json",
+  "title": "MusicCue",
+  "$ref": "definitions.schema.json#/$defs/MusicCue"
+}

@@ -1,0 +1,105 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+voice_hub_config.json
+cinematic_config.json
+book.json
+
+# Private project content and generated media
+local-projects/
+local-models/
+local-cache/
+local-renders/
+local-fixtures/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.mp3
+*.wav
+*.m4a
+*.m4b
+*.flac
+*.aac
+*.ogg
+
+# Manuscripts and private source documents
+*.doc
+*.docx
+*.epub
+*.pdf
+
+# JavaScript dependencies and build output
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.vite/
+dist/
+build/
+out/
+release/
+installer-output/
+playwright-report/
+test-results/
+coverage/
+*.tsbuildinfo
+
+# Python environments, caches, and packaging output
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Local services, containers, caches, and models
+.docker/
+docker-data/
+volumes/
+models/
+cache/
+renders/
+logs/
+*.log
+
+# Extraction and temporary files
+tmp/
+temp/
+staging/
+*.tmp
+*.temp
+*.bak
+*.swp
+~$*
+
+# IDE and operating-system metadata
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Electron and native crash artifacts
+*.dmp
+*.node
+
+# Local application state
+apps/local-service/data/
+apps/desktop/.runtime/

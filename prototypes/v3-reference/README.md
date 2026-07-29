@@ -20,4 +20,3 @@ identify historical settings that may need an explicit, typed migration.
 Production credentials must use operating-system-backed secure storage. Production
 provider endpoints must be typed and allowlisted; they must not be accepted from
 these examples as arbitrary runtime URLs.
-

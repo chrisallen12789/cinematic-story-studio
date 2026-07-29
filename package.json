@@ -1,0 +1,24 @@
+{
+  "name": "@cinematic-story-studio/root",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows-first development orchestration for Cinematic Story Studio.",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22.12 <25",
+    "pnpm": ">=11 <12"
+  },
+  "scripts": {
+    "postinstall": "node scripts/python.mjs install",
+    "dev": "node scripts/dev.mjs",
+    "lint": "node scripts/check.mjs lint",
+    "typecheck": "node scripts/check.mjs typecheck",
+    "test": "node scripts/check.mjs test",
+    "build": "node scripts/build.mjs",
+    "service:build": "node scripts/build-service.mjs",
+    "service:python": "node scripts/python.mjs exec",
+    "scan:tracked": "node scripts/repo-scan.mjs --tracked",
+    "scan:staged": "node scripts/repo-scan.mjs --staged",
+    "precommit": "node scripts/repo-scan.mjs --staged && node scripts/git-check.mjs --staged"
+  }
+}

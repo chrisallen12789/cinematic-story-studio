@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11 blocks dependency lifecycle scripts unless they are allow-listed.
+# Electron and esbuild need their official install scripts to fetch/prepare
+# platform-specific development binaries.
+allowBuilds:
+  electron: true
+  esbuild: true

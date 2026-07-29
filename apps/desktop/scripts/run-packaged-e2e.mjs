@@ -3,7 +3,8 @@ import { URL, fileURLToPath } from "node:url";
 
 const requiredEnvironment = [
   "CSS_PACKAGED_E2E_EXECUTABLE",
-  "CSS_PACKAGED_E2E_EVIDENCE_PATH"
+  "CSS_PACKAGED_E2E_EVIDENCE_PATH",
+  "CSS_PACKAGED_E2E_RESULT_PATH"
 ];
 const missing = requiredEnvironment.filter((name) => {
   const value = process.env[name];

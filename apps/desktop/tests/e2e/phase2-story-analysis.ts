@@ -38,6 +38,9 @@ const phase2CorrectionReason = Object.freeze({
   continuityDisposition:
     "Phase 2 E2E: human review confirms this continuity issue."
 });
+const snapshotContextRetryLimit = 3;
+const snapshotContextRetryDelayMs = 250;
+const projectContextChangedCode = "PROJECT_CONTEXT_CHANGED";
 
 export interface Phase2RuntimeSnapshot {
   readonly run: StoryAnalysisRun;
@@ -213,10 +216,39 @@ export async function runPhase2GovernanceWorkflow(
 export async function readPhase2RuntimeSnapshot(
   page: Page
 ): Promise<Phase2RuntimeSnapshot> {
+  for (let attempt = 1; attempt <= snapshotContextRetryLimit; attempt += 1) {
+    try {
+      return await readPhase2RuntimeSnapshotAttempt(page);
+    } catch (error) {
+      if (
+        !isProjectContextChangedError(error) ||
+        attempt === snapshotContextRetryLimit
+      ) {
+        throw error;
+      }
+      // When a durable job leaves an active state, the renderer performs one
+      // same-project refresh. That refresh intentionally changes the guarded
+      // selection epoch and rejects concurrent evidence reads. Retry only that
+      // explicit failure, rebuild the entire exact snapshot, and never reuse a
+      // partial page from the invalidated attempt.
+      await page.waitForTimeout(snapshotContextRetryDelayMs * attempt);
+    }
+  }
+  throw new Error("The Phase 2 runtime snapshot retry bound was exhausted.");
+}
+
+async function readPhase2RuntimeSnapshotAttempt(
+  page: Page
+): Promise<Phase2RuntimeSnapshot> {
   const snapshot = await page.evaluate(
     async ({ collections }) => {
       const restored = await window.cinematicStory.projects.restoreRecent();
-      if (!restored.ok || restored.value === null) {
+      if (!restored.ok) {
+        throw new Error(
+          `The Phase 2 project restore failed with ${restored.error.code}: ${restored.error.message}`
+        );
+      }
+      if (restored.value === null) {
         throw new Error("The Phase 2 project could not be restored.");
       }
       const projectedRun = restored.value.currentAnalysisRun;
@@ -325,6 +357,13 @@ export async function readPhase2RuntimeSnapshot(
     { collections: ANALYSIS_ENTITY_COLLECTIONS }
   );
   return snapshot as Phase2RuntimeSnapshot;
+}
+
+function isProjectContextChangedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes(`${projectContextChangedCode}:`)
+  );
 }
 
 export function buildPackagedStoryAnalysisEvidence(

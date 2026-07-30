@@ -21,11 +21,15 @@ it must never contain private manuscript content.
 | Field | Value |
 | --- | --- |
 | Branch | `codex/phase-1-secure-ingest` |
-| Commit | To be filled from the pushed review revision |
+| Code/artifact source commit | `7405d5daa0b917cd60e8ab6709d3fc73e232358b` |
 | Application version | `0.1.0` |
 | Verification date | 2026-07-30 UTC |
-| Windows CI run/job | To be filled from GitHub Actions |
-| Artifact ID/digest | To be filled from GitHub Actions |
+| Windows CI run/job | `30513800598` / `90779170857`, successful |
+| Artifact ID/digest | `8748186578` / `sha256:d4ea8a45e9604cb54c4c9d142697690b011cb8c39d01fcf01945e1bd906fca85` |
+
+The source commit above is the code and exact artifact-producing revision.
+This record's evidence-closure commit changes only this documentation; its
+final-head workflows must also pass before handoff.
 
 ## Locally executed checks
 
@@ -39,8 +43,8 @@ copy a GitHub count into this table.
 | Type checks | `pnpm typecheck` | Passed both TypeScript projects and strict mypy across 18 service source files |
 | Repository/schema/tooling/service/desktop tests | `pnpm test` | Passed: 27 repository/schema/tooling, 154 backend, and 71 desktop tests; 252 total, 0 skipped, 1 warning |
 | Windows service and desktop build | `pnpm build` | Passed the PyInstaller service smoke test and unpacked Electron build |
-| Tracked-content scan | `pnpm scan:tracked` | Pending final revision |
-| Clean-tree check | `node scripts/git-check.mjs --clean` | Run only after intended changes are committed |
+| Tracked-content scan | `pnpm scan:tracked` | Passed across 191 tracked files without printing matched values |
+| Clean-tree check | `node scripts/git-check.mjs --clean` | Passed after the intended source commits |
 | Development Electron E2E | Set `CSS_E2E=1`; run `pnpm --filter @cinematic-story-studio/desktop exec playwright test tests/e2e/persistence.spec.ts` after `pnpm build` | Passed: 1 development persistence test; the packaged-only test was explicitly skipped |
 | Packaged Electron E2E against local build | Set `CSS_PACKAGED_E2E_EXECUTABLE`, `CSS_PACKAGED_E2E_EVIDENCE_PATH`, and `CSS_PACKAGED_E2E_RESULT_PATH` to the exact built release paths; run `pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged` | Attempted but did not launch: local Device Guard policy `0283ac0f-fff1-49ae-ada1-8a933130cad6` blocked the unsigned development executable at Enterprise signing level; the fail-closed result records no owned launch, no screenshot, and completed cleanup |
 
@@ -79,18 +83,18 @@ Fill the final run evidence without combining environments:
 
 | GitHub check | Exact result |
 | --- | --- |
-| Workflow head SHA / tested checkout SHA | Pending |
-| Backend Pytest passed / skipped / warnings | Pending |
-| FFmpeg-dependent GitHub result | Pending |
-| Secure-ingest fixture/schema/tooling gate | Pending |
-| Development Electron E2E | Pending |
-| Packaged-E2E step outcome | Pending |
-| Import Review proof | Pending |
-| Launch 1 owned app/service PIDs and exit | Pending |
-| Launch 2 owned app/service PIDs and exit | Pending |
-| Build-evidence manifest generation | Pending |
-| Tracked scan / clean checkout | Pending |
-| Artifact ID / digest / retention | Pending |
+| Workflow head SHA / tested checkout SHA | Both `7405d5daa0b917cd60e8ab6709d3fc73e232358b`; push-run PR head is correctly `null` |
+| Backend Pytest passed / skipped / warnings | 153 passed, 1 skipped, 1 warning |
+| FFmpeg-dependent GitHub result | Explicitly skipped because FFmpeg was not installed; all 153 other backend tests passed |
+| Secure-ingest fixture/schema/tooling gate | 20 passed, 0 skipped; exact `lxml==6.1.1` and `pypdf==6.14.2` assertions passed |
+| Development Electron E2E | 1 passed in 10.7 seconds |
+| Packaged-E2E step outcome | Successful; 1 passed in 27.2 seconds against the exact unpacked executable |
+| Import Review proof | DOCX source `024cdebffa5824a454ef5167be0bf147e5717f4ef107dadea5fa207927703d1e`; extracted text `9c4f7ae0261dd50d1064d2b9cf1ee40b1a46f89fa65485c096baafd84830c5d5`; extraction revision 1; 0 warnings; approval, extraction, analysis, and correction persisted after restart |
+| Launch 1 owned app/service PIDs and exit | App 3816, 5008, 6404, 9140; service 3400, 5624, 7812; all seven exited gracefully, none forced or remaining |
+| Launch 2 owned app/service PIDs and exit | App 6420, 7556, 9620, 9668; service 984, 7612; all six exited gracefully, none forced or remaining |
+| Build-evidence manifest generation | Schema 2.0.0 passed every assertion at `2026-07-30T04:31:00.825Z` on GitHub-hosted Windows X64 runner `GitHub Actions 1000001458` |
+| Tracked scan / clean checkout | Both passed after build and E2E |
+| Artifact ID / digest / retention | ID `8748186578`; 426,208,065 bytes; digest `sha256:d4ea8a45e9604cb54c4c9d142697690b011cb8c39d01fcf01945e1bd906fca85`; expires 2026-08-06 |
 
 ## Dependency and vulnerability-audit scope
 
@@ -147,6 +151,20 @@ generation rejects a different schema or flow.
 
 Generated manifests, screenshots, result JSON, service/application binaries,
 and unpacked release trees remain ignored CI artifacts and are never committed.
+
+For run `30513800598`, the manifest records:
+
+- desktop executable: 225,613,824 bytes,
+  SHA-256 `4e230f2273f736094d6dc577986b09c8fbd68e0bc1a385c0074f8836355ec9c1`;
+- staged and embedded service: 26,916,144 bytes each,
+  SHA-256 `cbd5f8f18213b120385c1bb17de66c4bb2279b70df578969d989a4325eaf9a67`,
+  with equality asserted;
+- packaged result JSON: 5,243 bytes,
+  SHA-256 `2452ca9a42b502689301b43fce257d34989e20cfed33aa28d7d1689dea37282a`;
+- packaged screenshot: 170,328 bytes,
+  SHA-256 `e259bd0e36c382861d1d6eb4a5342033d876b5969607a586c2f12cbdb5b12931`;
+- parser-profile fingerprint
+  `3c9fef89ac411e84ef0ef8962b3d43ef3469d090035a537c9bf72c6d93cdd922`.
 
 ## Manual verification
 

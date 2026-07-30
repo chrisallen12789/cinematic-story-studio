@@ -4,14 +4,16 @@ import hmac
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from pathlib import Path
+from tempfile import SpooledTemporaryFile
+from typing import Annotated, Any, BinaryIO, cast
 
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.exceptions import HTTPException as StarletteHttpException
-from starlette.formparsers import MultiPartException
+from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.types import Message, Receive
 
 from .config import ServiceSettings
@@ -24,9 +26,16 @@ from .schemas import (
     CorrectDialogueSpeakerRequest,
     CreateJobRequest,
     CreateProjectRequest,
+    DecideImportReviewRequest,
 )
 from .tools import FfmpegCapabilityChecker
-from .util import PROTOCOL_VERSION, SERVICE_VERSION, new_id, utc_now
+from .util import (
+    PROTOCOL_VERSION,
+    SERVICE_VERSION,
+    ensure_private_directory,
+    new_id,
+    utc_now,
+)
 
 _LOGGER = logging.getLogger("cinematic_story_service")
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "testserver"}
@@ -53,7 +62,42 @@ class _CappedReceive:
         return message
 
 
-async def _bounded_import_form(request: Request, max_import_bytes: int) -> Any:
+class _PrivateMultiPartParser(MultiPartParser):
+    """Keep Starlette's rollover files inside application-owned private storage."""
+
+    def __init__(self, *args: Any, spool_directory: Path, **kwargs: Any) -> None:
+        self._spool_directory = spool_directory
+        super().__init__(*args, **kwargs)
+
+    def on_headers_finished(self) -> None:
+        super().on_headers_finished()
+        upload = self._current_part.file
+        if upload is None:
+            return
+        public_spool = upload.file
+        if not self._files_to_close_on_error or (
+            id(self._files_to_close_on_error[-1]) != id(public_spool)
+        ):
+            raise MultiPartException("The upload staging state is invalid.")
+        private_spool = SpooledTemporaryFile(
+            max_size=self.spool_max_size,
+            dir=str(self._spool_directory),
+        )
+        public_spool.close()
+        self._files_to_close_on_error[-1] = private_spool
+        self._current_part.file = StarletteUploadFile(
+            file=cast(BinaryIO, private_spool),
+            size=0,
+            filename=upload.filename,
+            headers=upload.headers,
+        )
+
+
+async def _bounded_import_form(
+    request: Request,
+    max_import_bytes: int,
+    spool_directory: Path,
+) -> Any:
     body_limit = max_import_bytes + _MULTIPART_OVERHEAD_ALLOWANCE
     raw_content_length = request.headers.get("content-length")
     if raw_content_length is not None:
@@ -78,11 +122,15 @@ async def _bounded_import_form(request: Request, max_import_bytes: int) -> Any:
     request._receive = _CappedReceive(original_receive, body_limit)
     try:
         try:
-            return await request.form(
+            parser = _PrivateMultiPartParser(
+                request.headers,
+                request.stream(),
+                spool_directory=spool_directory,
                 max_files=1,
                 max_fields=2,
                 max_part_size=min(max_import_bytes + 1024, 101 * 1024 * 1024),
             )
+            return await parser.parse()
         except StarletteHttpException as exc:
             if exc.status_code == 400 and exc.detail == "request_body_too_large":
                 raise _BodyLimitExceeded from exc
@@ -117,10 +165,23 @@ def _validated_idempotency_key(value: str | None) -> str | None:
 def create_app(settings: ServiceSettings) -> FastAPI:
     settings = settings.validated()
     database = Database(settings.database_path)
+    multipart_spool_directory = ensure_private_directory(settings.data_dir / "multipart-staging")
     projects = ProjectRepository(database)
     imports = StoryImportService(settings, projects)
-    jobs = JobRepository(database, projects, settings.instance_id)
+    reconciled_staging = imports.reconcile_staging()
+    if reconciled_staging:
+        _LOGGER.info(
+            "reconciled_import_staging count=%d",
+            reconciled_staging,
+        )
+    jobs = JobRepository(
+        database,
+        projects,
+        settings.instance_id,
+        settings.parser_deadline_seconds,
+    )
     jobs.reconcile_interrupted()
+    jobs.reconcile_orphaned_extractions()
     worker = JobWorker(settings, jobs, projects)
     providers = ProviderRegistry(settings)
     ffmpeg = FfmpegCapabilityChecker(settings)
@@ -310,14 +371,18 @@ def create_app(settings: ServiceSettings) -> FastAPI:
             **projects.get_project_detail(project_id),
         }
 
-    @app.post("/api/v1/projects/{project_id}/imports")
+    @app.post("/api/v1/projects/{project_id}/imports", status_code=202)
     async def import_story(
         request: Request,
         project_id: str,
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     ) -> dict[str, Any]:
         try:
-            form = await _bounded_import_form(request, settings.max_import_bytes)
+            form = await _bounded_import_form(
+                request,
+                settings.max_import_bytes,
+                multipart_spool_directory,
+            )
         except _BodyLimitExceeded as exc:
             raise ServiceError(
                 413,
@@ -332,28 +397,121 @@ def create_app(settings: ServiceSettings) -> FastAPI:
                 "MALFORMED_MULTIPART",
                 "The multipart import request is malformed.",
             ) from exc
-        if any(key not in {"file", "declaredFormat"} for key in form):
-            raise ServiceError(
-                422,
-                "INVALID_REQUEST",
-                "The multipart request contains an unknown field.",
+        try:
+            if any(key not in {"file", "declaredFormat"} for key in form):
+                raise ServiceError(
+                    422,
+                    "INVALID_REQUEST",
+                    "The multipart request contains an unknown field.",
+                )
+            upload = form.get("file")
+            if not isinstance(upload, StarletteUploadFile):
+                raise ServiceError(422, "SOURCE_FILE_REQUIRED", "A source file is required.")
+            declared_value = form.get("declaredFormat")
+            if declared_value is not None and not isinstance(declared_value, str):
+                raise ServiceError(422, "INVALID_REQUEST", "The declared format is invalid.")
+            result = await imports.import_upload(
+                project_id=project_id,
+                upload=upload,
+                declared_format=declared_value,
+                idempotency_key=_validated_idempotency_key(idempotency_key),
             )
-        upload = form.get("file")
-        if not isinstance(upload, StarletteUploadFile):
-            raise ServiceError(422, "SOURCE_FILE_REQUIRED", "A source file is required.")
-        declared_value = form.get("declaredFormat")
-        if declared_value is not None and not isinstance(declared_value, str):
-            raise ServiceError(422, "INVALID_REQUEST", "The declared format is invalid.")
-        result = await imports.import_upload(
+        finally:
+            await form.close()
+        extraction_id = str(result.extraction["extractionId"])
+        extraction_revision = int(result.extraction["revision"])
+        input_fingerprint = str(result.extraction["sourceSha256"])
+        job = jobs.create_extraction_job(
             project_id=project_id,
-            upload=upload,
-            declared_format=declared_value,
-            idempotency_key=_validated_idempotency_key(idempotency_key),
+            extraction_id=extraction_id,
+            input_revision=extraction_revision,
+            input_fingerprint=input_fingerprint,
+            idempotency_key=(
+                _validated_idempotency_key(idempotency_key) or f"import-{extraction_id}"
+            ),
         )
+        worker.wake()
         return {
             "correlationId": _correlation_id(request),
             "sourceDocument": result.source_document,
-            "story": result.story,
+            "extraction": result.extraction,
+            "job": job,
+        }
+
+    @app.get("/api/v1/projects/{project_id}/imports/{review_id}/review")
+    def import_review(
+        request: Request,
+        project_id: str,
+        review_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            "review": projects.get_import_review(
+                project_id=project_id,
+                review_id=review_id,
+            ),
+        }
+
+    @app.post("/api/v1/projects/{project_id}/imports/{review_id}/review/decision")
+    def decide_import_review(
+        request: Request,
+        project_id: str,
+        review_id: str,
+        body: DecideImportReviewRequest,
+    ) -> dict[str, Any]:
+        if body.review_id != review_id:
+            raise ServiceError(
+                422,
+                "IMPORT_REVIEW_ID_MISMATCH",
+                "The Import Review identifier does not match the request path.",
+            )
+        review, decision, project_revision, analysis_allowed = projects.decide_import_review(
+            project_id=project_id,
+            review_id=review_id,
+            decision=body.decision,
+            rationale=body.rationale,
+            expected_revision=body.expected_revision,
+            evidence_fingerprint=body.evidence_fingerprint,
+            idempotency_key=body.idempotency_key,
+        )
+        return {
+            "correlationId": _correlation_id(request),
+            "review": review,
+            "decision": decision,
+            "projectRevision": project_revision,
+            "analysisAllowed": analysis_allowed,
+        }
+
+    @app.post(
+        "/api/v1/projects/{project_id}/imports/{source_document_id}/reextract",
+        status_code=202,
+    )
+    def reextract_import(
+        request: Request,
+        project_id: str,
+        source_document_id: str,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> dict[str, Any]:
+        validated_idempotency_key = _validated_idempotency_key(idempotency_key)
+        extraction = projects.create_reextraction(
+            project_id=project_id,
+            source_document_id=source_document_id,
+            idempotency_key=validated_idempotency_key,
+        )
+        job = jobs.create_extraction_job(
+            project_id=project_id,
+            extraction_id=str(extraction["extractionId"]),
+            input_revision=int(extraction["revision"]),
+            input_fingerprint=str(extraction["sourceSha256"]),
+            idempotency_key=(
+                validated_idempotency_key or f"reextract-{extraction['extractionId']}"
+            ),
+        )
+        worker.wake()
+        return {
+            "correlationId": _correlation_id(request),
+            "extraction": extraction,
+            "job": job,
         }
 
     @app.put("/api/v1/projects/{project_id}/dialogue-lines/{line_id}/speaker")

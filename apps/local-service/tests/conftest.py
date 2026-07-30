@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -28,6 +29,18 @@ SYNTHETIC_STORY = (
     'A voice crossed the static: "Who waits beyond the storm?"\r\n'
 )
 SYNTHETIC_BYTES = SYNTHETIC_STORY.encode("utf-8")
+SYNTHETIC_FIXTURES = Path(__file__).parents[3] / "fixtures" / "synthetic-story"
+
+_FIXTURE_MEDIA_TYPES = {
+    "txt": ("sample-story.txt", "text/plain"),
+    "markdown": ("sample-story.md", "text/markdown"),
+    "docx": (
+        "sample-story.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ),
+    "epub": ("sample-story.epub", "application/epub+zip"),
+    "pdf": ("sample-story.pdf", "application/pdf"),
+}
 
 
 @pytest.fixture
@@ -55,6 +68,103 @@ def auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {TOKEN}"}
 
 
+def synthetic_fixture(
+    document_format: str,
+) -> tuple[str, bytes, str]:
+    filename, media_type = _FIXTURE_MEDIA_TYPES[document_format]
+    if document_format in {"txt", "markdown"}:
+        content = (SYNTHETIC_FIXTURES / filename).read_bytes()
+    else:
+        encoded = (SYNTHETIC_FIXTURES / f"{filename}.base64").read_text("ascii")
+        content = base64.b64decode("".join(encoded.splitlines()), validate=True)
+    return filename, content, media_type
+
+
+def submit_import(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    *,
+    project_id: str,
+    filename: str,
+    content: bytes,
+    media_type: str,
+    declared_format: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    response = client.post(
+        f"/api/v1/projects/{project_id}/imports",
+        headers={**auth_headers, "Idempotency-Key": idempotency_key},
+        data={"declaredFormat": declared_format},
+        files={"file": (filename, content, media_type)},
+    )
+    assert response.status_code == 202, response.text
+    return response.json()
+
+
+def wait_for_extraction(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    queued_import: dict[str, Any],
+) -> dict[str, Any]:
+    terminal = wait_for_job(
+        client,
+        auth_headers,
+        queued_import["job"]["jobId"],
+        {"succeeded", "failed", "cancelled", "interrupted"},
+    )
+    assert terminal["state"] == "succeeded", terminal
+    return terminal
+
+
+def review_for_extraction(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    *,
+    project_id: str,
+    extraction_id: str,
+) -> dict[str, Any]:
+    detail = client.get(
+        f"/api/v1/projects/{project_id}",
+        headers=auth_headers,
+    )
+    assert detail.status_code == 200, detail.text
+    return next(
+        value for value in detail.json()["importReviews"] if value["extractionId"] == extraction_id
+    )
+
+
+def decide_import_review(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    *,
+    project_id: str,
+    review: dict[str, Any],
+    decision: str,
+    idempotency_key: str,
+    rationale: str | None = None,
+    expected_revision: int | None = None,
+    evidence_fingerprint: str | None = None,
+) -> Any:
+    payload: dict[str, Any] = {
+        "reviewId": review["reviewId"],
+        "decision": decision,
+        "expectedRevision": (
+            review["revision"] if expected_revision is None else expected_revision
+        ),
+        "evidenceFingerprint": (
+            review["evidenceFingerprint"] if evidence_fingerprint is None else evidence_fingerprint
+        ),
+        "idempotencyKey": idempotency_key,
+    }
+    if rationale is not None:
+        payload["rationale"] = rationale
+    return client.post(
+        (f"/api/v1/projects/{project_id}/imports/{review['reviewId']}/review/decision"),
+        headers=auth_headers,
+        json=payload,
+    )
+
+
 def create_imported_project(
     client: TestClient,
     auth_headers: dict[str, str],
@@ -70,17 +180,66 @@ def create_imported_project(
     )
     assert created.status_code == 200, created.text
     project = created.json()["project"]
-    imported = client.post(
-        f"/api/v1/projects/{project['projectId']}/imports",
-        headers={**auth_headers, "Idempotency-Key": import_key},
-        data={"declaredFormat": "markdown"},
-        files={"file": ("sample-story.md", story_bytes, "text/markdown")},
+    queued = submit_import(
+        client,
+        auth_headers,
+        project_id=project["projectId"],
+        filename="sample-story.md",
+        content=story_bytes,
+        media_type="text/markdown",
+        declared_format="markdown",
+        idempotency_key=import_key,
     )
-    assert imported.status_code == 200, imported.text
+    extraction_job = wait_for_extraction(client, auth_headers, queued)
+    before_review = client.get(
+        f"/api/v1/projects/{project['projectId']}",
+        headers=auth_headers,
+    )
+    assert before_review.status_code == 200, before_review.text
+    pending_detail = before_review.json()
+    assert pending_detail["analysisAllowed"] is False
+    review = review_for_extraction(
+        client,
+        auth_headers,
+        project_id=project["projectId"],
+        extraction_id=queued["extraction"]["extractionId"],
+    )
+    approved = decide_import_review(
+        client,
+        auth_headers,
+        project_id=project["projectId"],
+        review=review,
+        decision="approved",
+        idempotency_key=f"{import_key}-approval",
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["analysisAllowed"] is True
+    detail_response = client.get(
+        f"/api/v1/projects/{project['projectId']}",
+        headers=auth_headers,
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()
+    story = detail["story"]
+    assert story is not None
+    source = next(
+        value
+        for value in detail["sourceDocuments"]
+        if value["documentId"] == queued["sourceDocument"]["documentId"]
+    )
     return {
-        "project": project,
-        "source": imported.json()["sourceDocument"],
-        "story": imported.json()["story"],
+        "project": detail["project"],
+        "source": source,
+        "story": story,
+        "extraction": next(
+            value
+            for value in detail["extractions"]
+            if value["extractionId"] == queued["extraction"]["extractionId"]
+        ),
+        "review": next(
+            value for value in detail["importReviews"] if value["reviewId"] == review["reviewId"]
+        ),
+        "extractionJob": extraction_job,
     }
 
 

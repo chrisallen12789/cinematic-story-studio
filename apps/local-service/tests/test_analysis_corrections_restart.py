@@ -11,12 +11,19 @@ from fastapi.testclient import TestClient
 from cinematic_story_service import ServiceSettings, create_app
 from cinematic_story_service import jobs as jobs_module
 from cinematic_story_service.analysis import MAX_DERIVED_ENTITIES
-from cinematic_story_service.models import HumanCorrectionRow
+from cinematic_story_service.models import (
+    HumanCorrectionRow,
+    JobAttemptRow,
+    ParserExecutionRow,
+)
 
 from .conftest import (
+    SYNTHETIC_BYTES,
     TOKEN,
     create_analysis_job,
     create_imported_project,
+    review_for_extraction,
+    submit_import,
     wait_for_job,
 )
 
@@ -307,6 +314,225 @@ def test_sqlite_restart_preserves_import_analysis_and_correction(tmp_path: Path)
         assert restored["dialogueAttributions"][0]["effectiveSpeakerId"] == other
         assert restored["dialogueAttributions"][0]["effectiveAuthority"] == "human"
         assert restored["humanCorrections"][0]["reason"] == "restart provenance"
+
+
+def test_restart_during_extraction_resumes_new_attempt_without_partial_review(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "interrupted-extraction-data"
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    first_app = create_app(ServiceSettings(data_dir=data_dir, bearer_token=TOKEN))
+    with TestClient(first_app) as first:
+        project = first.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={"name": "Interrupted Extraction"},
+        ).json()["project"]
+        first_app.state.worker.controls.execution_gate.clear()
+        queued = submit_import(
+            first,
+            headers,
+            project_id=project["projectId"],
+            filename="interrupted.md",
+            content=SYNTHETIC_BYTES,
+            media_type="text/markdown",
+            declared_format="markdown",
+            idempotency_key="interrupted-extraction",
+        )
+        running = wait_for_job(
+            first,
+            headers,
+            queued["job"]["jobId"],
+            {"running"},
+        )
+        assert running["checkpointAvailable"] is False
+        before_restart = first.get(
+            f"/api/v1/projects/{project['projectId']}",
+            headers=headers,
+        ).json()
+        assert before_restart["importReviews"] == []
+        assert before_restart["story"] is None
+
+    second_app = create_app(ServiceSettings(data_dir=data_dir, bearer_token=TOKEN))
+    with TestClient(second_app) as second:
+        interrupted = second.get(
+            f"/api/v1/jobs/{queued['job']['jobId']}",
+            headers=headers,
+        ).json()["job"]
+        assert interrupted["state"] == "interrupted"
+        resumed = second.post(
+            f"/api/v1/jobs/{queued['job']['jobId']}/resume",
+            headers=headers,
+        )
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["job"]["attempt"] == 2
+        succeeded = wait_for_job(
+            second,
+            headers,
+            queued["job"]["jobId"],
+            {"succeeded"},
+        )
+        assert succeeded["attempt"] == 2
+        review = review_for_extraction(
+            second,
+            headers,
+            project_id=project["projectId"],
+            extraction_id=queued["extraction"]["extractionId"],
+        )
+        assert review["state"] == "pending"
+        detail = second.get(
+            f"/api/v1/projects/{project['projectId']}",
+            headers=headers,
+        ).json()
+        assert detail["story"] is None
+        assert detail["analysisAllowed"] is False
+        with second_app.state.database.session() as session:
+            attempts = (
+                session.query(JobAttemptRow)
+                .filter_by(job_id=queued["job"]["jobId"])
+                .order_by(JobAttemptRow.number)
+                .all()
+            )
+            executions = (
+                session.query(ParserExecutionRow)
+                .filter_by(job_id=queued["job"]["jobId"])
+                .order_by(ParserExecutionRow.attempt)
+                .all()
+            )
+            assert [(row.number, row.outcome) for row in attempts] == [
+                (1, "interrupted"),
+                (2, "succeeded"),
+            ]
+            assert [(row.attempt, row.outcome) for row in executions] == [
+                (1, "interrupted"),
+                (2, "succeeded"),
+            ]
+
+
+def test_extraction_retry_and_cancelled_attempt_survive_restart(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "retry-cancel-extraction-data"
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    first_app = create_app(ServiceSettings(data_dir=data_dir, bearer_token=TOKEN))
+    with TestClient(first_app) as first:
+        project = first.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={"name": "Retry and Cancel"},
+        ).json()["project"]
+        first_app.state.worker.fail_next_attempt()
+        retry_import = submit_import(
+            first,
+            headers,
+            project_id=project["projectId"],
+            filename="retry.md",
+            content=SYNTHETIC_BYTES,
+            media_type="text/markdown",
+            declared_format="markdown",
+            idempotency_key="retry-extraction-import",
+        )
+        failed = wait_for_job(
+            first,
+            headers,
+            retry_import["job"]["jobId"],
+            {"failed"},
+        )
+        assert failed["error"] == {
+            "code": "EXTRACTION_FAILED",
+            "message": "Document extraction could not be completed safely.",
+            "retryable": True,
+        }
+        retried = first.post(
+            f"/api/v1/jobs/{retry_import['job']['jobId']}/retry",
+            headers=headers,
+        )
+        assert retried.status_code == 200
+        assert retried.json()["job"]["attempt"] == 2
+        wait_for_job(
+            first,
+            headers,
+            retry_import["job"]["jobId"],
+            {"succeeded"},
+        )
+
+        first_app.state.worker.controls.execution_gate.clear()
+        cancelled_import = submit_import(
+            first,
+            headers,
+            project_id=project["projectId"],
+            filename="cancelled.md",
+            content=SYNTHETIC_BYTES + b"\r\nCancelled candidate.\r\n",
+            media_type="text/markdown",
+            declared_format="markdown",
+            idempotency_key="cancelled-extraction-import",
+        )
+        wait_for_job(
+            first,
+            headers,
+            cancelled_import["job"]["jobId"],
+            {"running"},
+        )
+        cancellation = first.post(
+            f"/api/v1/jobs/{cancelled_import['job']['jobId']}/cancel",
+            headers=headers,
+        )
+        assert cancellation.status_code == 200
+        first_app.state.worker.controls.execution_gate.set()
+        wait_for_job(
+            first,
+            headers,
+            cancelled_import["job"]["jobId"],
+            {"cancelled"},
+        )
+
+    second_app = create_app(
+        ServiceSettings(
+            data_dir=data_dir,
+            bearer_token=TOKEN,
+            worker_enabled=False,
+        )
+    )
+    with TestClient(second_app) as second:
+        assert (
+            second.get(
+                f"/api/v1/jobs/{retry_import['job']['jobId']}",
+                headers=headers,
+            ).json()["job"]["state"]
+            == "succeeded"
+        )
+        cancelled = second.get(
+            f"/api/v1/jobs/{cancelled_import['job']['jobId']}",
+            headers=headers,
+        ).json()["job"]
+        assert cancelled["state"] == "cancelled"
+        detail = second.get(
+            f"/api/v1/projects/{project['projectId']}",
+            headers=headers,
+        ).json()
+        assert len(detail["sourceDocuments"]) == 2
+        assert len(detail["importReviews"]) == 1
+        assert (
+            detail["importReviews"][0]["extractionId"]
+            == (retry_import["extraction"]["extractionId"])
+        )
+        with second_app.state.database.session() as session:
+            retry_executions = (
+                session.query(ParserExecutionRow)
+                .filter_by(job_id=retry_import["job"]["jobId"])
+                .order_by(ParserExecutionRow.attempt)
+                .all()
+            )
+            cancelled_execution = (
+                session.query(ParserExecutionRow)
+                .filter_by(job_id=cancelled_import["job"]["jobId"])
+                .one()
+            )
+            assert [(row.attempt, row.outcome) for row in retry_executions] == [
+                (1, "failed"),
+                (2, "succeeded"),
+            ]
+            assert cancelled_execution.outcome == "cancelled"
 
 
 def test_concurrent_same_revision_corrections_have_one_cas_winner(

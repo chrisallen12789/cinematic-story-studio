@@ -12,14 +12,25 @@ from sqlalchemy.orm import Session
 from .analysis import analyze_story, validate_analysis_entity_limit
 from .config import ServiceSettings
 from .database import Database
+from .document_ingest import (
+    INGEST_CONTRACT_VERSION,
+    PARSER_DEADLINE_SECONDS,
+    DocumentExtractionRequest,
+    DocumentExtractionResult,
+    parser_limits_fingerprint,
+)
 from .errors import ServiceError, not_found
 from .models import (
+    DocumentExtractionRow,
     IdempotencyRow,
     JobAttemptRow,
     JobCheckpointRow,
     JobEventRow,
     JobRow,
+    ParserExecutionRow,
+    SourceDocumentRow,
 )
+from .parser_process import DocumentExtractionRunner, SpawnedDocumentExtractionRunner
 from .projects import ProjectRepository
 from .util import (
     ANALYZER_VERSION,
@@ -35,6 +46,8 @@ from .util import (
 _PROGRESS_SCALE = 1_000_000
 _ACTIVE_STATES = {"queued", "running", "cancel_requested"}
 _ACTIVE_JOB_SCOPE = "active_job"
+_EXTRACTION_PRODUCER_VERSION = f"document-ingest@{INGEST_CONTRACT_VERSION}"
+_EXTRACTION_TARGET_TYPE = "document_extraction"
 
 
 def _progress_to_wire(value: int) -> float:
@@ -47,6 +60,10 @@ def job_dict(row: JobRow) -> dict[str, Any]:
         "projectId": row.project_id,
         "type": row.type,
         "state": row.state,
+        "target": {
+            "type": row.target_type,
+            "id": row.target_id,
+        },
         "inputRevision": row.input_revision,
         "inputFingerprint": row.input_fingerprint,
         "attempt": row.current_attempt,
@@ -104,10 +121,12 @@ class JobRepository:
         database: Database,
         projects: ProjectRepository,
         instance_id: str,
+        parser_deadline_seconds: float = PARSER_DEADLINE_SECONDS,
     ) -> None:
         self.database = database
         self.projects = projects
         self.instance_id = instance_id
+        self.parser_deadline_seconds = parser_deadline_seconds
 
     @staticmethod
     def _begin_immediate(session: Session) -> None:
@@ -122,11 +141,15 @@ class JobRepository:
         job_type: str,
         input_revision: int,
         input_fingerprint: str,
+        target_type: str,
+        target_id: str | None,
     ) -> str:
         return request_fingerprint(
             {
                 "projectId": project_id,
                 "type": job_type,
+                "targetType": target_type,
+                "targetId": target_id,
                 "inputRevision": input_revision,
                 "inputFingerprint": input_fingerprint,
             }
@@ -138,6 +161,8 @@ class JobRepository:
             job_type=job.type,
             input_revision=job.input_revision,
             input_fingerprint=job.input_fingerprint,
+            target_type=job.target_type,
+            target_id=job.target_id,
         )
 
     def _active_conflict(
@@ -148,11 +173,15 @@ class JobRepository:
         job_type: str,
         input_revision: int,
         input_fingerprint: str,
+        target_type: str,
+        target_id: str | None,
         excluding_job_id: str | None = None,
     ) -> JobRow | None:
         statement = select(JobRow).where(
             JobRow.project_id == project_id,
             JobRow.type == job_type,
+            JobRow.target_type == target_type,
+            JobRow.target_id == target_id,
             JobRow.input_revision == input_revision,
             JobRow.input_fingerprint == input_fingerprint,
             JobRow.state.in_(_ACTIVE_STATES),
@@ -192,7 +221,6 @@ class JobRepository:
         session.execute(
             delete(IdempotencyRow).where(
                 IdempotencyRow.scope == _ACTIVE_JOB_SCOPE,
-                IdempotencyRow.key == self._active_key_for_job(job),
                 IdempotencyRow.resource_id == job.id,
             )
         )
@@ -206,6 +234,15 @@ class JobRepository:
                 )
             )
             for job_id in job_ids:
+                job = session.get(JobRow, job_id)
+                if (
+                    job is not None
+                    and job.state == "cancel_requested"
+                    and job.cancellation_requested
+                ):
+                    if self._finish_cancelled(session, job.id):
+                        count += 1
+                    continue
                 now = utc_now()
                 transitioned = session.execute(
                     update(JobRow)
@@ -236,6 +273,15 @@ class JobRepository:
                 if attempt is not None:
                     attempt.ended_at = now
                     attempt.outcome = "interrupted"
+                self._append_extraction_parser_outcome(
+                    session,
+                    job,
+                    outcome="interrupted",
+                    error_code="EXTRACTION_INTERRUPTED",
+                    error_message="Document extraction was interrupted before publication.",
+                    error_retryable=True,
+                    finished_at=now,
+                )
                 self._append_event(
                     session,
                     job,
@@ -247,6 +293,48 @@ class JobRepository:
                 self._release_active_key(session, job)
         return count
 
+    def reconcile_orphaned_extractions(self) -> int:
+        """Recover the durable import-to-job crash window without duplicating work."""
+
+        existing_job = (
+            select(JobRow.id)
+            .where(
+                JobRow.type == "extract_document",
+                JobRow.target_type == _EXTRACTION_TARGET_TYPE,
+                JobRow.target_id == DocumentExtractionRow.id,
+            )
+            .exists()
+        )
+        with self.database.session() as session:
+            targets = list(
+                session.execute(
+                    select(
+                        DocumentExtractionRow.id,
+                        DocumentExtractionRow.project_id,
+                        DocumentExtractionRow.revision,
+                        DocumentExtractionRow.input_sha256,
+                    )
+                    .where(
+                        DocumentExtractionRow.status == "pending",
+                        ~existing_job,
+                    )
+                    .order_by(
+                        DocumentExtractionRow.created_at,
+                        DocumentExtractionRow.id,
+                    )
+                ).all()
+            )
+
+        for extraction_id, project_id, revision, input_sha256 in targets:
+            self.create_extraction_job(
+                project_id=project_id,
+                extraction_id=extraction_id,
+                input_revision=revision,
+                input_fingerprint=input_sha256,
+                idempotency_key=f"startup-recovery-{extraction_id}",
+            )
+        return len(targets)
+
     def create_job(
         self,
         *,
@@ -255,6 +343,12 @@ class JobRepository:
         input_revision: int,
         idempotency_key: str,
     ) -> dict[str, Any]:
+        if job_type != "analyze_story":
+            raise ServiceError(
+                422,
+                "INVALID_JOB_TYPE",
+                "Document extraction jobs can only be created by the import service.",
+            )
         project, story, _source = self.projects.get_story_snapshot(project_id)
         if story.revision != input_revision:
             raise ServiceError(
@@ -268,6 +362,8 @@ class JobRepository:
             job_type=job_type,
             input_revision=input_revision,
             input_fingerprint=story.content_fingerprint,
+            target_type="story",
+            target_id=story.id,
         )
         scope = f"create_job:{project_id}"
         try:
@@ -302,6 +398,8 @@ class JobRepository:
                     job_type=job_type,
                     input_revision=input_revision,
                     input_fingerprint=story.content_fingerprint,
+                    target_type="story",
+                    target_id=story.id,
                 )
                 if active is not None:
                     raise ServiceError(
@@ -319,6 +417,15 @@ class JobRepository:
                     state="queued",
                     input_revision=input_revision,
                     input_fingerprint=story.content_fingerprint,
+                    target_type="story",
+                    target_id=story.id,
+                    payload_json=canonical_json(
+                        {
+                            "schemaVersion": 1,
+                            "storyId": story.id,
+                            "storyRevision": story.revision,
+                        }
+                    ),
                     current_attempt=1,
                     stage="queued",
                     progress=0,
@@ -362,6 +469,168 @@ class JobRepository:
                 409,
                 "JOB_ALREADY_ACTIVE",
                 "Analysis is already active for this story revision.",
+            ) from exc
+
+    def create_extraction_job(
+        self,
+        *,
+        project_id: str,
+        extraction_id: str,
+        input_revision: int,
+        input_fingerprint: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Create the sole persisted extraction job for an immutable extraction target."""
+
+        scope = f"create_extraction_job:{project_id}"
+        try:
+            with self.database.session() as session:
+                self._begin_immediate(session)
+                self.projects.require_project(session, project_id)
+                extraction = session.get(DocumentExtractionRow, extraction_id)
+                source = (
+                    session.get(SourceDocumentRow, extraction.source_document_id)
+                    if extraction is not None
+                    else None
+                )
+                if (
+                    source is None
+                    or source.project_id != project_id
+                    or extraction is None
+                    or extraction.project_id != project_id
+                    or extraction.source_document_id != source.id
+                ):
+                    raise ServiceError(
+                        422,
+                        "INVALID_EXTRACTION_TARGET",
+                        "The extraction target does not belong to this project source.",
+                    )
+                if (
+                    extraction.input_sha256 != source.content_sha256
+                    or input_fingerprint != source.content_sha256
+                    or input_revision != extraction.revision
+                ):
+                    raise ServiceError(
+                        409,
+                        "EXTRACTION_INPUT_CHANGED",
+                        "The frozen source fingerprint does not match the extraction target.",
+                    )
+
+                limits_fingerprint = parser_limits_fingerprint(self.parser_deadline_seconds)
+                payload = {
+                    "schemaVersion": 1,
+                    "sourceDocumentId": source.id,
+                    "sourceRevision": source.source_revision,
+                    "extractionId": extraction.id,
+                    "extractionRevision": extraction.revision,
+                    "declaredFormat": extraction.format,
+                    "limitsFingerprint": limits_fingerprint,
+                }
+                fingerprint = self._active_job_key(
+                    project_id=project_id,
+                    job_type="extract_document",
+                    input_revision=extraction.revision,
+                    input_fingerprint=source.content_sha256,
+                    target_type=_EXTRACTION_TARGET_TYPE,
+                    target_id=extraction.id,
+                )
+                existing = session.get(
+                    IdempotencyRow,
+                    {"scope": scope, "key": idempotency_key},
+                )
+                if existing is not None:
+                    if existing.request_hash != fingerprint:
+                        raise ServiceError(
+                            409,
+                            "IDEMPOTENCY_CONFLICT",
+                            "That idempotency key was already used for another extraction.",
+                        )
+                    job = session.get(JobRow, existing.resource_id)
+                    if job is None:
+                        raise ServiceError(
+                            500,
+                            "IDEMPOTENCY_RECORD_INVALID",
+                            "The saved extraction job is unavailable.",
+                        )
+                    return job_dict(job)
+
+                prior = session.scalar(
+                    select(JobRow)
+                    .where(
+                        JobRow.project_id == project_id,
+                        JobRow.type == "extract_document",
+                        JobRow.target_type == _EXTRACTION_TARGET_TYPE,
+                        JobRow.target_id == extraction.id,
+                    )
+                    .order_by(JobRow.created_at, JobRow.id)
+                    .limit(1)
+                )
+                if prior is not None:
+                    session.add(
+                        IdempotencyRow(
+                            scope=scope,
+                            key=idempotency_key,
+                            request_hash=fingerprint,
+                            resource_id=prior.id,
+                            created_at=utc_now(),
+                        )
+                    )
+                    return job_dict(prior)
+
+                now = utc_now()
+                job = JobRow(
+                    id=new_id(),
+                    project_id=project_id,
+                    type="extract_document",
+                    state="queued",
+                    input_revision=extraction.revision,
+                    input_fingerprint=source.content_sha256,
+                    target_type=_EXTRACTION_TARGET_TYPE,
+                    target_id=extraction.id,
+                    payload_json=canonical_json(payload),
+                    current_attempt=1,
+                    stage="queued",
+                    progress=0,
+                    checkpoint_available=False,
+                    cancellation_requested=False,
+                    resume_requested=False,
+                    warnings_json="[]",
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(job)
+                session.flush()
+                self._acquire_active_key(session, job)
+                session.add(
+                    JobAttemptRow(
+                        job_id=job.id,
+                        number=1,
+                        producer_version=_EXTRACTION_PRODUCER_VERSION,
+                    )
+                )
+                session.add(
+                    IdempotencyRow(
+                        scope=scope,
+                        key=idempotency_key,
+                        request_hash=fingerprint,
+                        resource_id=job.id,
+                        created_at=now,
+                    )
+                )
+                self._append_event(
+                    session,
+                    job,
+                    event_type="created",
+                    state="queued",
+                    stage="queued",
+                    progress=0,
+                )
+                return job_dict(job)
+        except IntegrityError as exc:
+            raise ServiceError(
+                409,
+                "JOB_ALREADY_ACTIVE",
+                "Document extraction is already active for this source revision.",
             ) from exc
 
     def get_job(self, job_id: str) -> dict[str, Any]:
@@ -457,6 +726,8 @@ class JobRepository:
                 job_type=job.type,
                 input_revision=job.input_revision,
                 input_fingerprint=job.input_fingerprint,
+                target_type=job.target_type,
+                target_id=job.target_id,
                 excluding_job_id=job.id,
             )
             if active is not None:
@@ -515,6 +786,8 @@ class JobRepository:
                 job_type=job.type,
                 input_revision=job.input_revision,
                 input_fingerprint=job.input_fingerprint,
+                target_type=job.target_type,
+                target_id=job.target_id,
                 excluding_job_id=job.id,
             )
             if active is not None:
@@ -586,7 +859,11 @@ class JobRepository:
             JobAttemptRow(
                 job_id=queued.id,
                 number=queued.current_attempt,
-                producer_version=ANALYZER_VERSION,
+                producer_version=(
+                    _EXTRACTION_PRODUCER_VERSION
+                    if queued.type == "extract_document"
+                    else ANALYZER_VERSION
+                ),
             )
         )
         self._append_event(
@@ -651,6 +928,21 @@ class JobRepository:
                 raise ServiceError(500, "JOB_ATTEMPT_MISSING", "The job attempt is unavailable.")
             attempt.worker_instance_id = self.instance_id
             attempt.started_at = now
+            if job.type == "extract_document" and job.target_id is not None:
+                extraction = session.get(DocumentExtractionRow, job.target_id)
+                if (
+                    extraction is not None
+                    and extraction.project_id == job.project_id
+                    and extraction.status in {"pending", "running", "failed"}
+                ):
+                    extraction.status = "running"
+                    extraction.updated_at = now
+                    source = session.get(
+                        SourceDocumentRow,
+                        extraction.source_document_id,
+                    )
+                    if source is not None and source.project_id == job.project_id:
+                        source.extraction_status = "running"
             self._append_event(
                 session,
                 job,
@@ -853,6 +1145,83 @@ class JobRepository:
             return False
         return isinstance(value, dict)
 
+    def _append_extraction_parser_outcome(
+        self,
+        session: Session,
+        job: JobRow,
+        *,
+        outcome: str,
+        error_code: str | None,
+        error_message: str | None,
+        error_retryable: bool | None,
+        finished_at: str,
+    ) -> None:
+        if job.type != "extract_document" or job.target_id is None:
+            return
+        existing = session.scalar(
+            select(ParserExecutionRow).where(
+                ParserExecutionRow.job_id == job.id,
+                ParserExecutionRow.attempt == job.current_attempt,
+            )
+        )
+        if existing is not None:
+            return
+        extraction = session.get(DocumentExtractionRow, job.target_id)
+        if extraction is None or extraction.project_id != job.project_id:
+            return
+        payload = parse_json(job.payload_json, {})
+        limits_fingerprint = payload.get("limitsFingerprint") if isinstance(payload, dict) else None
+        if not isinstance(limits_fingerprint, str) or len(limits_fingerprint) != 64:
+            limits_fingerprint = parser_limits_fingerprint(self.parser_deadline_seconds)
+        attempt = session.get(
+            JobAttemptRow,
+            {"job_id": job.id, "number": job.current_attempt},
+        )
+        started_at = (
+            attempt.started_at
+            if attempt is not None and attempt.started_at is not None
+            else job.created_at
+        )
+        session.add(
+            ParserExecutionRow(
+                id=new_id(),
+                project_id=job.project_id,
+                source_document_id=extraction.source_document_id,
+                extraction_id=extraction.id,
+                job_id=job.id,
+                attempt=job.current_attempt,
+                parser_name="document-ingest",
+                parser_version=INGEST_CONTRACT_VERSION,
+                outcome=outcome,
+                input_sha256=job.input_fingerprint,
+                limits_fingerprint=limits_fingerprint,
+                output_text_sha256=None,
+                manifest_json="{}",
+                sections_json="[]",
+                source_mappings_json="[]",
+                warnings_json=job.warnings_json,
+                error_code=error_code,
+                error_message=error_message,
+                error_retryable=error_retryable,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        )
+        source = session.get(SourceDocumentRow, extraction.source_document_id)
+        if outcome in {"failed", "cancelled"}:
+            extraction.status = "failed"
+            extraction.updated_at = finished_at
+            if source is not None and source.project_id == job.project_id:
+                source.extraction_status = "failed"
+        elif outcome == "interrupted" and extraction.status not in {
+            "complete",
+            "partial",
+        }:
+            extraction.status = "pending"
+            extraction.updated_at = finished_at
+            if source is not None and source.project_id == job.project_id:
+                source.extraction_status = "pending"
+
     def finish_success(self, job_id: str) -> None:
         with self.database.session() as session:
             now = utc_now()
@@ -900,6 +1269,95 @@ class JobRepository:
                 total_units=1,
             )
             self._release_active_key(session, job)
+
+    def publish_extraction_and_finish(
+        self,
+        job_id: str,
+        *,
+        result: DocumentExtractionResult,
+        after_write_claim: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Atomically publish an extraction and complete its persisted job attempt."""
+
+        with self.database.session() as session:
+            write_claim = session.execute(
+                update(JobRow)
+                .where(
+                    JobRow.id == job_id,
+                    JobRow.type == "extract_document",
+                    JobRow.target_type == _EXTRACTION_TARGET_TYPE,
+                    JobRow.state == "running",
+                    JobRow.cancellation_requested.is_(False),
+                )
+                .values(updated_at=JobRow.updated_at)
+                .returning(JobRow.id)
+                .execution_options(synchronize_session=False)
+            )
+            if write_claim.scalar_one_or_none() is None:
+                job = session.get(JobRow, job_id, populate_existing=True)
+                if job is not None and (
+                    job.state == "cancel_requested" or job.cancellation_requested
+                ):
+                    self._finish_cancelled(session, job.id)
+                return False
+            if after_write_claim is not None and not after_write_claim():
+                return False
+
+            job = session.get(JobRow, job_id)
+            if job is None or job.target_id is None:
+                return False
+            if (
+                job.input_fingerprint != result.source_sha256
+                or result.contract_version != INGEST_CONTRACT_VERSION
+            ):
+                raise ServiceError(
+                    409,
+                    "EXTRACTION_INPUT_CHANGED",
+                    "The frozen extraction input no longer matches the job.",
+                )
+            payload = parse_json(job.payload_json, {})
+            expected_limits_fingerprint = (
+                payload.get("limitsFingerprint") if isinstance(payload, dict) else None
+            )
+            if expected_limits_fingerprint != result.parser_execution.limits_fingerprint:
+                raise ServiceError(
+                    409,
+                    "EXTRACTION_LIMITS_CHANGED",
+                    "The frozen parser limits no longer match the extraction result.",
+                )
+
+            self.projects.publish_extraction(
+                job_id=job.id,
+                result=result,
+                session=session,
+            )
+            now = utc_now()
+            job.state = "succeeded"
+            job.stage = "completed"
+            job.progress = _PROGRESS_SCALE
+            job.cancellation_requested = False
+            job.resume_requested = False
+            job.updated_at = now
+            job.terminal_at = now
+            attempt = session.get(
+                JobAttemptRow,
+                {"job_id": job.id, "number": job.current_attempt},
+            )
+            if attempt is not None:
+                attempt.ended_at = now
+                attempt.outcome = "succeeded"
+            self._append_event(
+                session,
+                job,
+                event_type="completed",
+                state="succeeded",
+                stage="completed",
+                progress=_PROGRESS_SCALE,
+                completed_units=1,
+                total_units=1,
+            )
+            self._release_active_key(session, job)
+            return True
 
     def publish_analysis_and_finish(
         self,
@@ -1032,6 +1490,15 @@ class JobRepository:
                 attempt.outcome = "failed"
                 attempt.error_code = code
                 attempt.error_message = message
+            self._append_extraction_parser_outcome(
+                session,
+                job,
+                outcome="failed",
+                error_code=code,
+                error_message=message,
+                error_retryable=retryable,
+                finished_at=now,
+            )
             self._append_event(
                 session,
                 job,
@@ -1047,12 +1514,16 @@ class JobRepository:
 
     def interrupt_active(self, job_id: str) -> None:
         with self.database.session() as session:
+            job = session.get(JobRow, job_id)
+            if job is not None and job.state == "cancel_requested" and job.cancellation_requested:
+                self._finish_cancelled(session, job.id)
+                return
             now = utc_now()
             transitioned = session.execute(
                 update(JobRow)
                 .where(
                     JobRow.id == job_id,
-                    JobRow.state.in_(["running", "cancel_requested"]),
+                    JobRow.state == "running",
                 )
                 .values(
                     state="interrupted",
@@ -1073,6 +1544,15 @@ class JobRepository:
             if attempt is not None:
                 attempt.ended_at = now
                 attempt.outcome = "interrupted"
+            self._append_extraction_parser_outcome(
+                session,
+                job,
+                outcome="interrupted",
+                error_code="EXTRACTION_INTERRUPTED",
+                error_message="Document extraction was interrupted before publication.",
+                error_retryable=True,
+                finished_at=now,
+            )
             self._append_event(
                 session,
                 job,
@@ -1111,6 +1591,15 @@ class JobRepository:
         if attempt is not None:
             attempt.ended_at = now
             attempt.outcome = "cancelled"
+        self._append_extraction_parser_outcome(
+            session,
+            job,
+            outcome="cancelled",
+            error_code="EXTRACTION_CANCELLED",
+            error_message="Document extraction was cancelled.",
+            error_retryable=False,
+            finished_at=now,
+        )
         self._append_event(
             session,
             job,
@@ -1195,10 +1684,14 @@ class JobWorker:
         settings: ServiceSettings,
         jobs: JobRepository,
         projects: ProjectRepository,
+        parser_runner: DocumentExtractionRunner | None = None,
     ) -> None:
         self.settings = settings
         self.jobs = jobs
         self.projects = projects
+        self.parser_runner = parser_runner or SpawnedDocumentExtractionRunner(
+            poll_seconds=settings.worker_poll_seconds
+        )
         self.controls = WorkerControls(
             claim_gate=threading.Event(),
             execution_gate=threading.Event(),
@@ -1286,7 +1779,17 @@ class JobWorker:
                 continue
             self._active_job_id = claimed["jobId"]
             try:
-                self._run_analysis(claimed)
+                if claimed["type"] == "extract_document":
+                    self._run_extraction(claimed)
+                elif claimed["type"] == "analyze_story":
+                    self._run_analysis(claimed)
+                else:
+                    self.jobs.finish_failed(
+                        claimed["jobId"],
+                        code="JOB_TYPE_UNSUPPORTED",
+                        message="The queued job type is not supported.",
+                        retryable=False,
+                    )
             finally:
                 self._active_job_id = None
 
@@ -1315,6 +1818,156 @@ class JobWorker:
             self.jobs.update_progress(job_id, stage="cancelling", progress=0.05)
             return False
         return True
+
+    def _run_extraction(self, claimed: dict[str, Any]) -> None:
+        job_id = claimed["jobId"]
+        try:
+            if not self._wait_at_boundary(self.controls.execution_gate, job_id):
+                return
+            if not self.jobs.update_progress(
+                job_id,
+                stage="loading_source",
+                progress=0.1,
+                completed_units=0,
+                total_units=3,
+            ):
+                return
+
+            target = claimed.get("target")
+            if not isinstance(target, dict):
+                self.jobs.finish_failed(
+                    job_id,
+                    code="EXTRACTION_TARGET_INVALID",
+                    message="The frozen extraction target is unavailable.",
+                    retryable=False,
+                )
+                return
+            extraction_id = target.get("id")
+            if not isinstance(extraction_id, str) or target.get("type") != _EXTRACTION_TARGET_TYPE:
+                self.jobs.finish_failed(
+                    job_id,
+                    code="EXTRACTION_TARGET_INVALID",
+                    message="The frozen extraction target is unavailable.",
+                    retryable=False,
+                )
+                return
+            extraction_input = self.projects.get_extraction_input(extraction_id)
+            source_sha256 = getattr(
+                extraction_input,
+                "source_sha256",
+                getattr(extraction_input, "content_sha256", None),
+            )
+            source_byte_count = getattr(
+                extraction_input,
+                "source_byte_count",
+                getattr(extraction_input, "byte_length", None),
+            )
+            if (
+                getattr(extraction_input, "project_id", None) != claimed["projectId"]
+                or getattr(extraction_input, "extraction_id", None) != extraction_id
+                or getattr(extraction_input, "extraction_revision", None)
+                != claimed["inputRevision"]
+                or source_sha256 != claimed["inputFingerprint"]
+                or not isinstance(source_byte_count, int)
+            ):
+                self.jobs.finish_failed(
+                    job_id,
+                    code="EXTRACTION_INPUT_CHANGED",
+                    message="The frozen extraction input no longer matches the job.",
+                    retryable=False,
+                )
+                return
+            request = DocumentExtractionRequest(
+                contract_version=INGEST_CONTRACT_VERSION,
+                source_path=extraction_input.source_path,
+                display_name=extraction_input.display_name,
+                declared_format=extraction_input.declared_format,
+                source_sha256=source_sha256,
+                source_byte_count=source_byte_count,
+                deadline_seconds=self.settings.parser_deadline_seconds,
+            )
+
+            def cancelled() -> bool:
+                return self._stop.is_set() or self.jobs.should_cancel(job_id)
+
+            def progress(stage: str, scaled_progress: int) -> None:
+                if not 0 <= scaled_progress < _PROGRESS_SCALE:
+                    raise ServiceError(
+                        500,
+                        "INVALID_JOB_PROGRESS",
+                        "The parser produced invalid progress.",
+                    )
+                self.jobs.update_progress(
+                    job_id,
+                    stage=stage,
+                    progress=scaled_progress / _PROGRESS_SCALE,
+                )
+
+            result = self.parser_runner.run(
+                request,
+                cancelled=cancelled,
+                progress=progress,
+            )
+            if not self._continue_after_bounded_work(job_id):
+                return
+            if self._consume_injected_failure():
+                self.jobs.finish_failed(
+                    job_id,
+                    code="EXTRACTION_FAILED",
+                    message="Document extraction could not be completed safely.",
+                    retryable=True,
+                )
+                return
+            if not self.jobs.update_progress(
+                job_id,
+                stage="publishing_extraction",
+                progress=0.95,
+                completed_units=2,
+                total_units=3,
+            ):
+                return
+            if not self._wait_at_boundary(self.controls.before_publication_gate, job_id):
+                return
+            self.controls.publication_claimed.clear()
+            published = self.jobs.publish_extraction_and_finish(
+                job_id,
+                result=result,
+                after_write_claim=self._wait_after_publication_claim,
+            )
+            if not published and self._stop.is_set():
+                self.jobs.interrupt_active(job_id)
+        except ServiceError as exc:
+            if exc.code == "EXTRACTION_CANCELLED":
+                if self._stop.is_set():
+                    self.jobs.interrupt_active(job_id)
+                elif self.jobs.should_cancel(job_id):
+                    self.jobs.update_progress(
+                        job_id,
+                        stage="cancelling",
+                        progress=0.99,
+                    )
+                else:
+                    self.jobs.finish_failed(
+                        job_id,
+                        code=exc.code,
+                        message="Document extraction could not be completed safely.",
+                        retryable=exc.retryable,
+                    )
+                return
+            self.jobs.finish_failed(
+                job_id,
+                code=exc.code,
+                message="Document extraction could not be completed safely.",
+                retryable=exc.retryable,
+            )
+        except Exception:
+            # Paths, source content, and parser exception strings are deliberately excluded.
+            self.jobs.finish_failed(
+                job_id,
+                code="EXTRACTION_FAILED",
+                message="Document extraction could not be completed safely.",
+                retryable=True,
+            )
 
     def _run_analysis(self, claimed: dict[str, Any]) -> None:
         job_id = claimed["jobId"]

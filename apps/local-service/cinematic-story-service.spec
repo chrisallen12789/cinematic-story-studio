@@ -9,6 +9,8 @@ source_root = service_root / "src"
 hidden_imports = (
     collect_submodules("uvicorn")
     + collect_submodules("fastapi")
+    + collect_submodules("lxml")
+    + collect_submodules("pypdf")
     + collect_submodules("sqlalchemy.dialects.sqlite")
 )
 

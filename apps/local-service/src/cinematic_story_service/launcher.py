@@ -4,10 +4,15 @@ import argparse
 import asyncio
 import base64
 import binascii
+import ctypes
 import json
+import multiprocessing
+import os
+import select
 import socket
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -20,6 +25,7 @@ from cinematic_story_service.util import PROTOCOL_VERSION
 
 _MAX_BOOTSTRAP_BYTES = 2048
 _MAX_NONCE_LENGTH = 256
+_CONTROL_PIPE_POLL_SECONDS = 0.05
 
 
 def _fail(message: str, exit_code: int = 2) -> NoReturn:
@@ -29,7 +35,19 @@ def _fail(message: str, exit_code: int = 2) -> NoReturn:
 
 
 def _read_bootstrap() -> tuple[str, str]:
-    raw_line = sys.stdin.buffer.readline(_MAX_BOOTSTRAP_BYTES + 1)
+    try:
+        file_descriptor = sys.stdin.fileno()
+        pending = bytearray()
+        while len(pending) <= _MAX_BOOTSTRAP_BYTES:
+            chunk = os.read(file_descriptor, 1)
+            if not chunk:
+                break
+            pending.extend(chunk)
+            if chunk == b"\n":
+                break
+        raw_line = bytes(pending)
+    except (OSError, ValueError):
+        _fail("invalid_bootstrap")
     if not raw_line or len(raw_line) > _MAX_BOOTSTRAP_BYTES or not raw_line.endswith(b"\n"):
         _fail("invalid_bootstrap")
     try:
@@ -82,6 +100,71 @@ def _prebound_loopback_socket() -> socket.socket:
         raise
 
 
+def _wait_for_control_signal() -> None:
+    """Wait for trailing control data or EOF without an outstanding blocking read."""
+
+    file_descriptor = sys.stdin.fileno()
+    if sys.platform == "win32":
+        _wait_for_windows_control_signal(file_descriptor)
+        return
+
+    while True:
+        try:
+            readable, _writable, _exceptional = select.select(
+                [file_descriptor],
+                [],
+                [],
+                _CONTROL_PIPE_POLL_SECONDS,
+            )
+        except (OSError, ValueError):
+            return
+        if not readable:
+            continue
+        try:
+            os.read(file_descriptor, 1)
+        except OSError:
+            pass
+        return
+
+
+def _wait_for_windows_control_signal(file_descriptor: int) -> None:
+    # A blocking stdin read can prevent a Windows multiprocessing "spawn" child from
+    # reaching its ownership handshake. PeekNamedPipe keeps each poll bounded and
+    # leaves no outstanding read while document parser processes are being created.
+    import msvcrt
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.PeekNamedPipe.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_void_p,
+    ]
+    kernel32.PeekNamedPipe.restype = ctypes.c_int
+    pipe_handle = msvcrt.get_osfhandle(file_descriptor)
+    while True:
+        available = ctypes.c_uint32()
+        if not kernel32.PeekNamedPipe(
+            pipe_handle,
+            None,
+            0,
+            None,
+            ctypes.byref(available),
+            None,
+        ):
+            # EOF and unexpected pipe errors both relinquish service ownership.
+            return
+        if available.value > 0:
+            try:
+                os.read(file_descriptor, 1)
+            except OSError:
+                pass
+            return
+        time.sleep(_CONTROL_PIPE_POLL_SECONDS)
+
+
 async def _serve(data_dir: Path, token: str, nonce: str) -> int:
     listener = _prebound_loopback_socket()
     settings = ServiceSettings(data_dir=data_dir, bearer_token=token).validated()
@@ -122,8 +205,10 @@ async def _serve(data_dir: Path, token: str, nonce: str) -> int:
 
     def watch_control_pipe() -> None:
         # Any trailing control data or EOF relinquishes child ownership and initiates shutdown.
-        sys.stdin.buffer.read(1)
-        loop.call_soon_threadsafe(stdin_closed.set)
+        try:
+            _wait_for_control_signal()
+        finally:
+            loop.call_soon_threadsafe(stdin_closed.set)
 
     threading.Thread(
         target=watch_control_pipe,
@@ -171,4 +256,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     raise SystemExit(main())

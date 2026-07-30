@@ -29,6 +29,28 @@ import type {
   StoryBeat,
   VoiceProfile
 } from "./domain.js";
+import type {
+  AnalysisAgentExecution,
+  AnalysisBeat,
+  AnalysisChapter,
+  AnalysisDialogueLine,
+  AnalysisGateReview,
+  AnalysisScene,
+  AnalysisSnapshot,
+  CharacterIdentity,
+  CharacterMention,
+  CharacterRelationship,
+  ContinuityFinding,
+  DramaticIntent,
+  EmotionalState,
+  NarrationSpan,
+  PovSegment,
+  StoryAnalysisRun,
+  StoryLocation,
+  StoryStructure,
+  TemporalConstraint,
+  TimelineEvent
+} from "./story-analysis.js";
 
 export interface HumanReviewRequirement {
   readonly required: boolean;
@@ -166,6 +188,29 @@ export interface MixMasterOutput {
 
 export interface QualityControlOutput {
   readonly findings: readonly QualityControlFinding[];
+}
+
+export interface WholeBookAnalysisOutput {
+  readonly run: StoryAnalysisRun;
+  readonly snapshot: AnalysisSnapshot;
+  readonly structure: StoryStructure;
+  readonly agentExecutions: readonly AnalysisAgentExecution[];
+  readonly chapters: readonly AnalysisChapter[];
+  readonly scenes: readonly AnalysisScene[];
+  readonly beats: readonly AnalysisBeat[];
+  readonly characters: readonly CharacterIdentity[];
+  readonly mentions: readonly CharacterMention[];
+  readonly dialogueLines: readonly AnalysisDialogueLine[];
+  readonly narrationSpans: readonly NarrationSpan[];
+  readonly povSegments: readonly PovSegment[];
+  readonly locations: readonly StoryLocation[];
+  readonly timelineEvents: readonly TimelineEvent[];
+  readonly temporalConstraints: readonly TemporalConstraint[];
+  readonly relationships: readonly CharacterRelationship[];
+  readonly emotionalStates: readonly EmotionalState[];
+  readonly dramaticIntents: readonly DramaticIntent[];
+  readonly continuityFindings: readonly ContinuityFinding[];
+  readonly gateReviews: readonly AnalysisGateReview[];
 }
 
 export const RUNTIME_AGENT_IDS = [

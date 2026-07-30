@@ -66,3 +66,56 @@ node --test schemas/tests/schema-structure.test.mjs
 
 Full instance validation should be performed at every service boundary with a
 JSON Schema 2020-12 validator selected by the owning application package.
+
+## Phase 2 whole-book analysis
+
+`v2/definitions.schema.json` defines the frozen whole-book analysis profile,
+eleven runtime-agent outputs, immutable snapshots, bounded evidence and exact
+text, character/dialogue/POV/location/time/relationship/emotion/intent/
+continuity entities, typed human corrections, and four review gates. The
+profile canonical JSON and SHA-256 fingerprint are constants and any semantic
+profile change requires a new semantic version and fingerprint.
+
+The fingerprint covers every service-enforced analyzer ceiling that can change
+run acceptance, publication, or output: 150,000 words, 250,000 entities,
+32 KiB agent envelopes, 64 MiB durable checkpoints, at most five published
+analysis snapshot stages, and the page/evidence/candidate/exact-text/warning
+bounds. HTTP and
+human-correction transport limits are control-plane validation rather than
+analyzer behavior; accepted corrections carry their own immutable
+fingerprints.
+
+Every entity entry point is closed to unknown fields. A specialized entity ID
+(`chapterId`, `sceneId`, `characterId`, and similar) must equal the inherited
+`entityId`; JSON Schema 2020-12 cannot express arbitrary cross-field equality,
+so services and clients enforce that invariant after schema validation.
+Likewise, source-span offsets and exact-text hashes are checked against the
+approved canonical extraction rather than trusted from a payload.
+
+`AnalysisCorrection` uses an exact category/collection/patch `oneOf` mapping
+for all sixteen governed correction categories. There is no arbitrary JSON
+patch escape hatch. Create requests and persisted corrections require a
+nonblank human reason of at most 1,000 Unicode code points. Human structure
+add/remove/move corrections project through the closed `effectiveBoundary`
+shape. Their create-request span contains frozen source identity and selected
+offsets but no caller-supplied text hash; the service derives the digest
+transactionally, while the persisted correction requires the full hashed
+span. Character merge/split corrections project through `effectiveRegistry`.
+Both preserve human authority and correction identity without mutating machine
+entities. Dialogue rows expose a closed
+`unknown|ambiguous|proposed|corrected` speaker state consistent with their
+effective attribution. Every human analysis-gate decision requires a nonblank
+rationale of at most 4,000 Unicode code points, and each gate review returns
+the complete immutable latest human decision or an explicit null.
+`Phase2PackagedE2eResult` describes the schema-v4 packaged
+machine result, and `Phase2BuildEvidenceManifest` describes the successful
+schema-v3 CI manifest with artifact hashes, eleven agents, fourteen observed
+stages, the exact 26-action packaged workflow, three protected corrections,
+four durable gate decisions, restart proof, and synthetic-story assertions.
+Each correction carries the SHA-256 of its exact synthetic test reason. Every
+approved gate is cross-linked to the canonical profile, analysis run, and
+snapshot identity/revision/fingerprint before and after restart. The full
+immutable decision record is compared in the application and represented in
+CI evidence only by its SHA-256. Those CI proof shapes admit IDs, counts,
+hashes, and bounded process metadata, but no manuscript, correction or
+decision rationale, or evidence-excerpt text.

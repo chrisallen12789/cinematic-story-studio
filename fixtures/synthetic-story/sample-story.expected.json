@@ -1,0 +1,706 @@
+{
+  "schemaVersion": "2.0.0",
+  "fixtureId": "phase-2-whole-book-intelligence",
+  "offsetUnit": "unicode-code-point",
+  "canonicalText": {
+    "fileName": "sample-story.txt",
+    "byteLength": 3783,
+    "codePointLength": 3783,
+    "sha256": "d65b8ce103a3cab7943562629109133bdc850b637068919ff7fecd999e20ee0a"
+  },
+  "markdown": {
+    "fileName": "sample-story.md",
+    "byteLength": 3832,
+    "codePointLength": 3832,
+    "sha256": "a8f2a5958a1706c2cca70711676ce96522d79d4e520aa07c6eb78dc648eaab19"
+  },
+  "binaryFixtures": {
+    "docx": {
+      "encodedFileName": "sample-story.docx.base64",
+      "decodedFileName": "sample-story.docx",
+      "sizeBytes": 2758,
+      "sha256": "ddddd80f6486e22b8a38e66416d1e69f9ccb66cd34bc238e502cd999c6b64ee4"
+    },
+    "epub": {
+      "encodedFileName": "sample-story.epub.base64",
+      "decodedFileName": "sample-story.epub",
+      "sizeBytes": 3676,
+      "sha256": "d552dfe68bc9784e4be51a019df7bfa9e910519e23cc2e6596e96f6562bc2e26"
+    },
+    "pdf": {
+      "encodedFileName": "sample-story.pdf.base64",
+      "decodedFileName": "sample-story.pdf",
+      "sizeBytes": 5406,
+      "sha256": "fb7f754efac38065d2f80c08964928b8566c75cf794d556eb10a9abc0c0d0ab2"
+    }
+  },
+  "expectedCounts": {
+    "chapters": 3,
+    "scenes": 6,
+    "namedCharacters": 10,
+    "locations": 6,
+    "dialogueLines": 10,
+    "ambiguousDialogueLines": 4,
+    "povShifts": 1,
+    "continuityAnomalies": 1
+  },
+  "chapters": [
+    {
+      "chapterId": "chapter-1",
+      "ordinal": 0,
+      "title": "Chapter One: The Quiet Relay",
+      "span": {
+        "spanId": "chapter-1",
+        "startOffset": 0,
+        "endOffset": 1595,
+        "textSha256": "3915c0ca236e3f580ef6170aa326bfba65adcb3169adc2ea1830fc2dd924a719"
+      }
+    },
+    {
+      "chapterId": "chapter-2",
+      "ordinal": 1,
+      "title": "Chapter Two: Borrowed Hours",
+      "span": {
+        "spanId": "chapter-2",
+        "startOffset": 1595,
+        "endOffset": 2790,
+        "textSha256": "27fb129e5524f5e18f846fcce0eb7ded061df3d6e0df299726438c376b4b6ac9"
+      }
+    },
+    {
+      "chapterId": "chapter-3",
+      "ordinal": 2,
+      "title": "Chapter Three: The Last Signal",
+      "span": {
+        "spanId": "chapter-3",
+        "startOffset": 2790,
+        "endOffset": 3783,
+        "textSha256": "addf2b17f321957fc23256470f12fc2473d00b7c49f425b85d3ead4ddd32f98d"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "sceneId": "scene-1",
+      "ordinal": 0,
+      "title": "Scene One: Platform Glass",
+      "span": {
+        "spanId": "scene-1",
+        "startOffset": 30,
+        "endOffset": 703,
+        "textSha256": "e61dd55115193af711acdbde8956c21e4d37d89f8438e5c9949b5a4fe084049c"
+      }
+    },
+    {
+      "sceneId": "scene-2",
+      "ordinal": 1,
+      "title": "Scene Two: The Clock Room",
+      "span": {
+        "spanId": "scene-2",
+        "startOffset": 703,
+        "endOffset": 1595,
+        "textSha256": "ca96c89926b7358e34aeaa5cc519da875785ca413d77d852c9d61cbfaf4bcfd1"
+      }
+    },
+    {
+      "sceneId": "scene-3",
+      "ordinal": 2,
+      "title": "Scene Three: Six Years Earlier, Archive Vault",
+      "span": {
+        "spanId": "scene-3",
+        "startOffset": 1624,
+        "endOffset": 2156,
+        "textSha256": "fc29deaca4bc1b80eb75474a1c7f8ad8d6b837c3f4feb3a946994dab93965296"
+      }
+    },
+    {
+      "sceneId": "scene-4",
+      "ordinal": 3,
+      "title": "Scene Four: North Signal Tower",
+      "span": {
+        "spanId": "scene-4",
+        "startOffset": 2156,
+        "endOffset": 2790,
+        "textSha256": "2dc22c9f6c17718cc5129c2e824f60252f4b17ca2e808daf6db4dfc3d2c27823"
+      }
+    },
+    {
+      "sceneId": "scene-5",
+      "ordinal": 4,
+      "title": "Scene Five: Flooded Concourse",
+      "span": {
+        "spanId": "scene-5",
+        "startOffset": 2822,
+        "endOffset": 3352,
+        "textSha256": "4c41c32c3c3665fd4269ee42b6e126d0c02b413414ddc3aca0433f78fbeba4e5"
+      }
+    },
+    {
+      "sceneId": "scene-6",
+      "ordinal": 5,
+      "title": "Scene Six: Dawn Switchyard",
+      "span": {
+        "spanId": "scene-6",
+        "startOffset": 3352,
+        "endOffset": 3783,
+        "textSha256": "554b56f4e795b6b08dc1e7841be6f407ba98e299516e7562649980a46f6dcc47"
+      }
+    }
+  ],
+  "characters": [
+    {
+      "characterId": "character-mira",
+      "canonicalName": "Mira Vale",
+      "aliases": [
+        "Mira",
+        "Captain Mira Vale",
+        "Captain",
+        "Captain Vale"
+      ],
+      "firstMention": {
+        "spanId": "character-mira-first-mention",
+        "startOffset": 57,
+        "endOffset": 74,
+        "exactText": "Captain Mira Vale",
+        "textSha256": "e1fcd36897c4a0294f8f67a992ef625831bd95c49ed519acb927faa0ada479cf"
+      }
+    },
+    {
+      "characterId": "character-tovin",
+      "canonicalName": "Tovin Rook",
+      "aliases": [
+        "Tovin",
+        "Mr. Rook",
+        "Rook"
+      ],
+      "firstMention": {
+        "spanId": "character-tovin-first-mention",
+        "startOffset": 148,
+        "endOffset": 158,
+        "exactText": "Tovin Rook",
+        "textSha256": "3ec7d04dbe09d91a43914c984f41e65a21c86871429d3f171a8cbfa6682697f8"
+      }
+    },
+    {
+      "characterId": "character-jun",
+      "canonicalName": "Jun Pell",
+      "aliases": [
+        "Jun",
+        "Engineer Jun Pell",
+        "Engineer Pell"
+      ],
+      "firstMention": {
+        "spanId": "character-jun-first-mention",
+        "startOffset": 250,
+        "endOffset": 267,
+        "exactText": "Engineer Jun Pell",
+        "textSha256": "c798de71ed9acddf2d12e9e5cf25ade8b390b4de53550b1b3e064a8a454d3a22"
+      }
+    },
+    {
+      "characterId": "character-nessa",
+      "canonicalName": "Nessa Quill",
+      "aliases": [
+        "Nessa",
+        "Captain Nessa Quill",
+        "Archivist Quill",
+        "Captain"
+      ],
+      "firstMention": {
+        "spanId": "character-nessa-first-mention",
+        "startOffset": 795,
+        "endOffset": 814,
+        "exactText": "Captain Nessa\nQuill",
+        "textSha256": "1adabb8e41c0a8c88a451d68350d2aa67421743267b4b8b745665601be9f2453"
+      }
+    },
+    {
+      "characterId": "character-ilya",
+      "canonicalName": "Ilya Maren",
+      "aliases": [
+        "Ilya",
+        "Inspector Ilya Maren",
+        "Inspector Maren"
+      ],
+      "firstMention": {
+        "spanId": "character-ilya-first-mention",
+        "startOffset": 860,
+        "endOffset": 880,
+        "exactText": "Inspector Ilya Maren",
+        "textSha256": "15a2f587389a8c3c5271856e1f2e146e3f02a77a749131f75823de92c0cce2b3"
+      }
+    },
+    {
+      "characterId": "character-orin",
+      "canonicalName": "Orin Dax",
+      "aliases": [
+        "Orin",
+        "Keeper Orin Dax",
+        "Keeper Dax"
+      ],
+      "firstMention": {
+        "spanId": "character-orin-first-mention",
+        "startOffset": 882,
+        "endOffset": 897,
+        "exactText": "Keeper\nOrin Dax",
+        "textSha256": "602e9a27c5f8c359cb00ad3528ba71864c5b45e892026bad128c80b88bc2d5df"
+      }
+    },
+    {
+      "characterId": "character-elian",
+      "canonicalName": "Elian Sorell",
+      "aliases": [
+        "Elian",
+        "Dr. Elian Sorell",
+        "Dr. Sorell",
+        "doctor"
+      ],
+      "firstMention": {
+        "spanId": "character-elian-first-mention",
+        "startOffset": 924,
+        "endOffset": 940,
+        "exactText": "Dr. Elian Sorell",
+        "textSha256": "0d565265accee744bf7006ad2420467b5fad10fabf26a2b9ad47789f152c954e"
+      }
+    },
+    {
+      "characterId": "character-sana",
+      "canonicalName": "Sana Vey",
+      "aliases": [
+        "Sana",
+        "Dr. Sana Vey",
+        "Doctor Vey",
+        "doctor"
+      ],
+      "firstMention": {
+        "spanId": "character-sana-first-mention",
+        "startOffset": 945,
+        "endOffset": 957,
+        "exactText": "Dr. Sana Vey",
+        "textSha256": "0b22cd9608a18412ce6b37d8002459fb6a6a74e0df6c00f6dca22e590b54ed58"
+      }
+    },
+    {
+      "characterId": "character-alex-west",
+      "canonicalName": "Alex Reed",
+      "aliases": [
+        "Alex",
+        "Reed"
+      ],
+      "firstMention": {
+        "spanId": "character-alex-west-first-mention",
+        "startOffset": 1149,
+        "endOffset": 1158,
+        "exactText": "Alex Reed",
+        "textSha256": "8c83ce750dfd4865c3aabf925d020f531fb4ef62a80252fcd148ab537eea1a2d"
+      }
+    },
+    {
+      "characterId": "character-alex-east",
+      "canonicalName": "Alex Reed",
+      "aliases": [
+        "Alex",
+        "Reed"
+      ],
+      "firstMention": {
+        "spanId": "character-alex-east-first-mention",
+        "startOffset": 1195,
+        "endOffset": 1204,
+        "exactText": "Alex Reed",
+        "textSha256": "8c83ce750dfd4865c3aabf925d020f531fb4ef62a80252fcd148ab537eea1a2d"
+      }
+    }
+  ],
+  "locations": [
+    {
+      "locationId": "location-relay-platform",
+      "canonicalName": "Relay Platform",
+      "firstMention": {
+        "spanId": "location-relay-platform-first-mention",
+        "startOffset": 75,
+        "endOffset": 101,
+        "exactText": "crossed the Relay Platform",
+        "textSha256": "91b749c70bc958320697d7900198aec20f4a5f0a795d7e696b78713ef6207338"
+      }
+    },
+    {
+      "locationId": "location-clock-room",
+      "canonicalName": "Clock Room",
+      "firstMention": {
+        "spanId": "location-clock-room-first-mention",
+        "startOffset": 774,
+        "endOffset": 793,
+        "exactText": "into the Clock Room",
+        "textSha256": "a9d9b57f81a46e7e55437819c0bff495df16d032a3aa04269d423197bfe41f01"
+      }
+    },
+    {
+      "locationId": "location-archive-vault",
+      "canonicalName": "Archive Vault",
+      "firstMention": {
+        "spanId": "location-archive-vault-first-mention",
+        "startOffset": 1715,
+        "endOffset": 1745,
+        "exactText": "into the Archive Vault beneath",
+        "textSha256": "f30f3148be26b8edf67dc78d35aa7f4f0f4755f6405dc4e014c2b45111fe2723"
+      }
+    },
+    {
+      "locationId": "location-north-signal-tower",
+      "canonicalName": "North Signal Tower",
+      "firstMention": {
+        "spanId": "location-north-signal-tower-first-mention",
+        "startOffset": 2238,
+        "endOffset": 2268,
+        "exactText": "climbed the North Signal\nTower",
+        "textSha256": "7d4eec562ccdb5343f839bae80c23fbaf9c414a80fa74dea366825466d93a187"
+      }
+    },
+    {
+      "locationId": "location-flooded-concourse",
+      "canonicalName": "Flooded Concourse",
+      "firstMention": {
+        "spanId": "location-flooded-concourse-first-mention",
+        "startOffset": 2853,
+        "endOffset": 2877,
+        "exactText": "At the Flooded Concourse",
+        "textSha256": "e5cd0847cbdb2f5c35e0a8514a4736c161e80f95f9f19aca1dd10758eed8fa7b"
+      }
+    },
+    {
+      "locationId": "location-dawn-switchyard",
+      "canonicalName": "Dawn Switchyard",
+      "firstMention": {
+        "spanId": "location-dawn-switchyard-first-mention",
+        "startOffset": 3418,
+        "endOffset": 3440,
+        "exactText": "in the Dawn Switchyard",
+        "textSha256": "244e6fb00e2bc25ffd990211c85323574d6a5c45f1a6ca4a778d3110fdc168db"
+      }
+    }
+  ],
+  "dialogueLines": [
+    {
+      "dialogueLineId": "dialogue-northern-marker",
+      "exactText": {
+        "spanId": "dialogue-northern-marker",
+        "startOffset": 369,
+        "endOffset": 406,
+        "exactText": "\"The northern marker is awake again,\"",
+        "textSha256": "f93e221d8eb1700cf68664c5e6e3b4f6cb270851baa891c6e9c51cf015edcf91"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-tovin"
+      ],
+      "effectiveSpeakerId": "character-tovin",
+      "requiresHumanReview": false
+    },
+    {
+      "dialogueLineId": "dialogue-remembered-us",
+      "exactText": {
+        "spanId": "dialogue-remembered-us",
+        "startOffset": 444,
+        "endOffset": 492,
+        "exactText": "\"Then it remembered us before we remembered it.\"",
+        "textSha256": "174e563045a324d16e1e4dd9da5fde281d39635e6533f884d0ad45cce587335a"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-mira"
+      ],
+      "effectiveSpeakerId": "character-mira",
+      "requiresHumanReview": false
+    },
+    {
+      "dialogueLineId": "dialogue-turn-back",
+      "exactText": {
+        "spanId": "dialogue-turn-back",
+        "startOffset": 608,
+        "endOffset": 633,
+        "exactText": "\"We can still turn back.\"",
+        "textSha256": "10e93075881aa835bd5a27b1bc5a2f1623ff87686ec41ba7b2fec6509b05b3ea"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-mira",
+        "character-tovin"
+      ],
+      "effectiveSpeakerId": null,
+      "requiresHumanReview": true
+    },
+    {
+      "dialogueLineId": "dialogue-first-signal",
+      "exactText": {
+        "spanId": "dialogue-first-signal",
+        "startOffset": 1007,
+        "endOffset": 1051,
+        "exactText": "\"Only one of us remembers the first signal.\"",
+        "textSha256": "150a99b7efec69a48a8b4d77607231ff296ae0e4736d63a4928022dabf892c0d"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-mira",
+        "character-nessa"
+      ],
+      "effectiveSpeakerId": null,
+      "requiresHumanReview": true
+    },
+    {
+      "dialogueLineId": "dialogue-west-dial",
+      "exactText": {
+        "spanId": "dialogue-west-dial",
+        "startOffset": 1228,
+        "endOffset": 1253,
+        "exactText": "\"The west dial is clear,\"",
+        "textSha256": "a1f4cff24b1e1aa9f5ad1b07f4906fab7f0d478bde3b79dad83a55d51d38424d"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-alex-west",
+        "character-alex-east"
+      ],
+      "effectiveSpeakerId": null,
+      "requiresHumanReview": true
+    },
+    {
+      "dialogueLineId": "dialogue-hide-route",
+      "exactText": {
+        "spanId": "dialogue-hide-route",
+        "startOffset": 1900,
+        "endOffset": 1937,
+        "exactText": "\"Hide the route until Mira is ready,\"",
+        "textSha256": "2f032c662ebaca983467c72d18c3dbe2312f72cb749a5acb0ce3d1f681a61a49"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-nessa"
+      ],
+      "effectiveSpeakerId": "character-nessa",
+      "requiresHumanReview": false
+    },
+    {
+      "dialogueLineId": "dialogue-apology",
+      "exactText": {
+        "spanId": "dialogue-apology",
+        "startOffset": 2594,
+        "endOffset": 2627,
+        "exactText": "\"I was wrong to call you a\nliar.\"",
+        "textSha256": "0c1c431516bb60235310eff485c4a1a4b762d48c1107c4cd3415c837b4ea3046"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-mira"
+      ],
+      "effectiveSpeakerId": "character-mira",
+      "requiresHumanReview": false
+    },
+    {
+      "dialogueLineId": "dialogue-right-to-ask",
+      "exactText": {
+        "spanId": "dialogue-right-to-ask",
+        "startOffset": 2629,
+        "endOffset": 2653,
+        "exactText": "\"You were right to ask,\"",
+        "textSha256": "24ba2dc6957c1dab12a0ac15eb778b96012e0868be37aff5d53ba33a29cd80b5"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-tovin"
+      ],
+      "effectiveSpeakerId": "character-tovin",
+      "requiresHumanReview": false
+    },
+    {
+      "dialogueLineId": "dialogue-red-valve",
+      "exactText": {
+        "spanId": "dialogue-red-valve",
+        "startOffset": 3139,
+        "endOffset": 3161,
+        "exactText": "\"Close the red valve,\"",
+        "textSha256": "2860cd2c26a7d70c0f245b043165061be355b3460a5fb36bdbb6ca6e35eff81e"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-elian",
+        "character-sana"
+      ],
+      "effectiveSpeakerId": null,
+      "requiresHumanReview": true
+    },
+    {
+      "dialogueLineId": "dialogue-tomorrow",
+      "exactText": {
+        "spanId": "dialogue-tomorrow",
+        "startOffset": 3574,
+        "endOffset": 3632,
+        "exactText": "\"Tomorrow, the northern line will carry passengers again,\"",
+        "textSha256": "9a9aed74eb546aa53132a72879582690d77f64e20ff023e483ae4125a16d9114"
+      },
+      "distinction": "spoken_dialogue",
+      "candidateCharacterIds": [
+        "character-mira"
+      ],
+      "effectiveSpeakerId": "character-mira",
+      "requiresHumanReview": false
+    }
+  ],
+  "narrationDistinction": {
+    "quotedMaterial": {
+      "spanId": "quoted-plaque-instruction",
+      "startOffset": 514,
+      "endOffset": 537,
+      "exactText": "\"KEEP THE LANTERN LIT.\"",
+      "textSha256": "b7fc52117455f48583cdf16c6ce3d6c720cfacf5040cb418129f3d6cfec08584",
+      "expectedClassification": "quoted_material"
+    },
+    "internalThought": {
+      "spanId": "internal-thought-mira",
+      "startOffset": 582,
+      "endOffset": 606,
+      "exactText": "Not again, Mira thought.",
+      "textSha256": "8c06190302b905c1a255fc6b065be5058d7d7766c64c44c72302127d3028d764",
+      "expectedClassification": "internal_thought",
+      "viewpointCharacterId": "character-mira"
+    }
+  },
+  "pointOfView": {
+    "initial": {
+      "spanId": "pov-mira",
+      "startOffset": 298,
+      "endOffset": 367,
+      "exactText": "Mira wished Tovin would admit why the northern marker frightened him.",
+      "textSha256": "29634025f3fc082a296bfeaacc5d0a2b6405562d7740d094b584d4974ace2b30",
+      "viewpointCharacterId": "character-mira"
+    },
+    "shifted": {
+      "spanId": "pov-tovin",
+      "startOffset": 2270,
+      "endOffset": 2354,
+      "exactText": "For the first time that night, only he noticed how every bell matched his\nheartbeat.",
+      "textSha256": "579bf3d8a0860713d080dd576491f83dcfa8ae6344b4d66f9d338780bbe3ff84",
+      "viewpointCharacterId": "character-tovin",
+      "expectedShiftKind": "scene_boundary"
+    }
+  },
+  "timeline": {
+    "flashback": {
+      "spanId": "timeline-flashback",
+      "startOffset": 1671,
+      "endOffset": 1737,
+      "exactText": "Six years earlier, Tovin had followed Nessa into the Archive Vault",
+      "textSha256": "f92444f3bfd66b52ece561c2b7016db32f54fc651d3cdefaf597e556e17760bb",
+      "expectedKind": "flashback"
+    },
+    "returnToPresent": {
+      "spanId": "timeline-present-return",
+      "startOffset": 2188,
+      "endOffset": 2230,
+      "exactText": "Back in the present, two hours before dawn",
+      "textSha256": "f952124068b74f1c4dd9c844e6f848930fa4a33437c06ca95a8786c3fc1fb333",
+      "expectedKind": "relative_time"
+    },
+    "relativeTime": {
+      "spanId": "timeline-three-minutes-later",
+      "startOffset": 730,
+      "endOffset": 749,
+      "exactText": "Three minutes later",
+      "textSha256": "1b288218f49013b3f46eb93212f857815d4439698541ce041afa1f67481e1ede"
+    }
+  },
+  "relationshipChanges": [
+    {
+      "relationshipId": "relationship-mira-tovin",
+      "sourceCharacterId": "character-mira",
+      "targetCharacterId": "character-tovin",
+      "before": {
+        "spanId": "relationship-distrust",
+        "startOffset": 1362,
+        "endOffset": 1410,
+        "exactText": "Their strained partnership became\nopen distrust.",
+        "textSha256": "b377e8906d07f7a837bac8e8599a19fe739b8cd9a5a01660b042482889538151"
+      },
+      "after": {
+        "spanId": "relationship-alliance",
+        "startOffset": 2667,
+        "endOffset": 2713,
+        "exactText": "Their distrust eased into a cautious alliance.",
+        "textSha256": "655fa1d0b5c288bcc1f7c9c96f7ec282bae6fdfbdd9cbd7f8824a33e94b6ede0"
+      },
+      "expectedChange": "reversed"
+    },
+    {
+      "relationshipId": "relationship-mira-nessa",
+      "sourceCharacterId": "character-mira",
+      "targetCharacterId": "character-nessa",
+      "before": {
+        "spanId": "relationship-old-rivalry",
+        "startOffset": 3043,
+        "endOffset": 3085,
+        "exactText": "Nessa abandoned their old rivalry to help.",
+        "textSha256": "4acb7e1d3c03edcf985a80e1eb5e5c29b36954c8c5ab402bb396dd676004b361"
+      },
+      "after": {
+        "spanId": "relationship-trust",
+        "startOffset": 3681,
+        "endOffset": 3718,
+        "exactText": "What began as rivalry ended as trust.",
+        "textSha256": "6ef27a34e5d9c38c5991bbe4ceebc21d26715ebb10974fcb538fa68fe1c7428b"
+      },
+      "expectedChange": "reversed"
+    }
+  ],
+  "emotionalProgression": {
+    "characterId": "character-mira",
+    "states": [
+      {
+        "emotion": "anger",
+        "evidence": {
+          "spanId": "emotion-anger",
+          "startOffset": 2879,
+          "endOffset": 2921,
+          "exactText": "anger carried Mira through the black water",
+          "textSha256": "89cb858b231b0824d308f056c6e2f7388972c05b748dae95af40301ad6fd9d52"
+        }
+      },
+      {
+        "emotion": "grief",
+        "evidence": {
+          "spanId": "emotion-grief",
+          "startOffset": 2994,
+          "endOffset": 3017,
+          "exactText": "anger gave way to\ngrief",
+          "textSha256": "38b717543c84e9687cc41424cbc849f116376f9953dae37b3facf203292383dc"
+        }
+      },
+      {
+        "emotion": "resolve",
+        "evidence": {
+          "spanId": "emotion-resolve",
+          "startOffset": 3266,
+          "endOffset": 3290,
+          "exactText": "Her grief became resolve",
+          "textSha256": "4f90dbb41a47dcaaf7aad1577906a6559f487d9b95e1c64ef502cb07e74009fb"
+        }
+      }
+    ]
+  },
+  "continuityAnomaly": {
+    "findingId": "continuity-broken-lantern",
+    "expectedCategory": "unexplained_object_state_change",
+    "priorState": {
+      "spanId": "lantern-broken",
+      "startOffset": 1463,
+      "endOffset": 1593,
+      "exactText": "The brass lantern slipped from Jun's hand. Its glass shattered on the stone.\nMira left the broken frame beside the backward clock.",
+      "textSha256": "62a2ef467b9a9d47e6a34d3a368dffbfb71880775136e48c41180d990c1567e8"
+    },
+    "conflictingState": {
+      "spanId": "lantern-unbroken",
+      "startOffset": 2400,
+      "endOffset": 2495,
+      "exactText": "The same brass lantern hung unbroken from the tower hook, its glass clean and\nits flame steady.",
+      "textSha256": "2b2d279106031d8b2b1eaa6c98d162b59ef9ad9a33c9168248de83a4510679ab"
+    }
+  }
+}

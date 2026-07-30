@@ -20,6 +20,17 @@ import type {
   SourceMediaType,
   StoryBeat
 } from "./domain.js";
+import type {
+  AnalysisCorrection,
+  AnalysisCorrectionRequestSelection,
+  AnalysisEntityCollection,
+  AnalysisEntityMap,
+  AnalysisGateDecision,
+  AnalysisGateId,
+  AnalysisGateReview,
+  AnalysisProfileReference,
+  StoryAnalysisRun
+} from "./story-analysis.js";
 
 export interface ApiError {
   readonly code: string;
@@ -249,6 +260,8 @@ export interface ProjectDetail extends CorrelatedResponse {
   readonly castingPlaceholders: readonly CastingPlaceholder[];
   readonly approvals: readonly ApprovalDecision[];
   readonly jobs: readonly Job[];
+  readonly currentAnalysisRun: StoryAnalysisRun | null;
+  readonly analysisGateReviews: readonly AnalysisGateReview[];
 }
 
 export interface CorrectDialogueSpeakerRequest {
@@ -264,7 +277,10 @@ export interface CorrectDialogueSpeakerResponse extends CorrelatedResponse {
   readonly lineRevision: number;
 }
 
-export type JobType = "extract_document" | "analyze_story";
+export type JobType =
+  | "extract_document"
+  | "analyze_story"
+  | "analyze_whole_book";
 
 export type JobState =
   | "queued"
@@ -340,6 +356,135 @@ export interface JobEventsResponse extends CorrelatedResponse {
   readonly lastSequence: number;
 }
 
+export interface CursorPageRequest {
+  readonly cursor?: string;
+  /**
+   * Defaults to 50. Runtime validation rejects values above 200.
+   */
+  readonly limit?: number;
+}
+
+interface StoryAnalysisEntityFilterRequest extends CursorPageRequest {
+  /**
+   * Inclusive upper confidence bound in [0, 1].
+   */
+  readonly confidenceMax?: number;
+  readonly requiresReview?: boolean;
+}
+
+export type StoryAnalysisEntityPageRequest<
+  TCollection extends AnalysisEntityCollection
+> = StoryAnalysisEntityFilterRequest &
+  (TCollection extends "dialogue-lines"
+    ? {
+        readonly speakerState?:
+          | "unknown"
+          | "ambiguous"
+          | "proposed"
+          | "corrected";
+      }
+    : {
+        readonly speakerState?: never;
+      });
+
+export interface CursorPageResponse extends CorrelatedResponse {
+  readonly pageSize: number;
+  readonly total: number;
+  readonly nextCursor?: string;
+}
+
+export interface CreateStoryAnalysisRunRequest {
+  readonly expectedExtractionId: EntityId;
+  readonly expectedExtractionRevision: number;
+  readonly expectedReviewId: EntityId;
+  readonly expectedReviewRevision: number;
+  readonly expectedEvidenceFingerprint: Sha256;
+  readonly expectedProfileFingerprint: Sha256;
+  readonly profile: AnalysisProfileReference;
+  readonly idempotencyKey: string;
+}
+
+export interface CreateStoryAnalysisRunResponse extends CorrelatedResponse {
+  readonly run: StoryAnalysisRun;
+  readonly job: Job;
+}
+
+export interface StoryAnalysisRunResponse extends CorrelatedResponse {
+  readonly run: StoryAnalysisRun;
+}
+
+export interface StoryAnalysisRunPageResponse extends CursorPageResponse {
+  readonly runs: readonly StoryAnalysisRun[];
+}
+
+export interface StoryAnalysisEntityPageResponse<
+  TCollection extends AnalysisEntityCollection
+> extends CursorPageResponse {
+  readonly collection: TCollection;
+  readonly runId: EntityId;
+  readonly snapshotId: EntityId;
+  readonly items: readonly AnalysisEntityMap[TCollection][];
+}
+
+interface CreateAnalysisCorrectionRequestBase {
+  readonly targetEntityId: EntityId;
+  readonly expectedTargetRevision: number;
+  readonly expectedRunFingerprint: Sha256;
+  readonly previousValueFingerprint: Sha256;
+  /**
+   * Nonblank human rationale, bounded to 1,000 Unicode code points at the
+   * service boundary.
+   */
+  readonly reason: string;
+  readonly supersedesCorrectionId?: EntityId;
+  readonly idempotencyKey: string;
+}
+
+export type CreateAnalysisCorrectionRequest =
+  CreateAnalysisCorrectionRequestBase & AnalysisCorrectionRequestSelection;
+
+export interface AnalysisCorrectionResponse extends CorrelatedResponse {
+  readonly correction: AnalysisCorrection;
+  readonly invalidatedGateIds: readonly AnalysisGateId[];
+  readonly run: StoryAnalysisRun;
+  readonly reviews: readonly AnalysisGateReview[];
+}
+
+export interface AnalysisCorrectionPageResponse extends CursorPageResponse {
+  readonly runId: EntityId;
+  readonly items: readonly AnalysisCorrection[];
+}
+
+export interface AnalysisGateReviewListResponse extends CorrelatedResponse {
+  readonly runId: EntityId;
+  readonly items: readonly AnalysisGateReview[];
+}
+
+export type AnalysisGateDecisionAction =
+  | "approve"
+  | "request_changes"
+  | "reject";
+
+export interface DecideAnalysisGateRequest {
+  readonly decision: AnalysisGateDecisionAction;
+  readonly expectedRevision: number;
+  readonly expectedArtifactFingerprint: Sha256;
+  readonly expectedEvidenceFingerprint: Sha256;
+  readonly acknowledgedWarningIds: readonly EntityId[];
+  /**
+   * Nonblank human rationale, bounded to 4,000 Unicode code points at the
+   * service boundary.
+   */
+  readonly rationale: string;
+  readonly idempotencyKey: string;
+}
+
+export interface DecideAnalysisGateResponse extends CorrelatedResponse {
+  readonly review: AnalysisGateReview;
+  readonly decision: AnalysisGateDecision;
+  readonly run: StoryAnalysisRun;
+}
+
 export const API_V1_PATHS = {
   health: "/api/v1/health",
   providerHealth: "/api/v1/providers/health",
@@ -359,6 +504,31 @@ export const API_V1_PATHS = {
     projectId: EntityId,
     reviewId: EntityId
   ) => `/api/v1/projects/${projectId}/imports/${reviewId}/review/decision`,
+  projectAnalysisRuns: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/analysis-runs`,
+  projectAnalysisRun: (projectId: EntityId, runId: EntityId) =>
+    `/api/v1/projects/${projectId}/analysis-runs/${runId}`,
+  projectAnalysisRunEntities: (
+    projectId: EntityId,
+    runId: EntityId,
+    collection: AnalysisEntityCollection
+  ) =>
+    `/api/v1/projects/${projectId}/analysis-runs/${runId}/entities/${collection}`,
+  projectAnalysisRunCorrections: (
+    projectId: EntityId,
+    runId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/analysis-runs/${runId}/corrections`,
+  projectAnalysisRunReviews: (
+    projectId: EntityId,
+    runId: EntityId
+  ) => `/api/v1/projects/${projectId}/analysis-runs/${runId}/reviews`,
+  projectAnalysisRunReviewDecision: (
+    projectId: EntityId,
+    runId: EntityId,
+    gateId: AnalysisGateId
+  ) =>
+    `/api/v1/projects/${projectId}/analysis-runs/${runId}/reviews/${gateId}/decisions`,
   dialogueSpeaker: (projectId: EntityId, lineId: EntityId) =>
     `/api/v1/projects/${projectId}/dialogue-lines/${lineId}/speaker`,
   projectJobs: (projectId: EntityId) =>

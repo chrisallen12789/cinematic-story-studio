@@ -58,6 +58,15 @@ export interface Phase2WorkflowEvidence {
   readonly flow: readonly string[];
 }
 
+type Phase2RuntimeSnapshotAttemptResult =
+  | {
+      readonly outcome: "project_context_changed";
+    }
+  | {
+      readonly outcome: "succeeded";
+      readonly snapshot: Phase2RuntimeSnapshot;
+    };
+
 export async function runPhase2GovernanceWorkflow(
   page: Page
 ): Promise<Phase2WorkflowEvidence> {
@@ -217,33 +226,34 @@ export async function readPhase2RuntimeSnapshot(
   page: Page
 ): Promise<Phase2RuntimeSnapshot> {
   for (let attempt = 1; attempt <= snapshotContextRetryLimit; attempt += 1) {
-    try {
-      return await readPhase2RuntimeSnapshotAttempt(page);
-    } catch (error) {
-      if (
-        !isProjectContextChangedError(error) ||
-        attempt === snapshotContextRetryLimit
-      ) {
-        throw error;
-      }
+    const result = await readPhase2RuntimeSnapshotAttempt(page);
+    if (result.outcome === "succeeded") {
+      return result.snapshot;
+    }
+    if (attempt < snapshotContextRetryLimit) {
       // When a durable job leaves an active state, the renderer performs one
       // same-project refresh. That refresh intentionally changes the guarded
       // selection epoch and rejects concurrent evidence reads. Retry only that
-      // explicit failure, rebuild the entire exact snapshot, and never reuse a
+      // exact typed result, rebuild the entire snapshot, and never reuse a
       // partial page from the invalidated attempt.
       await page.waitForTimeout(snapshotContextRetryDelayMs * attempt);
     }
   }
-  throw new Error("The Phase 2 runtime snapshot retry bound was exhausted.");
+  throw new Error(
+    "The Phase 2 project context changed during all bounded evidence reads."
+  );
 }
 
 async function readPhase2RuntimeSnapshotAttempt(
   page: Page
-): Promise<Phase2RuntimeSnapshot> {
-  const snapshot = await page.evaluate(
-    async ({ collections }) => {
+): Promise<Phase2RuntimeSnapshotAttemptResult> {
+  const result = await page.evaluate(
+    async ({ collections, contextChangedCode }) => {
       const restored = await window.cinematicStory.projects.restoreRecent();
       if (!restored.ok) {
+        if (restored.error.code === contextChangedCode) {
+          return { outcome: "project_context_changed" } as const;
+        }
         throw new Error(
           `The Phase 2 project restore failed with ${restored.error.code}: ${restored.error.message}`
         );
@@ -260,6 +270,9 @@ async function readPhase2RuntimeSnapshotAttempt(
         runId: projectedRun.runId
       });
       if (!runResult.ok) {
+        if (runResult.error.code === contextChangedCode) {
+          return { outcome: "project_context_changed" } as const;
+        }
         throw new Error(
           `The Phase 2 run read failed with ${runResult.error.code}: ${runResult.error.message}`
         );
@@ -306,31 +319,50 @@ async function readPhase2RuntimeSnapshotAttempt(
                 collection,
                 limit: 200
               });
-            if (!result.ok) {
-              throw new Error(
-                `The ${collection} read failed with ${result.error.code}: ${result.error.message}`
-              );
-            }
-            if (result.value.nextCursor !== undefined) {
-              throw new Error(
-                `The ${collection} fixture exceeded one bounded E2E page.`
-              );
-            }
-            if (
-              result.value.runId !== run.runId ||
-              result.value.snapshotId !== currentSnapshot.snapshotId ||
-              result.value.collection !== collection ||
-              result.value.pageSize !== result.value.items.length ||
-              result.value.total < result.value.items.length
-            ) {
-              throw new Error(
-                `The ${collection} page metadata did not bind the exact run snapshot.`
-              );
-            }
-            return [collection, result.value.items] as const;
+            return [collection, result] as const;
           })
         )
       ]);
+      const guardedResults = [
+        eventResult,
+        correctionResult,
+        reviewResult,
+        ...entityResults.map(([, entityResult]) => entityResult)
+      ];
+      if (
+        guardedResults.some(
+          (guardedResult) =>
+            !guardedResult.ok &&
+            guardedResult.error.code === contextChangedCode
+        )
+      ) {
+        return { outcome: "project_context_changed" } as const;
+      }
+      const entityPages = entityResults.map(([collection, entityResult]) => {
+        if (!entityResult.ok) {
+          throw new Error(
+            `The ${collection} read failed with ${entityResult.error.code}: ${entityResult.error.message}`
+          );
+        }
+        const page = entityResult.value;
+        if (page.nextCursor !== undefined) {
+          throw new Error(
+            `The ${collection} fixture exceeded one bounded E2E page.`
+          );
+        }
+        if (
+          page.runId !== run.runId ||
+          page.snapshotId !== currentSnapshot.snapshotId ||
+          page.collection !== collection ||
+          page.pageSize !== page.items.length ||
+          page.total < page.items.length
+        ) {
+          throw new Error(
+            `The ${collection} page metadata did not bind the exact run snapshot.`
+          );
+        }
+        return [collection, page.items] as const;
+      });
       if (!eventResult.ok) {
         throw new Error(
           `The Phase 2 event read failed with ${eventResult.error.code}: ${eventResult.error.message}`
@@ -347,23 +379,22 @@ async function readPhase2RuntimeSnapshotAttempt(
         );
       }
       return {
-        run,
-        events: eventResult.value.events,
-        corrections: correctionResult.value.items,
-        reviews: reviewResult.value.items,
-        entities: Object.fromEntries(entityResults)
-      };
+        outcome: "succeeded",
+        snapshot: {
+          run,
+          events: eventResult.value.events,
+          corrections: correctionResult.value.items,
+          reviews: reviewResult.value.items,
+          entities: Object.fromEntries(entityPages)
+        }
+      } as const;
     },
-    { collections: ANALYSIS_ENTITY_COLLECTIONS }
+    {
+      collections: ANALYSIS_ENTITY_COLLECTIONS,
+      contextChangedCode: projectContextChangedCode
+    }
   );
-  return snapshot as Phase2RuntimeSnapshot;
-}
-
-function isProjectContextChangedError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.message.includes(`${projectContextChangedCode}:`)
-  );
+  return result as Phase2RuntimeSnapshotAttemptResult;
 }
 
 export function buildPackagedStoryAnalysisEvidence(

@@ -26,6 +26,7 @@ application binaries.
 | Application version | `0.1.0` |
 | Verification date | 2026-07-30 UTC |
 | Canonical Windows CI run/job | `30588967280` / `91026816077`, successful |
+| Code-head PR Windows CI run/job | `30588969013` / `91026821380`, successful |
 | Artifact ID/size/digest | `8777922822`; 426,968,851 bytes; `sha256:fc27f10cf1aa916cb05eeba17ad63b3dcda06478e526974261f667c520e22df7` |
 | Artifact expiry | `2026-08-06T23:14:00Z` |
 
@@ -221,12 +222,12 @@ three direct Phase 2 corrections. The direct corrections were immutable,
 locked against automation, effective with `human` authority before and after
 restart, and bound to these reason digests:
 
-| Correction | Result | Reason SHA-256 |
-| --- | --- | --- |
-| Structure boundary/label | Not exercised in packaged E2E; typed add/move/remove/rename behavior passed API, service, and desktop tests |
-| Character identity | Persisted and remained human-authoritative | `b42b6091d0bde37b4dd15f99a321e86dd965f2272a4ca68da6703b6f5ba2f0da` |
-| Dialogue speaker | Persisted and remained human-authoritative | `6db94e679f663d3dfbed36c173eb8445d6a364beb114c7f8c070e30983247300` |
-| Continuity disposition | Persisted and remained human-authoritative | `d7497ae908f34096c6bbbfdcbf7ea8287967882880cd229af078eee2383c2554` |
+| Correction | ID / target | Previous fingerprint | Corrected/effective-before/effective-after fingerprint | Reason SHA-256 |
+| --- | --- | --- | --- | --- |
+| Structure boundary/label | Not exercised in packaged E2E; typed add/move/remove/rename behavior passed API, service, and desktop tests | not applicable | not applicable | not applicable |
+| Character identity | `5aadef85-8638-4259-9074-e203c4e87c57` / `e0a4d1b4-985f-5fe6-a26a-74416ac6fcfb` | `03a46ecf3de8309e93d569193c8b9418c7194ced2db37e2fff9178edd425e48f` | `3a5d293b736095316b45a643d1850e6ebde7a4321445436efe9384da304d3f26` | `b42b6091d0bde37b4dd15f99a321e86dd965f2272a4ca68da6703b6f5ba2f0da` |
+| Dialogue speaker | `9efca9e6-a6a0-4b1b-bea9-971bf242d061` / `9f409df4-1940-5377-b6e0-1440461f4590` | `fa9c99a6ec97d20f9f8a06adb0f615fa58cfcb7891f53f324b96a1255ea77238` | `e6a686653e220b4b0e4515da842cba13ab7cf4eb243acc3b99cdb51f48003d64` | `6db94e679f663d3dfbed36c173eb8445d6a364beb114c7f8c070e30983247300` |
+| Continuity disposition | `ad29281e-b168-4e52-aef3-78c8097339c0` / `2603bd5e-a0cc-5db4-8dc3-af5e752095ab` | `87336a8d7b77f466739d64b47be65c670b5e386e7f5adbcb709455601344d6ef` | `f815e99fe085dfd5945658903db6bfb3c227bb2e003e6bb9999bbac79ad662bc` | `d7497ae908f34096c6bbbfdcbf7ea8287967882880cd229af078eee2383c2554` |
 
 The Phase 0 bridge reason is intentionally not serialized into the Phase 2
 manifest. Its correction record, effective speaker, analysis, and approval
@@ -235,12 +236,12 @@ state were compared before and after restart.
 All four decisions were immutable, approved, and byte-identical in their
 recorded fingerprints after restart:
 
-| Gate | Evidence/artifact fingerprint | Decision-record fingerprint |
-| --- | --- | --- |
-| `story_structure_review` | `117729e8c06caba4c609e792b36c5304612fc0e3738967f6aea641e6d4330029` | `121757e245db8f4453d67ab2452354a561359913c147206a88dff1b34d3286ca` |
-| `character_registry_review` | `85e479efce8060379c990898598c5be89e45ed334f5200275cc6339cb13e31a4` | `c2e2867c686107c2c4406ae35259509cc836e67fee78f5bacebe4b7bba55f9bb` |
-| `dialogue_attribution_review` | `e03cf2e6eaeea6a8c229f4096e748bd82c2c7263227368ede8c45ae39bb6d14b` | `454ef6039d174d2b20be8cf125f1331c2df5297c6a82ca8a4baf2d58ddd530f5` |
-| `whole_book_analysis_review` | `7a726836238923834268e4780edd7bd594ed6b2924b613937c496a3fb057bca1` | `6196829fcd2f3946c29efb03989fb8229ac0a470bbe33146752ca51d80bd4557` |
+| Gate | Review / decision ID | Artifact fingerprint | Evidence fingerprint | Decision-record fingerprint | Before/after |
+| --- | --- | --- | --- | --- | --- |
+| `story_structure_review` | `3b9efb61-3033-5234-90cd-bb5b057ca8d6` / `001439b5-5091-4e54-86b6-38bd10e919af` | `117729e8c06caba4c609e792b36c5304612fc0e3738967f6aea641e6d4330029` | `117729e8c06caba4c609e792b36c5304612fc0e3738967f6aea641e6d4330029` | `121757e245db8f4453d67ab2452354a561359913c147206a88dff1b34d3286ca` | Approved and identical |
+| `character_registry_review` | `a5b3299a-b107-52e9-921b-92ce91b23329` / `5a8d9035-7e91-4c74-9dcb-2c9a682153a8` | `85e479efce8060379c990898598c5be89e45ed334f5200275cc6339cb13e31a4` | `85e479efce8060379c990898598c5be89e45ed334f5200275cc6339cb13e31a4` | `c2e2867c686107c2c4406ae35259509cc836e67fee78f5bacebe4b7bba55f9bb` | Approved and identical |
+| `dialogue_attribution_review` | `46fbe0a6-e6d7-5d99-aa8e-140a605b3ac4` / `de9598aa-c8d5-475a-8c0e-4f59c89170a0` | `e03cf2e6eaeea6a8c229f4096e748bd82c2c7263227368ede8c45ae39bb6d14b` | `e03cf2e6eaeea6a8c229f4096e748bd82c2c7263227368ede8c45ae39bb6d14b` | `454ef6039d174d2b20be8cf125f1331c2df5297c6a82ca8a4baf2d58ddd530f5` | Approved and identical |
+| `whole_book_analysis_review` | `f7530fc9-d9ef-5a45-ab3a-86f0e8ff8a95` / `5301fc16-5bda-48f0-9f26-e1269ca868e1` | `7a726836238923834268e4780edd7bd594ed6b2924b613937c496a3fb057bca1` | `7a726836238923834268e4780edd7bd594ed6b2924b613937c496a3fb057bca1` | `6196829fcd2f3946c29efb03989fb8229ac0a470bbe33146752ca51d80bd4557` | Approved and identical |
 
 The first three gates are independently reviewable; Whole-Book Analysis Review
 requires all three current approvals. Approval is evidence-revision scoped and
@@ -279,6 +280,24 @@ inspected for manuscript data, or terminated merely by name.
 | --- | --- | --- | --- | --- |
 | 1 | 5072 / 2096 | 332, 1292, 2096, 3100 | 2252, 4076, 9424 | All seven exited gracefully; forced `[]`; remaining `[]` |
 | 2 | 5348 / 1492 | 1492, 5332, 8292, 9044 | 6932, 8212 | All six exited gracefully; forced `[]`; remaining `[]` |
+
+The exact owned identities were:
+
+| Launch | PID | Parent PID | Kind | Invariant creation time |
+| --- | ---: | ---: | --- | --- |
+| 1 | 2096 | 5072 | app | `2026-07-30T23:13:24.2901960Z` |
+| 1 | 3100 | 2096 | app | `2026-07-30T23:13:24.4396500Z` |
+| 1 | 332 | 2096 | app | `2026-07-30T23:13:24.4448670Z` |
+| 1 | 1292 | 2096 | app | `2026-07-30T23:13:24.4758040Z` |
+| 1 | 4076 | 2096 | service | `2026-07-30T23:13:24.6662990Z` |
+| 1 | 2252 | 4076 | service | `2026-07-30T23:13:25.4073430Z` |
+| 1 | 9424 | 2252 | service | `2026-07-30T23:13:28.3533600Z` |
+| 2 | 1492 | 5348 | app | `2026-07-30T23:13:46.4970490Z` |
+| 2 | 8292 | 1492 | app | `2026-07-30T23:13:46.6339020Z` |
+| 2 | 9044 | 1492 | app | `2026-07-30T23:13:46.6381300Z` |
+| 2 | 5332 | 1492 | app | `2026-07-30T23:13:46.6858940Z` |
+| 2 | 8212 | 1492 | service | `2026-07-30T23:13:46.8611230Z` |
+| 2 | 6932 | 8212 | service | `2026-07-30T23:13:47.4238530Z` |
 
 Shutdown required two post-close absence observations for every exact owned
 PID. Ownership was established, both launches completed, cleanup completed,

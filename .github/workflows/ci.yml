@@ -72,6 +72,8 @@ jobs:
         run: pnpm build
 
       - name: Run development Electron E2E
+        id: development_e2e
+        continue-on-error: true
         env:
           CSS_E2E: "1"
         run: pnpm --filter @cinematic-story-studio/desktop exec playwright test tests/e2e/persistence.spec.ts
@@ -202,3 +204,8 @@ jobs:
         if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.packaged_e2e.outcome != 'success' }}
         shell: pwsh
         run: throw "The packaged persistence E2E gate failed. Inspect the uploaded build evidence."
+
+      - name: Enforce development Electron E2E result
+        if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.development_e2e.outcome != 'success' }}
+        shell: pwsh
+        run: throw "The development Electron persistence E2E gate failed."

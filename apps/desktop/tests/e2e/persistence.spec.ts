@@ -61,6 +61,15 @@ test.describe("desktop persistence", () => {
       await expect(
         firstPage.getByRole("heading", { name: "Persistence Demo" })
       ).toBeVisible();
+      const createdNotice = firstPage.getByText(
+        "Created Persistence Demo.",
+        { exact: true }
+      );
+      await expect(createdNotice).toBeVisible();
+      await firstPage
+        .getByRole("button", { name: "Dismiss notification" })
+        .click();
+      await expect(createdNotice).toBeHidden();
       await first.evaluate(({ dialog }, selectedFixture) => {
         dialog.showOpenDialog = () =>
           Promise.resolve({

@@ -512,22 +512,17 @@ def test_100k_checkpoint_recovers_after_process_restart(tmp_path: Path) -> None:
         )
         job_id = created["job"]["jobId"]
         run_id = created["run"]["runId"]
-        deadline = time.monotonic() + 30
-        checkpointed: dict[str, object] | None = None
-        while time.monotonic() < deadline:
-            response = first.get(
-                f"/api/v1/jobs/{job_id}",
-                headers=headers,
-            )
-            assert response.status_code == 200, response.text
-            checkpointed = response.json()["job"]
-            if checkpointed["checkpointAvailable"] and checkpointed["stage"] == "checkpointed":
-                break
-            time.sleep(0.02)
-        assert checkpointed is not None
+        assert first_app.state.worker.controls.after_checkpoint_reached.wait(timeout=30)
+        response = first.get(
+            f"/api/v1/jobs/{job_id}",
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        checkpointed = response.json()["job"]
         assert checkpointed["checkpointAvailable"] is True
         assert checkpointed["state"] == "running"
-        assert checkpointed["stage"] == "checkpointed"
+        assert checkpointed["stage"] == "synthesize_analysis"
+    assert first_app.state.worker._thread is None
 
     second_app = create_app(ServiceSettings(data_dir=data_dir, bearer_token=TOKEN))
     with TestClient(second_app) as second:
@@ -556,6 +551,7 @@ def test_100k_checkpoint_recovers_after_process_restart(tmp_path: Path) -> None:
         ).json()["run"]
         assert run["status"] == "succeeded"
         assert run["currentSnapshot"]["counts"]["dialogueLines"] == 2_000
+    assert second_app.state.worker._thread is None
 
 
 def test_structure_stage_checkpoint_is_reused_after_process_restart(

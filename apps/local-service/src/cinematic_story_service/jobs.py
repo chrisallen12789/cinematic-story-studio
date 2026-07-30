@@ -65,6 +65,8 @@ _EXTRACTION_PRODUCER_VERSION = f"document-ingest@{INGEST_CONTRACT_VERSION}"
 _EXTRACTION_TARGET_TYPE = "document_extraction"
 _ANALYSIS_RUN_TARGET_TYPE = "analysis_run"
 _WHOLE_BOOK_CHECKPOINT_SCHEMA_VERSION = 2
+# Keep a bounded scheduling/unwind margin above SQLite's five-second lock wait.
+_WORKER_STOP_TIMEOUT_SECONDS = 15.0
 WHOLE_BOOK_JOB_STAGES = (
     "validate_approved_input",
     "initialize_run",
@@ -2167,6 +2169,7 @@ class WorkerControls:
     claim_gate: threading.Event
     execution_gate: threading.Event
     after_checkpoint_gate: threading.Event
+    after_checkpoint_reached: threading.Event
     after_agent_checkpoint_gate: threading.Event
     before_publication_gate: threading.Event
     publication_claim_gate: threading.Event
@@ -2193,6 +2196,7 @@ class JobWorker:
             claim_gate=threading.Event(),
             execution_gate=threading.Event(),
             after_checkpoint_gate=threading.Event(),
+            after_checkpoint_reached=threading.Event(),
             after_agent_checkpoint_gate=threading.Event(),
             before_publication_gate=threading.Event(),
             publication_claim_gate=threading.Event(),
@@ -2222,7 +2226,7 @@ class JobWorker:
         )
         self._thread.start()
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float = _WORKER_STOP_TIMEOUT_SECONDS) -> None:
         self._stop.set()
         self._wake.set()
         self.controls.claim_gate.set()
@@ -2320,6 +2324,13 @@ class JobWorker:
             self.jobs.update_progress(job_id, stage="cancelling", progress=0.05)
             return False
         return True
+
+    def _wait_after_checkpoint_boundary(self, job_id: str) -> bool:
+        self.controls.after_checkpoint_reached.set()
+        try:
+            return self._wait_at_boundary(self.controls.after_checkpoint_gate, job_id)
+        finally:
+            self.controls.after_checkpoint_reached.clear()
 
     def _run_extraction(self, claimed: dict[str, Any]) -> None:
         job_id = claimed["jobId"]
@@ -2670,7 +2681,7 @@ class JobWorker:
                     total_units=len(WHOLE_BOOK_JOB_STAGES),
                 ):
                     return
-            if not self._wait_at_boundary(self.controls.after_checkpoint_gate, job_id):
+            if not self._wait_after_checkpoint_boundary(job_id):
                 return
             if self._consume_injected_failure():
                 self.jobs.finish_failed(
@@ -2799,7 +2810,7 @@ class JobWorker:
                 ):
                     return
 
-            if not self._wait_at_boundary(self.controls.after_checkpoint_gate, job_id):
+            if not self._wait_after_checkpoint_boundary(job_id):
                 return
             if self._consume_injected_failure():
                 self.jobs.finish_failed(job_id)

@@ -27,6 +27,7 @@ from tests.test_phase2_api import create_phase2_run, queue_phase2_run
 from .conftest import (
     SYNTHETIC_BYTES,
     TOKEN,
+    collect_concurrent_database_results,
     create_analysis_job,
     create_imported_project,
     decide_import_review,
@@ -1031,7 +1032,7 @@ def test_concurrent_same_revision_corrections_have_one_cas_winner(
         first = pool.submit(submit, other_character, "concurrent one")
         second = pool.submit(submit, None, "concurrent two")
         start.wait()
-        outcomes = [first.result(timeout=5), second.result(timeout=5)]
+        outcomes = collect_concurrent_database_results([first, second])
 
     assert sorted(status for status, _body in outcomes) == [200, 409]
     loser = next(body for status, body in outcomes if status == 409)

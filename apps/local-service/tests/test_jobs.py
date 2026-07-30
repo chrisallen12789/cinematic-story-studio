@@ -46,6 +46,7 @@ from cinematic_story_service.util import canonical_json, parse_json, utc_now
 from .conftest import (
     SYNTHETIC_BYTES,
     TOKEN,
+    collect_concurrent_database_results,
     create_analysis_job,
     wait_for_job,
 )
@@ -1109,7 +1110,7 @@ def test_concurrent_different_keys_cannot_create_duplicate_active_job(tmp_path: 
             first = pool.submit(create, repositories[0], "concurrent-create-one")
             second = pool.submit(create, repositories[1], "concurrent-create-two")
             start.wait()
-            outcomes = [first.result(timeout=5), second.result(timeout=5)]
+            outcomes = collect_concurrent_database_results([first, second])
 
         assert [kind for kind, _value in outcomes].count("created") == 1
         loser = next(value for kind, value in outcomes if kind == "error")
@@ -1149,7 +1150,7 @@ def test_two_repositories_cannot_double_claim_one_queued_job(tmp_path: Path) -> 
             first = pool.submit(claim, repositories[0])
             second = pool.submit(claim, repositories[1])
             start.wait()
-            claims = [first.result(timeout=5), second.result(timeout=5)]
+            claims = collect_concurrent_database_results([first, second])
 
         assert sum(claimed is not None for claimed in claims) == 1
         claimed = next(value for value in claims if value is not None)
@@ -1198,8 +1199,7 @@ def test_progress_vs_cancel_never_appends_running_event_after_cancel_wins(
             cancellation = pool.submit(cancel)
             progress_update = pool.submit(progress)
             start.wait()
-            cancellation.result(timeout=5)
-            progress_update.result(timeout=5)
+            collect_concurrent_database_results([cancellation, progress_update])
 
         repositories[0].settle_pending_cancellation()
         events, _last = repositories[0].get_events(job["jobId"], after_sequence=0)
@@ -1255,7 +1255,7 @@ def test_concurrent_event_allocation_is_contiguous_and_unique(tmp_path: Path) ->
                 for index, repository in enumerate(repositories)
             ]
             start.wait()
-            assert all(future.result(timeout=10) for future in futures)
+            assert all(collect_concurrent_database_results(futures))
 
         events, last_sequence = app.state.jobs.get_events(job["jobId"], after_sequence=0)
         sequences = [event["sequence"] for event in events]
@@ -1298,7 +1298,7 @@ def test_concurrent_retry_has_one_cas_winner_and_one_new_attempt(tmp_path: Path)
             first = pool.submit(retry, repositories[0])
             second = pool.submit(retry, repositories[1])
             start.wait()
-            outcomes = [first.result(timeout=5), second.result(timeout=5)]
+            outcomes = collect_concurrent_database_results([first, second])
 
         assert [kind for kind, _value in outcomes].count("queued") == 1
         loser = next(value for kind, value in outcomes if kind == "error")
@@ -1502,8 +1502,8 @@ def test_checkpoint_is_interrupted_on_shutdown_then_resumes(tmp_path: Path) -> N
     headers = {"Authorization": f"Bearer {TOKEN}"}
     first_app = create_app(ServiceSettings(data_dir=data_dir, bearer_token=TOKEN))
     with TestClient(first_app) as first:
-        first_app.state.worker.controls.after_checkpoint_gate.clear()
         imported = create_imported_project(first, headers)
+        first_app.state.worker.controls.after_checkpoint_gate.clear()
         job = create_analysis_job(
             first,
             headers,
@@ -1511,10 +1511,21 @@ def test_checkpoint_is_interrupted_on_shutdown_then_resumes(tmp_path: Path) -> N
             imported["story"]["revision"],
             idempotency_key="resume",
         )
-        checkpointed = wait_for_job(first, headers, job["jobId"], {"running"})
-        while not checkpointed["checkpointAvailable"]:
-            checkpointed = wait_for_job(first, headers, job["jobId"], {"running"})
+        assert first_app.state.worker.controls.after_checkpoint_reached.wait(timeout=5)
+        checkpointed = first.get(
+            f"/api/v1/jobs/{job['jobId']}",
+            headers=headers,
+        ).json()["job"]
         assert checkpointed["checkpointAvailable"] is True
+        assert checkpointed["state"] == "running"
+        first_app.state.worker.stop()
+        assert first_app.state.worker._thread is None
+        interrupted = first.get(
+            f"/api/v1/jobs/{job['jobId']}",
+            headers=headers,
+        ).json()["job"]
+        assert interrupted["state"] == "interrupted"
+        assert interrupted["checkpointAvailable"] is True
 
     second_app = create_app(ServiceSettings(data_dir=data_dir, bearer_token=TOKEN))
     with TestClient(second_app) as second:

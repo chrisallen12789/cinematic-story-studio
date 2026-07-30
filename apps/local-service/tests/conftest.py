@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ from fastapi.testclient import TestClient
 from cinematic_story_service import ServiceSettings, create_app
 
 TOKEN = "ab" * 32
+# A future may consume SQLite's five-second lock wait before returning its outcome.
+CONCURRENT_DATABASE_FUTURE_TIMEOUT_SECONDS = 15.0
 SYNTHETIC_STORY = (
     "# Chapter One: The Signal\r\n"
     "\r\n"
@@ -41,6 +44,26 @@ _FIXTURE_MEDIA_TYPES = {
     "epub": ("sample-story.epub", "application/epub+zip"),
     "pdf": ("sample-story.pdf", "application/pdf"),
 }
+
+
+def collect_concurrent_database_results(
+    futures: Sequence[concurrent.futures.Future[Any]],
+) -> list[Any]:
+    """Resolve database race-test futures without depending on submission order."""
+    _completed, pending = concurrent.futures.wait(
+        futures,
+        timeout=CONCURRENT_DATABASE_FUTURE_TIMEOUT_SECONDS,
+        return_when=concurrent.futures.ALL_COMPLETED,
+    )
+    if pending:
+        for future in pending:
+            future.cancel()
+        pytest.fail(
+            f"{len(pending)} of {len(futures)} concurrent database operations "
+            f"exceeded {CONCURRENT_DATABASE_FUTURE_TIMEOUT_SECONDS:.0f} seconds",
+            pytrace=False,
+        )
+    return [future.result() for future in futures]
 
 
 @pytest.fixture

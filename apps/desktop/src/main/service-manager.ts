@@ -18,8 +18,8 @@ const BOOTSTRAP_MAX_BYTES = 512;
 const STARTUP_TIMEOUT_MS = 20_000;
 const HEALTH_TIMEOUT_MS = 2_500;
 const HEALTH_INTERVAL_MS = 5_000;
-// The service gives its worker up to five seconds to finish a checkpoint-safe stop.
-const SHUTDOWN_TIMEOUT_MS = 8_000;
+// The service gives its worker up to 15 seconds to finish a checkpoint-safe stop.
+const SHUTDOWN_TIMEOUT_MS = 20_000;
 const FORCED_TERMINATION_TIMEOUT_MS = 2_000;
 const MAX_AUTOMATIC_RESTARTS = 2;
 const RESTART_WINDOW_MS = 60_000;

@@ -45,6 +45,39 @@ Import Review.
 
 If another edit won, the service returns `409 REVISION_CONFLICT` with the current revision. The UI preserves the user's unsaved choice and offers comparison/reapply; it never overwrites silently. Re-analysis reads corrections as protected constraints.
 
+## 4A. Analyze and review the whole book
+
+1. After the current Import Review is approved, the user opens Analysis and
+   starts the `whole-book-intelligence-v1` profile.
+2. The service transactionally rechecks source, extraction, extracted-text
+   hash, approval decision, profile, and agent versions, then creates an
+   immutable analysis run plus durable job.
+3. The workspace shows the exact run inputs and durable stages for structure,
+   beats, identity, dialogue, POV, setting, timeline, relationships,
+   emotion/intent, continuity, and synthesis.
+4. A complete snapshot exposes paginated chapters/scenes, character registry,
+   aliases/mentions, dialogue candidates and effective speakers, POV,
+   locations, narrative/story chronology, relationships, emotional/dramatic
+   proposals, continuity findings, confidence, evidence, warnings, and
+   provenance.
+5. Low-confidence, contradictory, and unknown results remain visible. The user
+   can filter them without loading every entity or the full manuscript.
+6. The user appends typed corrections with a reason and expected
+   revision/fingerprint. The machine proposal remains inspectable and the
+   effective view labels human authority.
+7. The user supplies a nonblank rationale and approves, rejects, or requests
+   changes at Story Structure, Character Registry, Dialogue Attribution, and
+   Whole-Book Analysis Review. A changed evidence fingerprint requires a new
+   decision; unrelated gate evidence retains its decision.
+8. Closing and reopening restores the run, snapshot, corrections,
+   dispositions, warnings, and decisions. A rerun preserves compatible human
+   authority and never silently reapproves.
+
+The four current gate projections are queryable and form prerequisites for
+future casting eligibility. No casting workflow or casting-eligibility endpoint
+exists in Phase 2; voice selection, speech generation, and audio production
+also remain unavailable.
+
 ## 5. Observe, cancel, retry, and resume work
 
 1. Creating analysis or render work returns a durable job before execution begins.
@@ -54,7 +87,11 @@ If another edit won, the service returns `409 REVISION_CONFLICT` with the curren
 5. `Resume` on an interrupted job validates the checkpoint and current input revision. It continues when compatible; otherwise the UI explains that a clean retry is required.
 6. Restarting the desktop turns abandoned work into `interrupted` and offers the same choices.
 
-Closing the app while work is active asks whether to cancel, leave resumable work interrupted, or keep the app open. Phase 0 does not run jobs after the desktop exits.
+Closing the app requests graceful service shutdown. Active work checkpoints at
+its safe boundary and becomes resumable `interrupted` work; the current desktop
+does not present a shutdown-choice dialog. A user who wants `cancelled` rather
+than `interrupted` requests cancellation before exit. Jobs do not continue
+after the desktop exits.
 
 ## 6. Configure providers and local tools
 
@@ -82,4 +119,6 @@ Cancelling or failing leaves no file presented as a finished master. A rerun usi
 - On low disk space, work stops before publication and reports required/available space without deleting source data.
 - Cache cleanup previews scope, skips artifacts referenced by active jobs, and is safe to repeat.
 - Diagnostics export is opt-in and redacted by construction. It contains versions, states, codes, and identifiers—not story text, prompts containing story text, keys, audio, or personal paths.
-- Database recovery never edits the sole copy in place. The application first creates a timestamped local backup and records the migration/recovery result.
+- Database recovery never edits the sole copy in place. Schema migration uses
+  a verified versioned sibling backup; a separate manual recovery copy may be
+  timestamped. The application records the migration/recovery result.

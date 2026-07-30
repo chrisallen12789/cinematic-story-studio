@@ -50,10 +50,20 @@ The renderer is untrusted presentation code. Electron main owns native dialogs, 
 
 1. Electron streams a user-selected source to `POST /api/v1/projects/{id}/imports`.
 2. The service validates into private staging, hashes raw bytes, and commits immutable `SourceDocument` and `ImportedStory` records.
-3. A persisted `analyze_story` job snapshots the story/project revisions.
-4. Versioned runtime agents derive structure, dialogue, and characters, writing revisioned projections and provenance transactionally at checkpoints.
-5. The UI reviews those projections. Human edits append correction events and update protected projections with optimistic concurrency.
-6. Approval decisions pin artifact revisions. A future render job resolves them into a deterministic manifest, invokes providers/tools through adapters, validates output, and atomically publishes artifacts.
+3. Phase 2 adds a persisted `analyze_whole_book` job alongside the Phase 0/1
+   `analyze_story` job. It freezes the exact approved extraction, Import Review
+   decision, analysis profile/fingerprint, protected-correction set, and agent
+   versions.
+4. Versioned Phase 2 runtime agents derive structure, beats, character
+   identities/aliases/mentions, verbatim dialogue candidates, POV, setting,
+   timeline, relationships, emotional/dramatic proposals, and continuity.
+5. A validated immutable snapshot becomes reviewable only after mandatory
+   synthesis and integrity checks. The UI reads bounded paginated projections.
+6. Human edits append correction overlays with optimistic fingerprint
+   concurrency; they never mutate machine output.
+7. Story Structure, Character Registry, Dialogue Attribution, and Whole-Book
+   Analysis decisions pin exact snapshot evidence. A future render job may
+   consume those approvals but is not implemented in Phase 2.
 
 ## Persistence topology
 
@@ -90,5 +100,9 @@ Dependency direction is UI → client contract → service use case → domain p
 
 - Desktop/service lifecycle: [desktop-runtime.md](desktop-runtime.md), [local-service.md](local-service.md)
 - Storage and work: [project-data-model.md](project-data-model.md), [background-jobs.md](background-jobs.md)
+- Story intelligence: [whole-book-story-intelligence.md](whole-book-story-intelligence.md),
+  [story-analysis-data-model.md](story-analysis-data-model.md),
+  [confidence-and-evidence-policy.md](confidence-and-evidence-policy.md), and
+  [human-analysis-corrections.md](human-analysis-corrections.md)
 - Production: [runtime-agent-system.md](runtime-agent-system.md), [provider-adapters.md](provider-adapters.md), [audio-render-pipeline.md](audio-render-pipeline.md)
 - Operations: [security-and-privacy.md](security-and-privacy.md), [failure-recovery.md](failure-recovery.md), [windows-packaging.md](windows-packaging.md)

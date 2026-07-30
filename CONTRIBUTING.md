@@ -101,7 +101,11 @@ publishes a release.
 
 ## Manual verification record
 
-Automated success does not establish desktop lifecycle behavior. Attach a record with every Phase 0 vertical-slice claim:
+Automated success alone does not replace the complete verification record and
+any required manual observations. Attach a record with every desktop
+vertical-slice claim; exact-artifact E2E ownership/exit evidence is part of
+that record. For Phase 2, include every field below; use `not applicable`
+rather than omitting an unexercised field:
 
 ```text
 Commit:
@@ -110,14 +114,30 @@ Node, pnpm, and Python versions:
 Install command/result:
 Lint/typecheck/test/build result:
 Unpacked artifact path:
+Application/service size and SHA-256:
 Observed bind address (address and port only; no token):
 Service states observed:
 UI states observed:
 Synthetic fixture import/hash result:
 Uncertain attribution and correction result:
+Analysis contract/profile ID, version, and fingerprint:
+Producer ID/version:
+All 11 agent IDs/versions and execution results:
+All 14 ordered job stages observed:
+Analysis run/snapshot IDs, revision, and fingerprints:
+Entity counts for all 16 collections:
+Typed structure/identity/dialogue/continuity corrections and reason digests:
+Story Structure Review result/fingerprint:
+Character Registry Review result/fingerprint:
+Dialogue Attribution Review result/fingerprint:
+Whole-Book Analysis Review result/fingerprint:
+Development E2E result:
+Exact-artifact packaged E2E result:
 Restart persistence result:
-Owned child exited after desktop shutdown:
-Residual process check:
+Prelaunch relevant-process inventory result:
+Exact owned Electron/service PIDs for both launches:
+Graceful/forced/remaining PID result:
+Generated machine-result/manifest validation result:
 Limitations or skipped checks:
 ```
 
@@ -126,9 +146,10 @@ Use the sequence in `README.md` and the exact pass criteria in `docs/product/ver
 ## Rollback
 
 The application has no updater and does not support an in-place database
-downgrade. Phase 1 retains a verified schema-v1 backup before migration. Roll
-back code and artifacts without mutating the current worktree or opening
-schema-v2 data with an older application:
+downgrade. Phase 1 retains a verified schema-v1 backup before migration; Phase
+2 retains a verified schema-v2 backup before schema-v3 migration. Roll back
+code and artifacts without mutating the current worktree or opening newer
+schema data with an older application:
 
 1. Close every Cinematic Story Studio window and confirm only the service process owned by that window has exited.
 2. Record `git status --short`; do not discard unrelated changes.
@@ -146,7 +167,7 @@ schema-v2 data with an older application:
    ```
 
 5. Test the known-good unpackaged artifact with a new temporary application-data directory. Do not point it at data already opened or migrated by a newer build.
-6. To recover a real project, use a backup created by the matching application/database version. Keep the newer data copy until integrity and expected revisions are verified.
+6. To recover a real project, use a copy of the verified backup created by the matching application/database version: schema-v1 for Phase 0 or schema-v2 for Phase 1. Keep the newer data copy until integrity and expected revisions, analysis history, corrections, and gate decisions are verified.
 7. Remove the rollback worktree from the original checkout only after evidence is retained:
 
    ```powershell
@@ -154,6 +175,11 @@ schema-v2 data with an older application:
    ```
 
 If only dependency preparation failed before any application data was opened, remove the exact generated `apps/local-service/.venv` and root `node_modules` directories from the repository checkout, then rerun `pnpm install`. Never delete `local-projects`, user-selected exports, or `%LOCALAPPDATA%` as a dependency rollback step.
+
+For schema-v3 recovery, follow
+`docs/migrations/0003-phase-2-story-intelligence.md`. Never attempt an
+in-place v3-to-v2 downgrade, edit the sole current database, or discard a
+verified v2 backup merely because a migration retry succeeded elsewhere.
 
 ## Change control
 

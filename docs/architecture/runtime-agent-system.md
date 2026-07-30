@@ -52,6 +52,15 @@ Every definition declares bounded retries by error class, checkpoint boundaries,
 
 Registry details and implementation locations live in `docs/agents/agent-registry.md`; this architecture is the controlling boundary.
 
+Phase 2 expands story analysis into the controlled local subset documented in
+`docs/agents/story-analysis-runtime-agents.md`. Its stable version-1 agents are
+`story-structure`, `story-beats`, `character-identity`,
+`dialogue-attribution`, `point-of-view`, `story-setting`,
+`story-timeline`, `character-relationships`,
+`emotion-dramatic-intent`, `story-continuity`, and
+`analysis-synthesis`. They execute under this same envelope and do not create
+an independent orchestration authority.
+
 ## Orchestration
 
 The orchestrator builds a versioned directed acyclic plan from registry definitions:
@@ -77,9 +86,10 @@ At a review gate, the orchestration job enters `blocked_for_approval` (represent
 | Gate ID | Required artifact | Approval effect |
 | --- | --- | --- |
 | `import_review` | Source/import revision and extraction warnings | Permits story analysis. |
-| `scene_segmentation_review` | Chapter/scene revision | Permits dependent dialogue/production planning. |
-| `character_review` | Character set revision | Pins identities/merges for casting. |
+| `story_structure_review` | Chapter, scene, beat, and POV evidence fingerprint | Reviews structure independently; it does not approve another Phase 2 gate. |
+| `character_registry_review` | Character, mention, and relationship evidence fingerprint | Reviews registry identity independently; casting remains unavailable in Phase 2. |
 | `dialogue_attribution_review` | Attribution set revision and unresolved warnings | Pins speaker decisions for performance. |
+| `whole_book_analysis_review` | Complete Phase 2 snapshot, remaining interpretive warnings, timeline/relationship/emotion/continuity evidence | Marks the current story-intelligence snapshot eligible for later production planning; it does not authorize casting or audio in Phase 2. |
 | `casting_approval` | Casting assignment revision and provider/voice identities | Permits provider speech requests. |
 | `performance_direction_approval` | Direction revision | Permits speech generation/render planning. |
 | `sound_design_approval` | Sound/music cue revisions and rights warnings | Permits cue acquisition/render planning. |
@@ -88,6 +98,11 @@ At a review gate, the orchestration job enters `blocked_for_approval` (represent
 | `final_master_approval` | Final manifest/artifact/QC revisions | Marks master approved for export; never overwrites it. |
 
 Decisions are append-only and identify actor, artifact revision/hash, presented warnings/disclosures, reason, and timestamp. Revocation is another decision and blocks later work that depended on the approval. Approval of revision N never implicitly approves N+1.
+
+The first three Phase 2 gates are independently reviewable. All three are
+prerequisites only for `whole_book_analysis_review`. Historical terms such as
+“scene segmentation review” and “character review” are conceptual aliases, not
+persisted Phase 2 gate IDs.
 
 ## Human corrections and conflict handling
 

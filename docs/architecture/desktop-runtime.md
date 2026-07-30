@@ -5,7 +5,10 @@
 The installed application has three privilege tiers:
 
 1. **Electron main** is the trusted desktop coordinator. It owns windows, native dialogs, credential operations, the backend child process, its launch token, and authenticated service calls.
-2. **Preload** exposes a frozen, allow-listed, versioned API such as `projects.list`, `projects.importSelectedFile`, `dialogue.correctSpeaker`, `jobs.cancel`, and typed event subscriptions.
+2. **Preload** exposes a frozen, allow-listed, versioned API such as
+   `projects.list`, `projects.importSelectedFile`, `analysis.createRun`,
+   `analysis.listEntities`, `analysis.correct`, `analysis.decideReview`,
+   `dialogue.correctSpeaker`, `jobs.cancel`, and typed event subscriptions.
 3. **React renderer** presents state. It has no Node.js globals, filesystem/process APIs, arbitrary IPC, service token, or direct service connection.
 
 `contextIsolation` and the renderer sandbox are enabled, `nodeIntegration` and remote modules are disabled, navigation/new-window requests are denied unless explicitly allow-listed, and a restrictive Content Security Policy permits packaged assets only. External policy/help links open through an allow-listed HTTPS handler after user action.
@@ -38,6 +41,11 @@ The preload bridge accepts only discriminated request objects and returns discri
 
 There is no `invoke(channel: string, payload: unknown)`, raw HTTP proxy, arbitrary path reader, shell command, environment accessor, or generic credential method. Subscription functions return an unsubscribe handle; main removes listeners when a window closes. High-volume source/audio bytes do not pass through renderer IPC.
 
+Phase 2 analysis IPC accepts only allow-listed collection, gate, correction,
+filter, cursor, revision, and fingerprint unions. Main validates the request
+and the bounded service response. There is no generic analysis route/path
+proxy, arbitrary JSON-patch method, or manuscript-text list response.
+
 For import, the renderer asks main to show a native picker with supported filters. Main opens the selected file safely, checks basic metadata, and streams it to the authenticated multipart endpoint. The service repeats authoritative validation. The renderer receives source metadata, not an authority to read the selected path.
 
 ## Window and deep-link safety
@@ -56,10 +64,12 @@ Automatic restart is bounded (for example, two retries in a rolling minute) and 
 
 On application exit:
 
-1. main asks the user how to handle active jobs;
-2. it sends authenticated graceful shutdown;
-3. the service checkpoints/marks running work interrupted, closes SQLite, and exits;
-4. after a bounded timeout, main terminates only the verified owned child/process group and records a redacted diagnostic.
+1. main stops accepting new desktop mutations and sends authenticated graceful
+   shutdown; the current UI does not add a shutdown-choice dialog;
+2. the service checkpoints/marks running work interrupted, closes SQLite, and
+   exits;
+3. after a bounded timeout, main terminates only the verified owned
+   child/process group and records a redacted diagnostic.
 
 The service watches its parent/control channel and self-terminates after checkpointing if the parent disappears. Electron never discovers or kills processes by executable name.
 

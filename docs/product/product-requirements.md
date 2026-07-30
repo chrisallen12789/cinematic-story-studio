@@ -38,6 +38,19 @@ The primary user is an author, producer, or audio director who wants one install
 - **PR-014** Each correction records actor, timestamp, prior value, new value, project revision, and source span. Later automation preserves it unless the user explicitly supersedes it.
 - **PR-015** Concurrent edits use revisions and return a conflict instead of silently losing a change.
 - **PR-016** Review gates are durable and show the exact artifact revision approved or rejected.
+- **PR-017** Phase 2 analysis consumes only the current approved extraction and
+  records project/source/extraction/review/profile/agent identities and
+  fingerprints in an immutable analysis run and snapshot.
+- **PR-018** Phase 2 represents evidence-backed structure, beats, character
+  identities/aliases/mentions, verbatim dialogue and candidate speakers,
+  narration classification, POV, locations, narrative/story chronology,
+  relationships, emotion/intent, and continuity findings. Unknown,
+  contradictory, and low-confidence states remain explicit.
+- **PR-019** Phase 2 human corrections are append-only overlays for structure,
+  identity, aliases/mentions, dialogue speakers, POV, locations, time,
+  relationships, continuity dispositions, and supported interpretive fields.
+  Four post-import gates durably review structure, the character registry,
+  dialogue attribution, and the whole-book snapshot.
 
 ### Casting and production
 
@@ -93,6 +106,22 @@ Phase 0 does **not** claim production-quality speech, a complete audiobook rende
 Phase 1 adds secure local DOCX, EPUB, and text-based PDF extraction; immutable source and extraction revisions; typed parser records; a mandatory Import Review approval before analysis; schema-v2 migration with a verified recovery backup; deterministic public fixtures; adversarial parser tests; and packaged persistence evidence for the DOCX review flow.
 
 Phase 1 does **not** add OCR, manuscript rewriting, cloud parsing, audio generation, bundled models, an installer/public release, or any Phase 2 production feature. Embedded media, executable content, scripts, macros, remote EPUB resources, and PDF attachments are not executed or fetched.
+
+## Phase 2 release boundary
+
+Phase 2 adds the deterministic local
+`whole-book-intelligence-v1` analysis profile, typed controlled story-analysis
+agents, immutable runs/snapshots, schema-v3 migration and verified v2 backup,
+a bounded evidence-backed graph spanning the governed Phase 2 collections, a
+human correction overlay, paginated APIs, an inspectable Analysis workspace,
+and four analysis approval gates. Executable coverage includes the generated
+100,000-word scale case and compact public E2E fixture; dated local and CI
+results are recorded only in Phase 2 verification evidence.
+
+Phase 2 does **not** add speech synthesis, voice cloning/casting, provider
+credentials, cloud LLM or speech calls, local model downloads, music/Foley/
+ambience generation, audio mixing/export, OCR, signing, updates, a release
+tag, or a DAW timeline.
 
 ## Acceptance and traceability
 

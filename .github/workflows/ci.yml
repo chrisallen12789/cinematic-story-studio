@@ -1,4 +1,4 @@
-name: Phase 0 Windows CI
+name: Phase 1 Windows CI
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: phase-0-windows-${{ github.workflow }}-${{ github.ref }}
+  group: phase-1-windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -53,6 +53,11 @@ jobs:
       - name: Install locked Node and Python development dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify locked secure-ingest parsers and deterministic public fixtures
+        run: |
+          node scripts/python.mjs exec -c "from importlib.metadata import version; assert version('lxml') == '6.1.1'; assert version('pypdf') == '6.14.2'"
+          node --test schemas/tests/schema-structure.test.mjs tests/tooling/synthetic-fixture.test.mjs tests/tooling/build-evidence.test.mjs
+
       - name: Lint TypeScript, Python, and repository content
         run: pnpm lint
 
@@ -65,6 +70,11 @@ jobs:
       - name: Build the staged service and unpackaged desktop
         id: build
         run: pnpm build
+
+      - name: Run development Electron E2E
+        env:
+          CSS_E2E: "1"
+        run: pnpm --filter @cinematic-story-studio/desktop exec playwright test tests/e2e/persistence.spec.ts
 
       - name: Resolve packaged E2E evidence paths
         shell: pwsh
@@ -177,7 +187,7 @@ jobs:
         if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' }}
         uses: actions/upload-artifact@v6
         with:
-          name: cinematic-story-studio-windows-unpacked-${{ github.event.pull_request.head.sha || github.sha }}
+          name: cinematic-story-studio-phase-1-windows-unpacked-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             apps/desktop/release/*/win-unpacked/**
             apps/desktop/build-resources/service/**

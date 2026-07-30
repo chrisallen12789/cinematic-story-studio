@@ -12,6 +12,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { generateBuildEvidence } from "../../scripts/ci/build-evidence.mjs";
+import { capture } from "../../scripts/lib/process.mjs";
+import {
+  repositoryRoot,
+  servicePython,
+} from "../../scripts/lib/paths.mjs";
 
 const APP_VERSION = "0.1.0";
 const PR_HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -19,6 +24,15 @@ const WORKFLOW_HEAD_SHA =
   "89abcdef0123456789abcdef0123456789abcdef";
 const FALLBACK_TIMESTAMP = "2026-07-29T18:00:00.000Z";
 const COMPLETED_AT = "2026-07-29T18:15:21.123Z";
+const SYNTHETIC_DOCX_BYTES = Buffer.from(
+  "PK\u0003\u0004synthetic-docx",
+  "binary",
+);
+const SYNTHETIC_DOCX_SHA256 = createHash("sha256")
+  .update(SYNTHETIC_DOCX_BYTES)
+  .digest("hex");
+const EXTRACTED_TEXT_SHA256 =
+  "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 const RUNNER = Object.freeze({
   name: "GitHub Actions 1000000000",
   os: "Windows",
@@ -26,9 +40,55 @@ const RUNNER = Object.freeze({
   environment: "github-hosted",
   runId: "30478862847",
   runAttempt: "2",
-  workflow: "Phase 0 Windows CI",
+  workflow: "Phase 1 Windows CI",
   job: "verify-and-build",
 });
+const PACKAGED_FIXTURE =
+  "fixtures/synthetic-story/sample-story.docx.base64";
+const PACKAGED_FLOW = Object.freeze([
+  "create",
+  "import_synthetic_docx",
+  "wait_for_extraction",
+  "review_import",
+  "approve_import",
+  "analyze",
+  "correct_speaker",
+  "close",
+  "restart",
+  "restore",
+  "verify_import_review_persistence",
+  "close",
+]);
+const IMPORT_REVIEW = Object.freeze({
+  format: "docx",
+  sourceSha256: SYNTHETIC_DOCX_SHA256,
+  extractedTextSha256: EXTRACTED_TEXT_SHA256,
+  extractionRevision: 1,
+  warningCount: 0,
+  approvalDecision: "approved",
+  approvalPersistedAfterRestart: true,
+  extractionPersistedAfterRestart: true,
+  analysisPersistedAfterRestart: true,
+});
+const PARSER_PROFILE = Object.freeze({
+  archiveExpandedBytes: 200 * 1024 * 1024,
+  archiveMemberBytes: 32 * 1024 * 1024,
+  archiveMemberNameCodePoints: 512,
+  archiveMembers: 2_048,
+  archivePathDepth: 20,
+  canonicalTextCodePoints: 10_000_000,
+  extractedSections: 10_000,
+  ingestContractVersion: "1.0.0",
+  maximumCompressionRatio: 100,
+  parserDeadlineMs: 30_000,
+  parserProcessMemoryBytes: 768 * 1024 * 1024,
+  pdfPages: 2_000,
+  profileId: "secure-ingest-v1",
+});
+const PARSER_PROFILE_FINGERPRINT =
+  "3c9fef89ac411e84ef0ef8962b3d43ef3469d090035a537c9bf72c6d93cdd922";
+const PARSER_PROFILE_CANONICAL_JSON =
+  '{"archiveExpandedBytes":209715200,"archiveMemberBytes":33554432,"archiveMemberNameCodePoints":512,"archiveMembers":2048,"archivePathDepth":20,"canonicalTextCodePoints":10000000,"extractedSections":10000,"ingestContractVersion":"1.0.0","maximumCompressionRatio":100.0,"parserDeadlineMs":30000,"parserProcessMemoryBytes":805306368,"pdfPages":2000,"profileId":"secure-ingest-v1"}';
 
 test("writes stable relative-path evidence for a successful packaged gate", async (t) => {
   const fixture = await createFixture(t);
@@ -40,7 +100,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   const secondBytes = await readFile(second.manifestPath, "utf8");
 
   assert.equal(secondBytes, firstBytes);
-  assert.equal(first.manifest.schemaVersion, "1.0.0");
+  assert.equal(first.manifest.schemaVersion, "2.0.0");
   assert.equal(first.manifest.artifactPathScope, "repository-root");
   assert.equal(first.manifest.workflowHeadSha, WORKFLOW_HEAD_SHA);
   assert.equal(first.manifest.testedCheckoutSha, WORKFLOW_HEAD_SHA);
@@ -68,9 +128,63 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     stagedServiceMatchesEmbeddedService: true,
     packagedE2eHarnessResultMatchesStepOutcome: true,
     packagedE2eOwnershipExitProven: true,
+    phase1DocxImportReviewProven: true,
     packagedE2eEvidenceComplete: true,
   });
+  assert.deepEqual(
+    first.manifest.secureIngest.supportedFormats,
+    ["txt", "markdown", "docx", "epub", "pdf"],
+  );
+  assert.deepEqual(first.manifest.secureIngest.parserDependencies, [
+    {
+      name: "lxml",
+      version: "6.1.1",
+      license: "BSD-3-Clause",
+      purpose:
+        "Strict XML parsing for validated DOCX and EPUB package parts.",
+    },
+    {
+      name: "pypdf",
+      version: "6.14.2",
+      license: "BSD-3-Clause",
+      purpose:
+        "Bounded page-aware text extraction from text-based PDF files.",
+    },
+  ]);
+  assert.equal(
+    first.manifest.secureIngest.syntheticDocx.decodedSha256,
+    SYNTHETIC_DOCX_SHA256,
+  );
+  assert.deepEqual(first.manifest.secureIngest.boundaryLimits, {
+    sourceBytes: 100 * 1024 * 1024,
+    previewCodePoints: 8_000,
+  });
+  assert.deepEqual(first.manifest.secureIngest.parserProfile, {
+    values: PARSER_PROFILE,
+    canonicalJson: PARSER_PROFILE_CANONICAL_JSON,
+    fingerprint: PARSER_PROFILE_FINGERPRINT,
+  });
+  assert.equal(
+    sha256(
+      Buffer.from(
+        first.manifest.secureIngest.parserProfile.canonicalJson,
+        "utf8",
+      ),
+    ),
+    first.manifest.secureIngest.parserProfile.fingerprint,
+  );
   assert.equal(first.manifest.packagedE2e.result, "passed");
+  assert.deepEqual(first.manifest.packagedE2e.importReview, {
+    format: "docx",
+    sourceSha256: SYNTHETIC_DOCX_SHA256,
+    extractedTextSha256: EXTRACTED_TEXT_SHA256,
+    extractionRevision: 1,
+    warningCount: 0,
+    approvalDecision: "approved",
+    approvalPersistedAfterRestart: true,
+    extractionPersistedAfterRestart: true,
+    analysisPersistedAfterRestart: true,
+  });
   assert.deepEqual(
     first.manifest.packagedE2e.machineResult.completedLaunches,
     [1, 2],
@@ -200,14 +314,37 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   );
 });
 
-test("accepts a shutdown-adopted descendant when identity and exit proof agree", async (t) => {
+test("build evidence matches the canonical Python parser profile and fingerprint", async () => {
+  const python = [
+    "import json",
+    "from cinematic_story_service.document_ingest import parser_limits_fingerprint, parser_limits_profile",
+    "from cinematic_story_service.util import canonical_json",
+    "profile = parser_limits_profile(30.0)",
+    "print(json.dumps({'canonicalJson': canonical_json(profile), 'profile': profile, 'fingerprint': parser_limits_fingerprint(30.0)}, ensure_ascii=False, sort_keys=True, separators=(',', ':')))",
+  ].join("; ");
+  const result = await capture(servicePython, ["-c", python], {
+    cwd: repositoryRoot,
+    label: "Python parser-profile parity check",
+    maxBytes: 4096,
+    timeoutMs: 10_000,
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+  assert.deepEqual(JSON.parse(result.stdout), {
+    canonicalJson: PARSER_PROFILE_CANONICAL_JSON,
+    fingerprint: PARSER_PROFILE_FINGERPRINT,
+    profile: PARSER_PROFILE,
+  });
+});
+
+test("accepts an accumulated transient service descendant when identity and exit proof agree", async (t) => {
   const fixture = await createFixture(t);
   const value = JSON.parse(await readFile(fixture.resultPath, "utf8"));
   value.launches[0].ownership.processes.push({
     pid: 4102,
-    parentPid: 4100,
-    kind: "app",
-    executableName: "Cinematic Story Studio.exe",
+    parentPid: 4101,
+    kind: "service",
+    executableName: "cinematic-story-service.exe",
     creationDate: "2026-07-29T18:15:21.5000000Z",
   });
   value.launches[0].exitProof.ownedPids.push(4102);
@@ -250,6 +387,31 @@ test("records and rejects a staged service that differs from the embedded servic
   assert.equal(
     manifest.assertions.stagedServiceMatchesEmbeddedService,
     false,
+  );
+});
+
+test("rejects an unhashed secure-ingest parser pin", async (t) => {
+  const fixture = await createFixture(t);
+  await writeFile(
+    path.join(
+      fixture.root,
+      "apps",
+      "local-service",
+      "requirements.lock",
+    ),
+    [
+      "lxml==6.1.1 \\",
+      "    --hash=sha256:not-a-digest",
+      "pypdf==6.14.2 \\",
+      `    --hash=sha256:${"2".repeat(64)}`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /lxml hash lock is invalid/u,
   );
 });
 
@@ -314,6 +476,22 @@ test("rejects a successful step without exact harness ownership evidence", async
       },
     },
     {
+      name: "stable process identity cloned across launches",
+      mutate(value) {
+        value.launches[1].ownership =
+          structuredClone(value.launches[0].ownership);
+        value.launches[1].exitProof =
+          structuredClone(value.launches[0].exitProof);
+      },
+    },
+    {
+      name: "second launch root not created after first launch",
+      mutate(value) {
+        value.launches[1].ownership.processes[0].creationDate =
+          value.launches[0].ownership.processes[1].creationDate;
+      },
+    },
+    {
       name: "forced owned PID",
       mutate(value) {
         value.launches[0].exitProof.forcedPids.push(
@@ -327,6 +505,12 @@ test("rejects a successful step without exact harness ownership evidence", async
         value.launches[0].exitProof.remainingPids.push(
           value.launches[0].ownership.rootPid,
         );
+      },
+    },
+    {
+      name: "invalid import review source digest",
+      mutate(value) {
+        value.importReview.sourceSha256 = "not-a-sha256";
       },
     },
   ];
@@ -365,7 +549,7 @@ test("accepts structured prelaunch failure while keeping the packaged gate incom
   await writeFile(
     fixture.resultPath,
     `${JSON.stringify({
-      schemaVersion: "2.0.0",
+      schemaVersion: "3.0.0",
       completedAt: COMPLETED_AT,
       status: "failed",
       failureStage: "prelaunch_inventory_1",
@@ -373,27 +557,19 @@ test("accepts structured prelaunch failure while keeping the packaged gate incom
       packagedVersion: APP_VERSION,
       executable:
         "release/0.1.0/win-unpacked/Cinematic Story Studio.exe",
-      fixture: "fixtures/synthetic-story/sample-story.md",
+      fixture: PACKAGED_FIXTURE,
       isolationEnvironment: ["APPDATA", "LOCALAPPDATA", "TEMP", "TMP"],
       completedLaunches: [],
       applicationLaunchBegan: false,
       ownershipEstablished: false,
       cleanupCompleted: true,
       preexistingRelevantProcesses: null,
-      flow: [
-        "create",
-        "import_synthetic_fixture",
-        "analyze",
-        "correct_speaker",
-        "close",
-        "restart",
-        "restore",
-        "close",
-      ],
+      flow: [...PACKAGED_FLOW],
       screenshot: {
         artifactId: "packaged-ui-screenshot",
         captured: false,
       },
+      importReview: null,
       launches: [],
     })}\n`,
     "utf8",
@@ -452,7 +628,7 @@ test("accepts structured prelaunch failure while keeping the packaged gate incom
   assert.equal(manifest.testTimestamp, COMPLETED_AT);
 });
 
-test("validates exact failed progress and rejects contradictory v2 evidence", async (t) => {
+test("validates exact failed progress and rejects contradictory v3 evidence", async (t) => {
   const fixture = await createFixture(t);
   const firstLaunch = launchEvidence(1, 4100, 4101);
   const secondLaunch = launchEvidence(2, 4200, 4201);
@@ -700,6 +876,16 @@ async function createFixture(t) {
   const screenshotPath = path.join(releaseRoot, "packaged-e2e.png");
   const resultPath = path.join(releaseRoot, "packaged-e2e-result.json");
   const manifestPath = path.join(releaseRoot, "build-evidence.json");
+  const requirementsDirectory = path.join(
+    root,
+    "apps",
+    "local-service",
+  );
+  const syntheticFixtureDirectory = path.join(
+    root,
+    "fixtures",
+    "synthetic-story",
+  );
   const appBytes = Buffer.from("desktop-application", "utf8");
   const serviceBytes = Buffer.from("packaged-service", "utf8");
 
@@ -708,6 +894,8 @@ async function createFixture(t) {
     mkdir(path.dirname(stagedServicePath), { recursive: true }),
     mkdir(path.dirname(embeddedServicePath), { recursive: true }),
     mkdir(path.dirname(screenshotPath), { recursive: true }),
+    mkdir(requirementsDirectory, { recursive: true }),
+    mkdir(syntheticFixtureDirectory, { recursive: true }),
   ]);
   await Promise.all([
     writeFile(
@@ -720,9 +908,38 @@ async function createFixture(t) {
     writeFile(embeddedServicePath, serviceBytes),
     writeFile(screenshotPath, "png-evidence", "utf8"),
     writeFile(
+      path.join(requirementsDirectory, "requirements.in"),
+      "lxml==6.1.1\npypdf==6.14.2\n",
+      "utf8",
+    ),
+    writeFile(
+      path.join(requirementsDirectory, "requirements.lock"),
+      [
+        "lxml==6.1.1 \\",
+        `    --hash=sha256:${"1".repeat(64)}`,
+        "pypdf==6.14.2 \\",
+        `    --hash=sha256:${"2".repeat(64)}`,
+        "",
+      ].join("\n"),
+      "utf8",
+    ),
+    writeFile(
+      path.join(syntheticFixtureDirectory, "generate-fixtures.mjs"),
+      "export const deterministicFixtureGenerator = true;\n",
+      "utf8",
+    ),
+    writeFile(
+      path.join(
+        syntheticFixtureDirectory,
+        "sample-story.docx.base64",
+      ),
+      SYNTHETIC_DOCX_BYTES.toString("base64"),
+      "ascii",
+    ),
+    writeFile(
       resultPath,
       `${JSON.stringify({
-        schemaVersion: "2.0.0",
+        schemaVersion: "3.0.0",
         completedAt: COMPLETED_AT,
         status: "passed",
         failureStage: null,
@@ -730,27 +947,19 @@ async function createFixture(t) {
         packagedVersion: APP_VERSION,
         executable:
           "release/0.1.0/win-unpacked/Cinematic Story Studio.exe",
-        fixture: "fixtures/synthetic-story/sample-story.md",
+        fixture: PACKAGED_FIXTURE,
         isolationEnvironment: ["APPDATA", "LOCALAPPDATA", "TEMP", "TMP"],
         completedLaunches: [1, 2],
         applicationLaunchBegan: true,
         ownershipEstablished: true,
         cleanupCompleted: true,
         preexistingRelevantProcesses: [],
-        flow: [
-          "create",
-          "import_synthetic_fixture",
-          "analyze",
-          "correct_speaker",
-          "close",
-          "restart",
-          "restore",
-          "close",
-        ],
+        flow: [...PACKAGED_FLOW],
         screenshot: {
           artifactId: "packaged-ui-screenshot",
           captured: true,
         },
+        importReview: IMPORT_REVIEW,
         launches: [
           launchEvidence(1, 4100, 4101),
           launchEvidence(2, 4200, 4201),
@@ -848,7 +1057,7 @@ function failedMachineResult({
   launches = [],
 } = {}) {
   return {
-    schemaVersion: "2.0.0",
+    schemaVersion: "3.0.0",
     completedAt: COMPLETED_AT,
     status: "failed",
     failureStage,
@@ -856,7 +1065,7 @@ function failedMachineResult({
     packagedVersion: APP_VERSION,
     executable:
       "release/0.1.0/win-unpacked/Cinematic Story Studio.exe",
-    fixture: "fixtures/synthetic-story/sample-story.md",
+    fixture: PACKAGED_FIXTURE,
     isolationEnvironment: ["APPDATA", "LOCALAPPDATA", "TEMP", "TMP"],
     completedLaunches,
     applicationLaunchBegan,
@@ -864,20 +1073,12 @@ function failedMachineResult({
     cleanupCompleted,
     preexistingRelevantProcesses:
       failureStage === "prelaunch_inventory_1" ? null : [],
-    flow: [
-      "create",
-      "import_synthetic_fixture",
-      "analyze",
-      "correct_speaker",
-      "close",
-      "restart",
-      "restore",
-      "close",
-    ],
+    flow: [...PACKAGED_FLOW],
     screenshot: {
       artifactId: "packaged-ui-screenshot",
       captured: screenshotCaptured,
     },
+    importReview: null,
     launches,
   };
 }

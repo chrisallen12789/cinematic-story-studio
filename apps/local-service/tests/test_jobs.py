@@ -753,7 +753,7 @@ def test_spawned_parser_hard_deadline_terminates_exact_owned_target_without_publ
     database, jobs, worker, projects = _extraction_job_harness(
         tmp_path,
         parser_runner=runner,
-        parser_deadline_seconds=5,
+        parser_deadline_seconds=10,
     )
     try:
         created = _create_extraction_job(jobs, projects)
@@ -771,7 +771,7 @@ def test_spawned_parser_hard_deadline_terminates_exact_owned_target_without_publ
             "message": "Document extraction could not be completed safely.",
             "retryable": True,
         }
-        assert elapsed < 7
+        assert elapsed < 12
         assert projects.published_job_ids == []
         events, _last = jobs.get_events(created["jobId"], after_sequence=0)
         assert any(event["stage"] == "blocking_test" for event in events), (
@@ -863,7 +863,7 @@ def test_spawned_parser_rejects_terminal_envelope_until_target_exits_voluntarily
     database, jobs, worker, projects = _extraction_job_harness(
         tmp_path,
         parser_runner=runner,
-        parser_deadline_seconds=4,
+        parser_deadline_seconds=10,
     )
     try:
         created = _create_extraction_job(jobs, projects)

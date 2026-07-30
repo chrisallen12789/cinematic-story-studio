@@ -17,10 +17,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .errors import ServiceError
 from .models import Base
-from .util import SERVICE_VERSION, ensure_private_directory, new_id, utc_now
+from .util import (
+    SERVICE_VERSION,
+    ensure_private_directory,
+    new_id,
+    request_fingerprint,
+    utc_now,
+)
 
-_DATABASE_SCHEMA_VERSION = 2
+_DATABASE_SCHEMA_VERSION = 3
 _OLDEST_MIGRATABLE_SCHEMA_VERSION = 1
+_PREVIOUS_SCHEMA_VERSION = 2
 _SCHEMA_LEDGER_TABLE = "schema_migrations"
 _STORAGE_LOCK_FILENAME = ".cinematic-story-studio.lock"
 
@@ -705,6 +712,522 @@ _V2_SCHEMA_SQL_FINGERPRINTS = frozenset(
     }
 )
 
+# Schema version 3 is another explicit compatibility contract. These frozen maps
+# intentionally do not derive from ORM metadata, so same-version drift fails closed.
+_V3_TABLE_COLUMNS: dict[str, frozenset[str]] = {
+    **_V2_TABLE_COLUMNS,
+    "analysis_runs": frozenset(
+        {
+            "id",
+            "project_id",
+            "story_id",
+            "source_document_id",
+            "source_revision",
+            "extraction_id",
+            "import_review_record_id",
+            "review_id",
+            "review_revision",
+            "review_decision_id",
+            "approval_evidence_fingerprint",
+            "story_revision",
+            "extraction_revision",
+            "extracted_text_sha256",
+            "input_fingerprint",
+            "correction_set_fingerprint",
+            "profile_json",
+            "profile_fingerprint",
+            "producer_id",
+            "producer_version",
+            "run_fingerprint",
+            "job_id",
+            "created_at",
+        }
+    ),
+    "analysis_executions": frozenset(
+        {
+            "id",
+            "project_id",
+            "run_id",
+            "job_id",
+            "attempt",
+            "outcome",
+            "input_fingerprint",
+            "profile_fingerprint",
+            "agent_registry_fingerprint",
+            "output_fingerprint",
+            "warnings_json",
+            "error_code",
+            "error_message",
+            "error_retryable",
+            "started_at",
+            "finished_at",
+        }
+    ),
+    "analysis_snapshots": frozenset(
+        {
+            "id",
+            "project_id",
+            "run_id",
+            "execution_id",
+            "ordinal",
+            "stage",
+            "fingerprint",
+            "entity_count",
+            "manifest_json",
+            "created_at",
+        }
+    ),
+    "analysis_stage_checkpoints": frozenset(
+        {
+            "id",
+            "project_id",
+            "run_id",
+            "job_id",
+            "attempt",
+            "ordinal",
+            "stage",
+            "input_fingerprint",
+            "profile_fingerprint",
+            "payload_fingerprint",
+            "payload_json",
+            "created_at",
+        }
+    ),
+    "analysis_agent_executions": frozenset(
+        {
+            "id",
+            "project_id",
+            "run_id",
+            "execution_id",
+            "ordinal",
+            "role",
+            "agent_id",
+            "agent_version",
+            "outcome",
+            "input_fingerprint",
+            "output_fingerprint",
+            "confidence_json",
+            "warnings_json",
+            "provenance_json",
+            "envelope_json",
+            "started_at",
+            "finished_at",
+        }
+    ),
+    "analysis_entities": frozenset(
+        {
+            "id",
+            "project_id",
+            "run_id",
+            "snapshot_id",
+            "collection",
+            "ordinal",
+            "parent_entity_id",
+            "identity_key",
+            "start_offset",
+            "end_offset",
+            "revision",
+            "payload_json",
+            "fingerprint",
+            "confidence_score",
+            "confidence_class",
+            "confidence_basis",
+            "warnings_json",
+            "provenance_json",
+        }
+    ),
+    "analysis_evidence_spans": frozenset(
+        {
+            "id",
+            "project_id",
+            "run_id",
+            "entity_id",
+            "ordinal",
+            "start_offset",
+            "end_offset",
+            "text_sha256",
+            "basis",
+            "confidence_score",
+            "provenance_json",
+        }
+    ),
+    "analysis_corrections": frozenset(
+        {
+            "id",
+            "project_id",
+            "run_id",
+            "category",
+            "target_entity_id",
+            "target_key",
+            "revision",
+            "expected_target_revision",
+            "expected_run_fingerprint",
+            "previous_value_fingerprint",
+            "patch_json",
+            "correction_fingerprint",
+            "reason",
+            "actor_id",
+            "supersedes_correction_id",
+            "legacy_correction_id",
+            "idempotency_key",
+            "recorded_at",
+        }
+    ),
+    "analysis_review_decisions": frozenset(
+        {
+            "id",
+            "project_id",
+            "run_id",
+            "snapshot_id",
+            "gate_id",
+            "revision",
+            "state",
+            "artifact_fingerprint",
+            "evidence_fingerprint",
+            "eligible",
+            "rationale",
+            "warning_acknowledgements_json",
+            "provenance_json",
+            "actor_id",
+            "idempotency_key",
+            "supersedes_decision_id",
+            "decided_at",
+            "created_at",
+        }
+    ),
+}
+
+_V3_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    **_V2_PRIMARY_KEYS,
+    "analysis_runs": ("id",),
+    "analysis_executions": ("id",),
+    "analysis_snapshots": ("id",),
+    "analysis_stage_checkpoints": ("id",),
+    "analysis_agent_executions": ("id",),
+    "analysis_entities": ("id",),
+    "analysis_evidence_spans": ("id",),
+    "analysis_corrections": ("id",),
+    "analysis_review_decisions": ("id",),
+}
+
+_V3_CRITICAL_FOREIGN_KEYS: dict[str, frozenset[_ForeignKeySignature]] = {
+    **_V2_CRITICAL_FOREIGN_KEYS,
+    "analysis_runs": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("story_id",), "imported_stories", ("id",), "RESTRICT"),
+            (("source_document_id",), "source_documents", ("id",), "RESTRICT"),
+            (("extraction_id",), "document_extractions", ("id",), "RESTRICT"),
+            (("import_review_record_id",), "import_reviews", ("id",), "RESTRICT"),
+            (("job_id",), "jobs", ("id",), "RESTRICT"),
+        }
+    ),
+    "analysis_executions": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("run_id",), "analysis_runs", ("id",), "CASCADE"),
+            (("job_id",), "jobs", ("id",), "RESTRICT"),
+        }
+    ),
+    "analysis_snapshots": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("run_id",), "analysis_runs", ("id",), "CASCADE"),
+            (("execution_id",), "analysis_executions", ("id",), "CASCADE"),
+        }
+    ),
+    "analysis_stage_checkpoints": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("run_id",), "analysis_runs", ("id",), "CASCADE"),
+            (("job_id",), "jobs", ("id",), "CASCADE"),
+        }
+    ),
+    "analysis_agent_executions": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("run_id",), "analysis_runs", ("id",), "CASCADE"),
+            (("execution_id",), "analysis_executions", ("id",), "CASCADE"),
+        }
+    ),
+    "analysis_entities": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("run_id",), "analysis_runs", ("id",), "CASCADE"),
+            (("snapshot_id",), "analysis_snapshots", ("id",), "CASCADE"),
+        }
+    ),
+    "analysis_evidence_spans": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("run_id",), "analysis_runs", ("id",), "CASCADE"),
+            (("entity_id",), "analysis_entities", ("id",), "CASCADE"),
+        }
+    ),
+    "analysis_corrections": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("run_id",), "analysis_runs", ("id",), "RESTRICT"),
+            (
+                ("supersedes_correction_id",),
+                "analysis_corrections",
+                ("id",),
+                "RESTRICT",
+            ),
+        }
+    ),
+    "analysis_review_decisions": frozenset(
+        {
+            (("project_id",), "projects", ("id",), "CASCADE"),
+            (("run_id",), "analysis_runs", ("id",), "CASCADE"),
+            (("snapshot_id",), "analysis_snapshots", ("id",), "RESTRICT"),
+            (
+                ("supersedes_decision_id",),
+                "analysis_review_decisions",
+                ("id",),
+                "RESTRICT",
+            ),
+        }
+    ),
+}
+
+_V3_CRITICAL_UNIQUE_COLUMNS: dict[str, frozenset[tuple[str, ...]]] = {
+    **_V2_CRITICAL_UNIQUE_COLUMNS,
+    # job_id is enforced by the frozen unique named index created for the column.
+    "analysis_runs": frozenset(),
+    "analysis_executions": frozenset({("run_id", "attempt"), ("job_id", "attempt")}),
+    "analysis_snapshots": frozenset(
+        {("execution_id", "ordinal"), ("execution_id", "stage")}
+    ),
+    "analysis_stage_checkpoints": frozenset(
+        {
+            ("job_id", "attempt", "ordinal"),
+            ("job_id", "attempt", "stage"),
+        }
+    ),
+    "analysis_agent_executions": frozenset(
+        {("execution_id", "ordinal"), ("execution_id", "role")}
+    ),
+    "analysis_entities": frozenset({("run_id", "collection", "ordinal")}),
+    "analysis_evidence_spans": frozenset({("entity_id", "ordinal")}),
+    "analysis_corrections": frozenset(
+        {
+            ("run_id", "category", "target_key", "revision"),
+            ("run_id", "idempotency_key"),
+            ("legacy_correction_id",),
+        }
+    ),
+    "analysis_review_decisions": frozenset(
+        {
+            ("run_id", "gate_id", "revision"),
+            ("run_id", "gate_id", "idempotency_key"),
+        }
+    ),
+}
+
+_V3_CRITICAL_CHECKS: dict[str, frozenset[_CheckSignature]] = {
+    **_V2_CRITICAL_CHECKS,
+    "analysis_runs": frozenset(
+        {
+            ("ck_analysis_run_review_revision", "review_revision >= 1"),
+            ("ck_analysis_run_source_revision", "source_revision >= 1"),
+            ("ck_analysis_run_story_revision", "story_revision >= 1"),
+            ("ck_analysis_run_extraction_revision", "extraction_revision >= 1"),
+        }
+    ),
+    "analysis_executions": frozenset(
+        {
+            ("ck_analysis_execution_attempt", "attempt >= 1"),
+            (
+                "ck_analysis_execution_outcome",
+                "outcome in ('succeeded', 'failed', 'cancelled', 'interrupted')",
+            ),
+        }
+    ),
+    "analysis_snapshots": frozenset(
+        {
+            ("ck_analysis_snapshot_ordinal", "ordinal >= 0"),
+            ("ck_analysis_snapshot_entity_count", "entity_count >= 0"),
+        }
+    ),
+    "analysis_stage_checkpoints": frozenset(
+        {
+            ("ck_analysis_stage_checkpoint_attempt", "attempt >= 1"),
+            ("ck_analysis_stage_checkpoint_ordinal", "ordinal >= 0"),
+        }
+    ),
+    "analysis_agent_executions": frozenset(
+        {
+            ("ck_analysis_agent_ordinal", "ordinal >= 0"),
+            (
+                "ck_analysis_agent_outcome",
+                "outcome in ('succeeded', 'failed', 'skipped', 'cancelled', 'interrupted')",
+            ),
+        }
+    ),
+    "analysis_entities": frozenset(
+        {
+            ("ck_analysis_entity_ordinal", "ordinal >= 0"),
+            ("ck_analysis_entity_revision", "revision >= 1"),
+            (
+                "ck_analysis_entity_span",
+                "(start_offset is null and end_offset is null) or "
+                "(start_offset >= 0 and end_offset >= start_offset)",
+            ),
+            (
+                "ck_analysis_entity_confidence",
+                "confidence_score >= 0 and confidence_score <= 1000000",
+            ),
+            (
+                "ck_analysis_entity_confidence_class",
+                "confidence_class in ('unknown', 'low', 'medium', 'high')",
+            ),
+        }
+    ),
+    "analysis_evidence_spans": frozenset(
+        {
+            ("ck_analysis_evidence_ordinal", "ordinal >= 0"),
+            (
+                "ck_analysis_evidence_span",
+                "start_offset >= 0 and end_offset >= start_offset",
+            ),
+            (
+                "ck_analysis_evidence_confidence",
+                "confidence_score >= 0 and confidence_score <= 1000000",
+            ),
+        }
+    ),
+    "analysis_corrections": frozenset(
+        {
+            ("ck_analysis_correction_revision", "revision >= 1"),
+            (
+                "ck_analysis_correction_expected_revision",
+                "expected_target_revision >= 1",
+            ),
+            (
+                "ck_analysis_correction_reason",
+                "length(trim(reason)) >= 1 and length(reason) <= 1000",
+            ),
+        }
+    ),
+    "analysis_review_decisions": frozenset(
+        {
+            ("ck_analysis_review_revision", "revision >= 1"),
+            (
+                "ck_analysis_review_gate",
+                "gate_id in ('story_structure_review', 'character_registry_review', "
+                "'dialogue_attribution_review', 'whole_book_analysis_review')",
+            ),
+            (
+                "ck_analysis_review_state",
+                "state in ('pending', 'approved', 'rejected', 'changes_requested', "
+                "'invalidated')",
+            ),
+            (
+                "ck_analysis_review_rationale",
+                "length(trim(rationale)) >= 1 and length(rationale) <= 4000",
+            ),
+        }
+    ),
+}
+
+_V3_NAMED_INDEXES: dict[str, frozenset[str]] = {
+    **_V2_NAMED_INDEXES,
+    "analysis_runs": frozenset(
+        {
+            "ix_analysis_runs_project_id",
+            "ix_analysis_runs_story_id",
+            "ix_analysis_runs_source_document_id",
+            "ix_analysis_runs_extraction_id",
+            "ix_analysis_runs_import_review_record_id",
+            "ix_analysis_runs_job_id",
+            "ix_analysis_run_project_created",
+            "ix_analysis_run_project_extraction",
+        }
+    ),
+    "analysis_executions": frozenset(
+        {
+            "ix_analysis_executions_project_id",
+            "ix_analysis_executions_run_id",
+            "ix_analysis_executions_job_id",
+            "ix_analysis_execution_project_run_attempt",
+        }
+    ),
+    "analysis_snapshots": frozenset(
+        {
+            "ix_analysis_snapshots_project_id",
+            "ix_analysis_snapshots_run_id",
+            "ix_analysis_snapshots_execution_id",
+            "ix_analysis_snapshot_project_run_order",
+        }
+    ),
+    "analysis_stage_checkpoints": frozenset(
+        {
+            "ix_analysis_stage_checkpoints_project_id",
+            "ix_analysis_stage_checkpoints_run_id",
+            "ix_analysis_stage_checkpoints_job_id",
+            "ix_analysis_stage_checkpoint_project_run_attempt",
+        }
+    ),
+    "analysis_agent_executions": frozenset(
+        {
+            "ix_analysis_agent_executions_project_id",
+            "ix_analysis_agent_executions_run_id",
+            "ix_analysis_agent_executions_execution_id",
+            "ix_analysis_agent_project_run_order",
+        }
+    ),
+    "analysis_entities": frozenset(
+        {
+            "ix_analysis_entities_project_id",
+            "ix_analysis_entities_run_id",
+            "ix_analysis_entities_snapshot_id",
+            "ix_analysis_entity_project_run_collection_order",
+            "ix_analysis_entity_project_run_identity",
+        }
+    ),
+    "analysis_evidence_spans": frozenset(
+        {
+            "ix_analysis_evidence_spans_project_id",
+            "ix_analysis_evidence_spans_run_id",
+            "ix_analysis_evidence_spans_entity_id",
+            "ix_analysis_evidence_project_run_entity_order",
+        }
+    ),
+    "analysis_corrections": frozenset(
+        {
+            "ix_analysis_corrections_project_id",
+            "ix_analysis_corrections_run_id",
+            "ix_analysis_correction_project_run_recorded",
+            "ix_analysis_correction_project_target",
+        }
+    ),
+    "analysis_review_decisions": frozenset(
+        {
+            "ix_analysis_review_decisions_project_id",
+            "ix_analysis_review_decisions_run_id",
+            "ix_analysis_review_decisions_snapshot_id",
+            "ix_analysis_review_project_run_gate_revision",
+        }
+    ),
+}
+
+# Fresh v3 creation and the supported v1->v2->v3 physical layout differ only in
+# historical v2 column/default ordering. Both exact layouts are frozen here.
+_V3_TABLE_XINFO_FINGERPRINTS = frozenset(
+    {
+        "c081f3592ab1b1c6a92319203970d73b29531a5f74839065a65cf99906a99035",
+        "3d2a9b60c6316d3c9d4905e822a3e9458ddd59bea36bea7b5df0b7fe58421c35",
+    }
+)
+_V3_INDEX_FINGERPRINT = "ae1d457ec0dd5d2a38c434a9ff717b3902b22560aa85e5a81a8e90db2956f2fa"
+_V3_SCHEMA_SQL_FINGERPRINTS = frozenset(
+    {
+        "460fff58c07d49ecf682109c418a9a1f0df6ab4f917484326a1fb3c73f4bfc9c",
+        "1d88e8dd478e6358021f2b14344b395e9017f29e8aad9e4da39ddead314b9623",
+    }
+)
+
 
 def _signature_digest(value: object) -> str:
     serialized = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
@@ -1010,6 +1533,7 @@ class Database:
                 if current_version not in {
                     0,
                     _OLDEST_MIGRATABLE_SCHEMA_VERSION,
+                    _PREVIOUS_SCHEMA_VERSION,
                     _DATABASE_SCHEMA_VERSION,
                 }:
                     raise _unsupported_schema_error()
@@ -1023,13 +1547,17 @@ class Database:
                     )
                 if current_version == _OLDEST_MIGRATABLE_SCHEMA_VERSION:
                     self._validate_v1_schema_signature(connection)
-                elif current_version == _DATABASE_SCHEMA_VERSION:
+                elif current_version == _PREVIOUS_SCHEMA_VERSION:
                     self._validate_v2_schema_signature(connection)
+                elif current_version == _DATABASE_SCHEMA_VERSION:
+                    self._validate_v3_schema_signature(connection)
 
                 # End SQLAlchemy's read-only autobegin before backup/journal changes.
                 connection.rollback()
                 if current_version == _OLDEST_MIGRATABLE_SCHEMA_VERSION:
                     self._create_verified_v1_backup()
+                elif current_version == _PREVIOUS_SCHEMA_VERSION:
+                    self._create_verified_v2_backup()
 
                 connection.exec_driver_sql("PRAGMA journal_mode=WAL")
                 connection.commit()
@@ -1047,9 +1575,13 @@ class Database:
                         )
                         connection.exec_driver_sql(
                             "INSERT INTO schema_migrations "
-                            "(version, applied_at, service_version) VALUES (?, ?, ?), (?, ?, ?)",
+                            "(version, applied_at, service_version) "
+                            "VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)",
                             (
                                 1,
+                                utc_now(),
+                                SERVICE_VERSION,
+                                _PREVIOUS_SCHEMA_VERSION,
                                 utc_now(),
                                 SERVICE_VERSION,
                                 _DATABASE_SCHEMA_VERSION,
@@ -1060,7 +1592,7 @@ class Database:
                         connection.exec_driver_sql(
                             f"PRAGMA user_version = {_DATABASE_SCHEMA_VERSION}"
                         )
-                        self._validate_v2_schema_signature(connection)
+                        self._validate_v3_schema_signature(connection)
                     except Exception:
                         connection.rollback()
                         raise
@@ -1068,6 +1600,10 @@ class Database:
                         connection.commit()
                 elif current_version == _OLDEST_MIGRATABLE_SCHEMA_VERSION:
                     self._migrate_v1_to_v2(connection)
+                    self._create_verified_v2_backup()
+                    self._migrate_v2_to_v3(connection)
+                elif current_version == _PREVIOUS_SCHEMA_VERSION:
+                    self._migrate_v2_to_v3(connection)
         except ServiceError:
             raise
         except Exception as exc:
@@ -1194,11 +1730,87 @@ class Database:
         except Exception as exc:
             raise _unsupported_schema_error() from exc
 
+    @staticmethod
+    def _validate_v3_schema_signature(
+        connection: Connection,
+    ) -> None:
+        """Require the exact frozen Phase 2 schema for every same-version open."""
+
+        try:
+            v3_tables = frozenset(_V3_TABLE_COLUMNS)
+            _validate_sqlite_object_allow_list(
+                connection,
+                expected_tables=v3_tables,
+                expected_named_indexes=_V3_NAMED_INDEXES,
+            )
+            if (
+                _schema_sql_fingerprint(connection) not in _V3_SCHEMA_SQL_FINGERPRINTS
+                or _table_xinfo_fingerprint(connection, v3_tables)
+                not in _V3_TABLE_XINFO_FINGERPRINTS
+                or _index_fingerprint(connection, v3_tables) != _V3_INDEX_FINGERPRINT
+            ):
+                raise _unsupported_schema_error()
+            schema = inspect(connection)
+            for table_name, expected_columns in _V3_TABLE_COLUMNS.items():
+                actual_columns = frozenset(
+                    str(column["name"]) for column in schema.get_columns(table_name)
+                )
+                if actual_columns != expected_columns:
+                    raise _unsupported_schema_error()
+                primary_key = schema.get_pk_constraint(table_name)
+                actual_primary_key = tuple(
+                    str(column) for column in primary_key["constrained_columns"]
+                )
+                if actual_primary_key != _V3_PRIMARY_KEYS[table_name]:
+                    raise _unsupported_schema_error()
+
+            for table_name, expected_foreign_keys in _V3_CRITICAL_FOREIGN_KEYS.items():
+                actual_foreign_keys = frozenset(
+                    (
+                        tuple(str(column) for column in foreign_key["constrained_columns"]),
+                        str(foreign_key["referred_table"]),
+                        tuple(str(column) for column in foreign_key["referred_columns"]),
+                        str(foreign_key.get("options", {}).get("ondelete") or "").upper(),
+                    )
+                    for foreign_key in schema.get_foreign_keys(table_name)
+                )
+                if actual_foreign_keys != expected_foreign_keys:
+                    raise _unsupported_schema_error()
+
+            for table_name, expected_unique_columns in _V3_CRITICAL_UNIQUE_COLUMNS.items():
+                actual_unique_columns = frozenset(
+                    tuple(str(column) for column in constraint["column_names"])
+                    for constraint in schema.get_unique_constraints(table_name)
+                )
+                if actual_unique_columns != expected_unique_columns:
+                    raise _unsupported_schema_error()
+
+            for table_name, expected_checks in _V3_CRITICAL_CHECKS.items():
+                actual_checks = frozenset(
+                    (
+                        str(constraint["name"] or ""),
+                        " ".join(str(constraint["sqltext"]).casefold().split()),
+                    )
+                    for constraint in schema.get_check_constraints(table_name)
+                )
+                if actual_checks != expected_checks:
+                    raise _unsupported_schema_error()
+        except ServiceError:
+            raise
+        except Exception as exc:
+            raise _unsupported_schema_error() from exc
+
     @property
     def v1_backup_path(self) -> Path:
         """Stable recovery location retained after a successful v1-to-v2 migration."""
 
         return self.path.with_name(f"{self.path.stem}.v1-backup{self.path.suffix}")
+
+    @property
+    def v2_backup_path(self) -> Path:
+        """Stable verified recovery location retained after the v2-to-v3 migration."""
+
+        return self.path.with_name(f"{self.path.stem}.v2-backup{self.path.suffix}")
 
     @staticmethod
     def _logical_database_digest(connection: sqlite3.Connection) -> str:
@@ -1268,6 +1880,69 @@ class Database:
                 pass
             raise _backup_failed_error() from exc
 
+    @classmethod
+    def _verified_v2_digest(cls, path: Path) -> str:
+        try:
+            with closing(sqlite3.connect(path)) as connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise _backup_failed_error()
+                if int(connection.execute("PRAGMA user_version").fetchone()[0]) != 2:
+                    raise _backup_failed_error()
+                if list(connection.execute("PRAGMA foreign_key_check")):
+                    raise _backup_failed_error()
+                versions = [
+                    int(row[0])
+                    for row in connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    )
+                ]
+                if versions != [1, 2]:
+                    raise _backup_failed_error()
+                return cls._logical_database_digest(connection)
+        except ServiceError:
+            raise
+        except Exception as exc:
+            raise _backup_failed_error() from exc
+
+    def _create_verified_v2_backup(self) -> None:
+        backup_path = self.v2_backup_path
+        source_digest = self._verified_v2_digest(self.path)
+        if backup_path.exists():
+            if self._verified_v2_digest(backup_path) != source_digest:
+                raise _backup_failed_error()
+            return
+
+        temporary_path = backup_path.with_name(
+            f"{backup_path.name}.tmp-{os.getpid()}-{new_id()}"
+        )
+        try:
+            with (
+                closing(sqlite3.connect(self.path)) as source,
+                closing(sqlite3.connect(temporary_path)) as destination,
+            ):
+                source.backup(destination)
+                destination.commit()
+            try:
+                os.chmod(temporary_path, 0o600)
+            except OSError:
+                pass
+            if self._verified_v2_digest(temporary_path) != source_digest:
+                raise _backup_failed_error()
+            os.replace(temporary_path, backup_path)
+        except ServiceError:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        except Exception as exc:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise _backup_failed_error() from exc
+
     def _migrate_v1_to_v2(self, connection: Connection) -> None:
         # SQLite cannot remove the legacy source hash uniqueness constraint in place.
         # Disable FK enforcement only for the single table-rebuild transaction, then run
@@ -1301,16 +1976,26 @@ class Database:
                 "CREATE INDEX ix_job_target ON jobs (target_type, target_id, created_at, id)"
             )
 
-            # create_all is intentionally used only after all in-place/rebuild changes;
-            # here it creates the three additive v2 tables and their indexes.
-            Base.metadata.create_all(connection)
+            # Limit this historical migration to the frozen v2 model set. Newer ORM
+            # tables must not leak into the verified intermediate v2 backup.
+            Base.metadata.create_all(
+                connection,
+                tables=[
+                    Base.metadata.tables[table_name]
+                    for table_name in (
+                        "document_extractions",
+                        "import_reviews",
+                        "parser_executions",
+                    )
+                ],
+            )
             self._synthesize_phase0_ingest_history(connection)
             connection.exec_driver_sql(
                 "INSERT INTO schema_migrations "
                 "(version, applied_at, service_version) VALUES (?, ?, ?)",
-                (_DATABASE_SCHEMA_VERSION, utc_now(), SERVICE_VERSION),
+                (_PREVIOUS_SCHEMA_VERSION, utc_now(), SERVICE_VERSION),
             )
-            connection.exec_driver_sql(f"PRAGMA user_version = {_DATABASE_SCHEMA_VERSION}")
+            connection.exec_driver_sql(f"PRAGMA user_version = {_PREVIOUS_SCHEMA_VERSION}")
             violations = list(connection.exec_driver_sql("PRAGMA foreign_key_check"))
             if violations:
                 raise ServiceError(
@@ -1328,6 +2013,117 @@ class Database:
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
             if int(connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()) != 1:
                 raise _database_unavailable_error()
+
+    def _migrate_v2_to_v3(self, connection: Connection) -> None:
+        """Atomically add governed analysis storage and preserve speaker provenance."""
+
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            Base.metadata.create_all(
+                connection,
+                tables=[
+                    Base.metadata.tables[table_name]
+                    for table_name in (
+                        "analysis_runs",
+                        "analysis_executions",
+                        "analysis_snapshots",
+                        "analysis_stage_checkpoints",
+                        "analysis_agent_executions",
+                        "analysis_entities",
+                        "analysis_evidence_spans",
+                        "analysis_corrections",
+                        "analysis_review_decisions",
+                    )
+                ],
+            )
+            # Phase 0/1 speaker corrections remain untouched in their legacy table and
+            # also become immutable generalized overlays. No gate decision is created.
+            connection.exec_driver_sql(
+                "INSERT INTO analysis_corrections ("
+                "id, project_id, run_id, category, target_entity_id, target_key, "
+                "revision, expected_target_revision, expected_run_fingerprint, "
+                "previous_value_fingerprint, patch_json, correction_fingerprint, "
+                "reason, actor_id, supersedes_correction_id, legacy_correction_id, "
+                "idempotency_key, recorded_at"
+                ") "
+                "SELECT human_corrections.id, human_corrections.project_id, NULL, "
+                "'dialogue_speaker', NULL, "
+                "'dialogue-lines:' || (dialogue_lines.start_offset - 1) || ':' || "
+                "(dialogue_lines.end_offset + 1), "
+                "human_corrections.line_revision - 1, "
+                "human_corrections.line_revision - 1, "
+                "imported_stories.content_fingerprint, "
+                "human_corrections.previous_value_fingerprint, "
+                "'{\"characterId\":' || "
+                "CASE WHEN human_corrections.corrected_character_id IS NULL THEN 'null' "
+                "ELSE '\"' || human_corrections.corrected_character_id || '\"' END || "
+                "',\"kind\":\"dialogue_speaker\",\"legacyPhase\":0}', "
+                "human_corrections.previous_value_fingerprint, "
+                "CASE WHEN human_corrections.reason IS NULL "
+                "OR trim(human_corrections.reason) = '' "
+                "THEN 'Migrated Phase 0 speaker correction.' "
+                "ELSE substr(trim(human_corrections.reason), 1, 1000) END, "
+                "human_corrections.actor_id, "
+                "human_corrections.supersedes_correction_id, human_corrections.id, "
+                "NULL, human_corrections.recorded_at "
+                "FROM human_corrections "
+                "JOIN dialogue_lines ON dialogue_lines.id = human_corrections.line_id "
+                "JOIN story_beats ON story_beats.id = dialogue_lines.beat_id "
+                "JOIN scenes ON scenes.id = story_beats.scene_id "
+                "JOIN chapters ON chapters.id = scenes.chapter_id "
+                "JOIN imported_stories ON imported_stories.id = chapters.story_id "
+                "ORDER BY human_corrections.recorded_at, human_corrections.id"
+            )
+            for correction in connection.exec_driver_sql(
+                "SELECT id, project_id, category, target_key, revision, "
+                "previous_value_fingerprint, patch_json, reason, "
+                "legacy_correction_id FROM analysis_corrections "
+                "WHERE legacy_correction_id IS NOT NULL "
+                "ORDER BY recorded_at, id"
+            ).mappings():
+                correction_fingerprint = request_fingerprint(
+                    {
+                        "projectId": str(correction["project_id"]),
+                        "category": str(correction["category"]),
+                        "targetKey": str(correction["target_key"]),
+                        "revision": int(correction["revision"]),
+                        "previousValueFingerprint": str(
+                            correction["previous_value_fingerprint"]
+                        ),
+                        "patch": json.loads(str(correction["patch_json"])),
+                        "reason": str(correction["reason"]),
+                        "legacyCorrectionId": str(
+                            correction["legacy_correction_id"]
+                        ),
+                    }
+                )
+                connection.exec_driver_sql(
+                    "UPDATE analysis_corrections "
+                    "SET correction_fingerprint = ? WHERE id = ?",
+                    (
+                        correction_fingerprint,
+                        str(correction["id"]),
+                    ),
+                )
+            connection.exec_driver_sql(
+                "INSERT INTO schema_migrations "
+                "(version, applied_at, service_version) VALUES (?, ?, ?)",
+                (_DATABASE_SCHEMA_VERSION, utc_now(), SERVICE_VERSION),
+            )
+            connection.exec_driver_sql(f"PRAGMA user_version = {_DATABASE_SCHEMA_VERSION}")
+            violations = list(connection.exec_driver_sql("PRAGMA foreign_key_check"))
+            if violations:
+                raise ServiceError(
+                    503,
+                    "DATABASE_INTEGRITY_FAILED",
+                    "The project database needs recovery before it can be changed.",
+                )
+            self._validate_v3_schema_signature(connection)
+        except Exception:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
 
     @staticmethod
     def _rebuild_source_documents_v2(connection: Connection) -> None:

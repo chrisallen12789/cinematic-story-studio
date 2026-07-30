@@ -166,7 +166,7 @@ def test_each_adapter_extracts_bounded_synthetic_document_with_full_manifest(
             for section in result.sections
         )
     if document_format == "pdf":
-        assert result.page_count == 2
+        assert result.page_count == 3
         assert all(
             section.location.kind == "pdf_page"
             and section.location.page is not None

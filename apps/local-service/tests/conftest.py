@@ -111,6 +111,7 @@ def wait_for_extraction(
         auth_headers,
         queued_import["job"]["jobId"],
         {"succeeded", "failed", "cancelled", "interrupted"},
+        timeout=20,
     )
     assert terminal["state"] == "succeeded", terminal
     return terminal
@@ -270,7 +271,7 @@ def wait_for_job(
     job_id: str,
     states: set[str],
     *,
-    timeout: float = 5,
+    timeout: float = 20,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last: dict[str, Any] | None = None

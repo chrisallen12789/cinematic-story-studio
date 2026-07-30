@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import case, delete, func, select, update
@@ -21,6 +22,9 @@ from .document_ingest import (
 )
 from .errors import ServiceError, not_found
 from .models import (
+    AnalysisCorrectionRow,
+    AnalysisRunRow,
+    AnalysisStageCheckpointRow,
     DocumentExtractionRow,
     IdempotencyRow,
     JobAttemptRow,
@@ -32,6 +36,7 @@ from .models import (
 )
 from .parser_process import DocumentExtractionRunner, SpawnedDocumentExtractionRunner
 from .projects import ProjectRepository
+from .story_intelligence import StoryIntelligenceRepository
 from .util import (
     ANALYZER_VERSION,
     CHECKPOINT_SCHEMA_VERSION,
@@ -42,12 +47,57 @@ from .util import (
     sha256_text,
     utc_now,
 )
+from .whole_book_analysis import (
+    ANALYSIS_PRODUCER_ID,
+    ANALYSIS_PRODUCER_SEMANTIC_VERSION,
+    ANALYSIS_PRODUCER_VERSION,
+    DEFAULT_ANALYSIS_PROFILE,
+    MAX_WHOLE_BOOK_CHECKPOINT_BYTES,
+    AnalysisCancelled,
+    analyze_whole_book,
+    decode_structure_resume_artifact,
+)
 
 _PROGRESS_SCALE = 1_000_000
 _ACTIVE_STATES = {"queued", "running", "cancel_requested"}
 _ACTIVE_JOB_SCOPE = "active_job"
 _EXTRACTION_PRODUCER_VERSION = f"document-ingest@{INGEST_CONTRACT_VERSION}"
 _EXTRACTION_TARGET_TYPE = "document_extraction"
+_ANALYSIS_RUN_TARGET_TYPE = "analysis_run"
+_WHOLE_BOOK_CHECKPOINT_SCHEMA_VERSION = 2
+WHOLE_BOOK_JOB_STAGES = (
+    "validate_approved_input",
+    "initialize_run",
+    "analyze_structure",
+    "analyze_beats",
+    "analyze_character_identity",
+    "analyze_dialogue_attribution",
+    "analyze_point_of_view",
+    "analyze_locations",
+    "analyze_timeline",
+    "analyze_relationships",
+    "analyze_emotion_intent",
+    "analyze_continuity",
+    "synthesize_analysis",
+    "publish_analysis",
+)
+_WHOLE_BOOK_AGENT_STAGE_INDEX = {
+    "structure": 2,
+    "beats": 3,
+    "character_identity": 4,
+    "dialogue_attribution": 5,
+    "point_of_view": 6,
+    "setting": 7,
+    "timeline": 8,
+    "relationships": 9,
+    "emotion_intent": 10,
+    "continuity": 11,
+    "synthesis": 12,
+}
+
+
+class _StageStopped(Exception):
+    pass
 
 
 def _progress_to_wire(value: int) -> float:
@@ -122,9 +172,14 @@ class JobRepository:
         projects: ProjectRepository,
         instance_id: str,
         parser_deadline_seconds: float = PARSER_DEADLINE_SECONDS,
+        story_intelligence: StoryIntelligenceRepository | None = None,
     ) -> None:
         self.database = database
         self.projects = projects
+        self.story_intelligence = story_intelligence or StoryIntelligenceRepository(
+            database,
+            projects,
+        )
         self.instance_id = instance_id
         self.parser_deadline_seconds = parser_deadline_seconds
 
@@ -133,6 +188,20 @@ class JobRepository:
         """Serialize a predicate read plus write under SQLite's one-writer contract."""
 
         session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+    @staticmethod
+    def _producer_version(job_type: str) -> str:
+        if job_type == "extract_document":
+            return _EXTRACTION_PRODUCER_VERSION
+        if job_type == "analyze_whole_book":
+            return ANALYSIS_PRODUCER_VERSION
+        return ANALYZER_VERSION
+
+    @staticmethod
+    def _checkpoint_contract(job_type: str) -> tuple[str, int]:
+        if job_type == "analyze_whole_book":
+            return "whole_book_analysis", _WHOLE_BOOK_CHECKPOINT_SCHEMA_VERSION
+        return "analysis_projection", CHECKPOINT_SCHEMA_VERSION
 
     @staticmethod
     def _active_job_key(
@@ -279,6 +348,15 @@ class JobRepository:
                     outcome="interrupted",
                     error_code="EXTRACTION_INTERRUPTED",
                     error_message="Document extraction was interrupted before publication.",
+                    error_retryable=True,
+                    finished_at=now,
+                )
+                self.story_intelligence.record_terminal_execution(
+                    session=session,
+                    job=job,
+                    outcome="interrupted",
+                    error_code="ANALYSIS_INTERRUPTED",
+                    error_message="Whole-book analysis was interrupted before publication.",
                     error_retryable=True,
                     finished_at=now,
                 )
@@ -469,6 +547,235 @@ class JobRepository:
                 409,
                 "JOB_ALREADY_ACTIVE",
                 "Analysis is already active for this story revision.",
+            ) from exc
+
+    def create_whole_book_run(
+        self,
+        *,
+        project_id: str,
+        expected_extraction_id: str,
+        expected_extraction_revision: int,
+        expected_review_id: str,
+        expected_review_revision: int,
+        expected_evidence_fingerprint: str,
+        expected_profile_fingerprint: str,
+        idempotency_key: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        profile = DEFAULT_ANALYSIS_PROFILE
+        if expected_profile_fingerprint != profile.fingerprint:
+            raise ServiceError(
+                409,
+                "ANALYSIS_PROFILE_CONFLICT",
+                "The deterministic analysis profile changed; refresh before analysis.",
+                details={"currentProfileFingerprint": profile.fingerprint},
+            )
+        scope = f"create_analysis_run:{project_id}"
+        request_hash = request_fingerprint(
+            {
+                "projectId": project_id,
+                "expectedExtractionId": expected_extraction_id,
+                "expectedExtractionRevision": expected_extraction_revision,
+                "expectedReviewId": expected_review_id,
+                "expectedReviewRevision": expected_review_revision,
+                "expectedEvidenceFingerprint": expected_evidence_fingerprint,
+                "expectedProfileFingerprint": expected_profile_fingerprint,
+            }
+        )
+        try:
+            with self.database.session() as session:
+                self._begin_immediate(session)
+                existing = session.get(
+                    IdempotencyRow,
+                    {"scope": scope, "key": idempotency_key},
+                )
+                if existing is not None:
+                    if existing.request_hash != request_hash:
+                        raise ServiceError(
+                            409,
+                            "IDEMPOTENCY_CONFLICT",
+                            "That idempotency key was used for another analysis run.",
+                        )
+                    run = session.get(AnalysisRunRow, existing.resource_id)
+                    if run is None:
+                        raise ServiceError(
+                            500,
+                            "IDEMPOTENCY_RECORD_INVALID",
+                            "The saved analysis run is unavailable.",
+                        )
+                    job = session.get(JobRow, run.job_id)
+                    if job is None:
+                        raise ServiceError(
+                            500,
+                            "IDEMPOTENCY_RECORD_INVALID",
+                            "The saved analysis job is unavailable.",
+                        )
+                    return self.story_intelligence.run_dict(session, run), job_dict(job)
+
+                (
+                    project,
+                    _source,
+                    extraction,
+                    story,
+                    review,
+                ) = self.story_intelligence.validate_run_preconditions(
+                    session,
+                    project_id=project_id,
+                    expected_extraction_id=expected_extraction_id,
+                    expected_extraction_revision=expected_extraction_revision,
+                    expected_review_id=expected_review_id,
+                    expected_review_revision=expected_review_revision,
+                    expected_evidence_fingerprint=expected_evidence_fingerprint,
+                )
+                run_id = new_id()
+                job_id = new_id()
+                now = utc_now()
+                latest_correction_recorded_at = session.scalar(
+                    select(func.max(AnalysisCorrectionRow.recorded_at)).where(
+                        AnalysisCorrectionRow.project_id == project_id,
+                    )
+                )
+                if (
+                    latest_correction_recorded_at is not None
+                    and now <= latest_correction_recorded_at
+                ):
+                    latest_instant = datetime.fromisoformat(
+                        latest_correction_recorded_at.replace("Z", "+00:00")
+                    )
+                    now = (
+                        (
+                            latest_instant.astimezone(UTC)
+                            + timedelta(milliseconds=1)
+                        )
+                        .isoformat(timespec="milliseconds")
+                        .replace("+00:00", "Z")
+                    )
+                correction_set_fingerprint = self.story_intelligence.correction_set_fingerprint(
+                    session,
+                    project_id=project_id,
+                    recorded_through=now,
+                )
+                if review.decision_id is None:
+                    raise ServiceError(
+                        409,
+                        "ANALYSIS_PRECONDITION_CONFLICT",
+                        "The approved review decision identity is unavailable.",
+                    )
+                run_fingerprint = request_fingerprint(
+                    {
+                        "runId": run_id,
+                        "projectId": project_id,
+                        "storyId": story.id,
+                        "storyRevision": story.revision,
+                        "storyFingerprint": story.content_fingerprint,
+                        "sourceDocumentId": story.source_document_id,
+                        "sourceRevision": _source.source_revision,
+                        "extractionId": extraction.id,
+                        "extractionRevision": extraction.revision,
+                        "extractedTextSha256": extraction.text_sha256,
+                        "reviewId": review.review_id,
+                        "reviewRevision": review.revision,
+                        "reviewDecisionId": review.decision_id,
+                        "approvalEvidenceFingerprint": review.evidence_fingerprint,
+                        "profileFingerprint": profile.fingerprint,
+                        "correctionSetFingerprint": correction_set_fingerprint,
+                        "producerId": ANALYSIS_PRODUCER_ID,
+                        "producerVersion": ANALYSIS_PRODUCER_SEMANTIC_VERSION,
+                    }
+                )
+                job = JobRow(
+                    id=job_id,
+                    project_id=project_id,
+                    type="analyze_whole_book",
+                    state="queued",
+                    input_revision=story.revision,
+                    input_fingerprint=story.content_fingerprint,
+                    target_type=_ANALYSIS_RUN_TARGET_TYPE,
+                    target_id=run_id,
+                    payload_json=canonical_json(
+                        {
+                            "schemaVersion": _WHOLE_BOOK_CHECKPOINT_SCHEMA_VERSION,
+                            "runId": run_id,
+                            "storyId": story.id,
+                            "storyRevision": story.revision,
+                            "extractionId": extraction.id,
+                            "extractionRevision": extraction.revision,
+                            "reviewId": review.review_id,
+                            "reviewRevision": review.revision,
+                            "evidenceFingerprint": review.evidence_fingerprint,
+                            "profileFingerprint": profile.fingerprint,
+                            "correctionSetFingerprint": correction_set_fingerprint,
+                        }
+                    ),
+                    current_attempt=1,
+                    stage="queued",
+                    progress=0,
+                    checkpoint_available=False,
+                    cancellation_requested=False,
+                    resume_requested=False,
+                    warnings_json="[]",
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(job)
+                session.flush()
+                run = AnalysisRunRow(
+                    id=run_id,
+                    project_id=project.id,
+                    story_id=story.id,
+                    source_document_id=_source.id,
+                    source_revision=_source.source_revision,
+                    extraction_id=extraction.id,
+                    import_review_record_id=review.id,
+                    review_id=review.review_id,
+                    review_revision=review.revision,
+                    review_decision_id=review.decision_id,
+                    approval_evidence_fingerprint=review.evidence_fingerprint,
+                    story_revision=story.revision,
+                    extraction_revision=extraction.revision,
+                    extracted_text_sha256=story.content_fingerprint,
+                    input_fingerprint=story.content_fingerprint,
+                    correction_set_fingerprint=correction_set_fingerprint,
+                    profile_json=canonical_json(profile.to_wire()),
+                    profile_fingerprint=profile.fingerprint,
+                    producer_id=ANALYSIS_PRODUCER_ID,
+                    producer_version=ANALYSIS_PRODUCER_SEMANTIC_VERSION,
+                    run_fingerprint=run_fingerprint,
+                    job_id=job.id,
+                    created_at=now,
+                )
+                session.add(run)
+                session.flush()
+                self._acquire_active_key(session, job)
+                session.add(
+                    JobAttemptRow(
+                        job_id=job.id,
+                        number=1,
+                        producer_version=ANALYSIS_PRODUCER_VERSION,
+                    )
+                )
+                session.add(
+                    IdempotencyRow(
+                        scope=scope,
+                        key=idempotency_key,
+                        request_hash=request_hash,
+                        resource_id=run.id,
+                        created_at=now,
+                    )
+                )
+                self._append_event(
+                    session,
+                    job,
+                    event_type="created",
+                    state="queued",
+                    stage="queued",
+                    progress=0,
+                )
+                return self.story_intelligence.run_dict(session, run), job_dict(job)
+        except IntegrityError as exc:
+            raise ServiceError(
+                409,
+                "JOB_ALREADY_ACTIVE",
+                "Whole-book analysis is already active for this run.",
             ) from exc
 
     def create_extraction_job(
@@ -780,6 +1087,34 @@ class JobRepository:
                     "This work cannot resume after the input changed; retry it.",
                     details={"jobId": job.id},
                 )
+            if checkpoint is None and job.type == "analyze_whole_book":
+                stage_checkpoint = session.scalar(
+                    select(AnalysisStageCheckpointRow)
+                    .where(
+                        AnalysisStageCheckpointRow.job_id == job.id,
+                        AnalysisStageCheckpointRow.stage == "analyze_structure",
+                    )
+                    .order_by(
+                        AnalysisStageCheckpointRow.attempt.desc(),
+                        AnalysisStageCheckpointRow.id.desc(),
+                    )
+                    .limit(1)
+                )
+                if stage_checkpoint is not None:
+                    run = (
+                        session.get(AnalysisRunRow, job.target_id)
+                        if job.target_id is not None
+                        else None
+                    )
+                    stage_payload = self._verified_stage_checkpoint_payload(
+                        job,
+                        run,
+                        stage_checkpoint,
+                    )
+                    resume_from_checkpoint = isinstance(
+                        stage_payload.get("resumeArtifact"),
+                        dict,
+                    )
             active = self._active_conflict(
                 session,
                 project_id=job.project_id,
@@ -859,11 +1194,7 @@ class JobRepository:
             JobAttemptRow(
                 job_id=queued.id,
                 number=queued.current_attempt,
-                producer_version=(
-                    _EXTRACTION_PRODUCER_VERSION
-                    if queued.type == "extract_document"
-                    else ANALYZER_VERSION
-                ),
+                producer_version=self._producer_version(queued.type),
             )
         )
         self._append_event(
@@ -1020,6 +1351,12 @@ class JobRepository:
 
     def save_checkpoint(self, job_id: str, payload: dict[str, Any]) -> bool:
         payload_json = canonical_json(payload)
+        if len(payload_json.encode()) > MAX_WHOLE_BOOK_CHECKPOINT_BYTES:
+            raise ServiceError(
+                422,
+                "CHECKPOINT_LIMIT_EXCEEDED",
+                "The analysis checkpoint exceeded its durable size limit.",
+            )
         payload_sha256 = sha256_text(payload_json)
         with self.database.session() as session:
             self._begin_immediate(session)
@@ -1068,15 +1405,16 @@ class JobRepository:
             if job is None:
                 return False
             sequence = self._next_sequence(session, job.id)
+            checkpoint_type, checkpoint_schema = self._checkpoint_contract(job.type)
             checkpoint = JobCheckpointRow(
                 job_id=job.id,
                 attempt=job.current_attempt,
                 sequence=sequence,
-                checkpoint_type="analysis_projection",
-                schema_version=CHECKPOINT_SCHEMA_VERSION,
+                checkpoint_type=checkpoint_type,
+                schema_version=checkpoint_schema,
                 input_revision=job.input_revision,
                 input_fingerprint=job.input_fingerprint,
-                producer_version=ANALYZER_VERSION,
+                producer_version=self._producer_version(job.type),
                 payload_json=payload_json,
                 payload_sha256=payload_sha256,
                 created_at=now,
@@ -1107,7 +1445,9 @@ class JobRepository:
                 .order_by(JobCheckpointRow.attempt.desc())
                 .limit(1)
             )
-            if checkpoint is None or not self._checkpoint_verified(job, checkpoint):
+            if checkpoint is None:
+                return None
+            if not self._checkpoint_verified(job, checkpoint):
                 raise ServiceError(
                     409,
                     "CHECKPOINT_INCOMPATIBLE",
@@ -1123,13 +1463,46 @@ class JobRepository:
             return value
 
     @staticmethod
+    def _verified_stage_checkpoint_payload(
+        job: JobRow,
+        run: AnalysisRunRow | None,
+        checkpoint: AnalysisStageCheckpointRow,
+    ) -> dict[str, Any]:
+        try:
+            value = parse_json(checkpoint.payload_json, {})
+        except (TypeError, ValueError) as exc:
+            raise ServiceError(
+                409,
+                "CHECKPOINT_INCOMPATIBLE",
+                "The saved analysis-stage checkpoint failed verification.",
+            ) from exc
+        if (
+            run is None
+            or run.job_id != job.id
+            or checkpoint.run_id != run.id
+            or checkpoint.project_id != run.project_id
+            or checkpoint.input_fingerprint != job.input_fingerprint
+            or checkpoint.input_fingerprint != run.input_fingerprint
+            or checkpoint.profile_fingerprint != run.profile_fingerprint
+            or sha256_text(checkpoint.payload_json) != checkpoint.payload_fingerprint
+            or not isinstance(value, dict)
+        ):
+            raise ServiceError(
+                409,
+                "CHECKPOINT_INCOMPATIBLE",
+                "The saved analysis-stage checkpoint failed verification.",
+            )
+        return value
+
+    @staticmethod
     def _checkpoint_compatible(job: JobRow, checkpoint: JobCheckpointRow) -> bool:
+        checkpoint_type, checkpoint_schema = JobRepository._checkpoint_contract(job.type)
         return (
-            checkpoint.checkpoint_type == "analysis_projection"
-            and checkpoint.schema_version == CHECKPOINT_SCHEMA_VERSION
+            checkpoint.checkpoint_type == checkpoint_type
+            and checkpoint.schema_version == checkpoint_schema
             and checkpoint.input_revision == job.input_revision
             and checkpoint.input_fingerprint == job.input_fingerprint
-            and checkpoint.producer_version == ANALYZER_VERSION
+            and checkpoint.producer_version == JobRepository._producer_version(job.type)
         )
 
     @classmethod
@@ -1445,6 +1818,102 @@ class JobRepository:
             self._release_active_key(session, job)
             return True
 
+    def publish_whole_book_and_finish(
+        self,
+        job_id: str,
+        *,
+        result: dict[str, Any],
+        after_write_claim: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Atomically publish all immutable claims/gates or publish nothing."""
+
+        with self.database.session() as session:
+            write_claim = session.execute(
+                update(JobRow)
+                .where(
+                    JobRow.id == job_id,
+                    JobRow.type == "analyze_whole_book",
+                    JobRow.target_type == _ANALYSIS_RUN_TARGET_TYPE,
+                    JobRow.state == "running",
+                    JobRow.cancellation_requested.is_(False),
+                )
+                .values(updated_at=JobRow.updated_at)
+                .returning(JobRow.id)
+                .execution_options(synchronize_session=False)
+            )
+            if write_claim.scalar_one_or_none() is None:
+                job = session.get(JobRow, job_id, populate_existing=True)
+                if job is not None and (
+                    job.state == "cancel_requested" or job.cancellation_requested
+                ):
+                    self._finish_cancelled(session, job.id)
+                return False
+            if after_write_claim is not None and not after_write_claim():
+                return False
+            job = session.get(JobRow, job_id)
+            if job is None:
+                return False
+            self.story_intelligence.publish_result(
+                session=session,
+                job=job,
+                result=result,
+            )
+            now = utc_now()
+            run = session.get(AnalysisRunRow, job.target_id)
+            if run is None:
+                raise ServiceError(
+                    409,
+                    "ANALYSIS_RUN_INPUT_INVALID",
+                    "The frozen whole-book analysis run is unavailable.",
+                )
+            publication_payload = {
+                "outputFingerprint": result["outputFingerprint"],
+                "runFingerprint": run.run_fingerprint,
+            }
+            publication_payload_json = canonical_json(publication_payload)
+            session.add(
+                AnalysisStageCheckpointRow(
+                    id=new_id(),
+                    project_id=run.project_id,
+                    run_id=run.id,
+                    job_id=job.id,
+                    attempt=job.current_attempt,
+                    ordinal=13,
+                    stage=WHOLE_BOOK_JOB_STAGES[13],
+                    input_fingerprint=run.input_fingerprint,
+                    profile_fingerprint=run.profile_fingerprint,
+                    payload_fingerprint=sha256_text(publication_payload_json),
+                    payload_json=publication_payload_json,
+                    created_at=now,
+                )
+            )
+            job.state = "succeeded"
+            job.stage = "complete"
+            job.progress = _PROGRESS_SCALE
+            job.cancellation_requested = False
+            job.resume_requested = False
+            job.updated_at = now
+            job.terminal_at = now
+            attempt = session.get(
+                JobAttemptRow,
+                {"job_id": job.id, "number": job.current_attempt},
+            )
+            if attempt is not None:
+                attempt.ended_at = now
+                attempt.outcome = "succeeded"
+            self._append_event(
+                session,
+                job,
+                event_type="completed",
+                state="succeeded",
+                stage="complete",
+                progress=_PROGRESS_SCALE,
+                completed_units=14,
+                total_units=14,
+            )
+            self._release_active_key(session, job)
+            return True
+
     def finish_failed(
         self,
         job_id: str,
@@ -1493,6 +1962,15 @@ class JobRepository:
             self._append_extraction_parser_outcome(
                 session,
                 job,
+                outcome="failed",
+                error_code=code,
+                error_message=message,
+                error_retryable=retryable,
+                finished_at=now,
+            )
+            self.story_intelligence.record_terminal_execution(
+                session=session,
+                job=job,
                 outcome="failed",
                 error_code=code,
                 error_message=message,
@@ -1553,6 +2031,15 @@ class JobRepository:
                 error_retryable=True,
                 finished_at=now,
             )
+            self.story_intelligence.record_terminal_execution(
+                session=session,
+                job=job,
+                outcome="interrupted",
+                error_code="ANALYSIS_INTERRUPTED",
+                error_message="Whole-book analysis was interrupted before publication.",
+                error_retryable=True,
+                finished_at=now,
+            )
             self._append_event(
                 session,
                 job,
@@ -1597,6 +2084,15 @@ class JobRepository:
             outcome="cancelled",
             error_code="EXTRACTION_CANCELLED",
             error_message="Document extraction was cancelled.",
+            error_retryable=False,
+            finished_at=now,
+        )
+        self.story_intelligence.record_terminal_execution(
+            session=session,
+            job=job,
+            outcome="cancelled",
+            error_code="ANALYSIS_CANCELLED",
+            error_message="Whole-book analysis was cancelled.",
             error_retryable=False,
             finished_at=now,
         )
@@ -1671,6 +2167,7 @@ class WorkerControls:
     claim_gate: threading.Event
     execution_gate: threading.Event
     after_checkpoint_gate: threading.Event
+    after_agent_checkpoint_gate: threading.Event
     before_publication_gate: threading.Event
     publication_claim_gate: threading.Event
     publication_claimed: threading.Event
@@ -1696,6 +2193,7 @@ class JobWorker:
             claim_gate=threading.Event(),
             execution_gate=threading.Event(),
             after_checkpoint_gate=threading.Event(),
+            after_agent_checkpoint_gate=threading.Event(),
             before_publication_gate=threading.Event(),
             publication_claim_gate=threading.Event(),
             publication_claimed=threading.Event(),
@@ -1703,6 +2201,7 @@ class JobWorker:
         self.controls.claim_gate.set()
         self.controls.execution_gate.set()
         self.controls.after_checkpoint_gate.set()
+        self.controls.after_agent_checkpoint_gate.set()
         self.controls.before_publication_gate.set()
         self.controls.publication_claim_gate.set()
         self._stop = threading.Event()
@@ -1729,6 +2228,7 @@ class JobWorker:
         self.controls.claim_gate.set()
         self.controls.execution_gate.set()
         self.controls.after_checkpoint_gate.set()
+        self.controls.after_agent_checkpoint_gate.set()
         self.controls.before_publication_gate.set()
         self.controls.publication_claim_gate.set()
         thread = self._thread
@@ -1783,6 +2283,8 @@ class JobWorker:
                     self._run_extraction(claimed)
                 elif claimed["type"] == "analyze_story":
                     self._run_analysis(claimed)
+                elif claimed["type"] == "analyze_whole_book":
+                    self._run_whole_book_analysis(claimed)
                 else:
                     self.jobs.finish_failed(
                         claimed["jobId"],
@@ -1966,6 +2468,266 @@ class JobWorker:
                 job_id,
                 code="EXTRACTION_FAILED",
                 message="Document extraction could not be completed safely.",
+                retryable=True,
+            )
+
+    def _run_whole_book_analysis(self, claimed: dict[str, Any]) -> None:
+        job_id = claimed["jobId"]
+        target = claimed.get("target")
+        try:
+            if (
+                not isinstance(target, dict)
+                or target.get("type") != _ANALYSIS_RUN_TARGET_TYPE
+                or not isinstance(target.get("id"), str)
+            ):
+                self.jobs.finish_failed(
+                    job_id,
+                    code="ANALYSIS_RUN_INPUT_INVALID",
+                    message="The frozen whole-book analysis target is invalid.",
+                    retryable=False,
+                )
+                return
+            run_id = str(target["id"])
+            if not self._wait_at_boundary(self.controls.execution_gate, job_id):
+                return
+            if not self.jobs.update_progress(
+                job_id,
+                stage=WHOLE_BOOK_JOB_STAGES[0],
+                progress=0.08,
+                completed_units=0,
+                total_units=len(WHOLE_BOOK_JOB_STAGES),
+            ):
+                return
+            run, story = self.jobs.story_intelligence.load_run_input(
+                run_id=run_id,
+                job_id=job_id,
+            )
+            if not self.jobs.story_intelligence.initialize_agent_lifecycle(job_id=job_id):
+                return
+            if (
+                run.story_revision != claimed["inputRevision"]
+                or run.input_fingerprint != claimed["inputFingerprint"]
+                or story.content_fingerprint != claimed["inputFingerprint"]
+            ):
+                raise ServiceError(
+                    409,
+                    "ANALYSIS_RUN_INPUT_CHANGED",
+                    "The frozen whole-book analysis input changed.",
+                    retryable=False,
+                )
+            if not self.jobs.story_intelligence.save_stage_checkpoint(
+                job_id=job_id,
+                ordinal=0,
+                stage=WHOLE_BOOK_JOB_STAGES[0],
+                payload={
+                    "runFingerprint": run.run_fingerprint,
+                    "inputFingerprint": run.input_fingerprint,
+                    "approvalEvidenceFingerprint": run.approval_evidence_fingerprint,
+                },
+            ):
+                return
+            if not self._continue_after_bounded_work(job_id):
+                return
+            if not self.jobs.update_progress(
+                job_id,
+                stage=WHOLE_BOOK_JOB_STAGES[1],
+                progress=0.12,
+                completed_units=1,
+                total_units=len(WHOLE_BOOK_JOB_STAGES),
+            ):
+                return
+            if run.profile_fingerprint != DEFAULT_ANALYSIS_PROFILE.fingerprint:
+                raise ServiceError(
+                    409,
+                    "ANALYSIS_PROFILE_CONFLICT",
+                    "The frozen deterministic analysis profile is unavailable.",
+                    retryable=False,
+                )
+            if not self.jobs.story_intelligence.save_stage_checkpoint(
+                job_id=job_id,
+                ordinal=1,
+                stage=WHOLE_BOOK_JOB_STAGES[1],
+                payload={
+                    "profileFingerprint": run.profile_fingerprint,
+                    "correctionSetFingerprint": run.correction_set_fingerprint,
+                },
+            ):
+                return
+            result = self.jobs.load_resume_checkpoint(job_id)
+            if result is None:
+                completed_stages = self.jobs.story_intelligence.stage_checkpoints(
+                    job_id=job_id,
+                    attempt=int(claimed["attempt"]),
+                )
+                structure_resume_artifact: dict[str, Any] | None = None
+                structure_checkpoint = completed_stages.get("analyze_structure")
+                if structure_checkpoint is not None:
+                    structure_payload = structure_checkpoint.get("payload")
+                    if not isinstance(structure_payload, dict):
+                        raise ServiceError(
+                            409,
+                            "CHECKPOINT_INCOMPATIBLE",
+                            "The saved analysis-stage checkpoint failed verification.",
+                            retryable=False,
+                        )
+                    raw_artifact = structure_payload.get("resumeArtifact")
+                    if isinstance(raw_artifact, dict):
+                        decode_structure_resume_artifact(
+                            raw_artifact,
+                            text_length=len(story.exact_text),
+                            input_fingerprint=run.input_fingerprint,
+                            profile_fingerprint=run.profile_fingerprint,
+                            correction_set_fingerprint=run.correction_set_fingerprint,
+                        )
+                        structure_resume_artifact = raw_artifact
+                        if not self.jobs.story_intelligence.complete_agent_boundary(
+                            job_id=job_id,
+                            role="structure",
+                            payload=structure_payload,
+                        ):
+                            return
+
+                def on_stage(role: str, payload: dict[str, Any]) -> None:
+                    stage_index = _WHOLE_BOOK_AGENT_STAGE_INDEX[role]
+                    stage = WHOLE_BOOK_JOB_STAGES[stage_index]
+                    if not self._continue_after_bounded_work(job_id):
+                        raise _StageStopped
+                    progress = 0.16 + ((stage_index - 2) * 0.06)
+                    if not self.jobs.update_progress(
+                        job_id,
+                        stage=stage,
+                        progress=progress,
+                        completed_units=stage_index,
+                        total_units=len(WHOLE_BOOK_JOB_STAGES),
+                    ):
+                        raise _StageStopped
+                    if not self.jobs.story_intelligence.save_stage_checkpoint(
+                        job_id=job_id,
+                        ordinal=stage_index,
+                        stage=stage,
+                        payload=payload,
+                    ):
+                        raise _StageStopped
+                    if not self.jobs.story_intelligence.complete_agent_boundary(
+                        job_id=job_id,
+                        role=role,
+                        payload=payload,
+                    ):
+                        raise _StageStopped
+                    if not self._wait_at_boundary(
+                        self.controls.after_agent_checkpoint_gate,
+                        job_id,
+                    ):
+                        raise _StageStopped
+
+                checkpointed_result_fingerprint: str | None = None
+
+                def on_result_checkpoint(payload: dict[str, Any]) -> None:
+                    nonlocal checkpointed_result_fingerprint
+                    if not self.jobs.save_checkpoint(job_id, payload):
+                        raise _StageStopped
+                    checkpointed_result_fingerprint = request_fingerprint(payload)
+
+                result = analyze_whole_book(
+                    text=story.exact_text,
+                    input_fingerprint=run.input_fingerprint,
+                    correction_set_fingerprint=run.correction_set_fingerprint,
+                    profile=DEFAULT_ANALYSIS_PROFILE,
+                    stage_observer=on_stage,
+                    result_checkpoint_observer=on_result_checkpoint,
+                    should_cancel=lambda: self._stop.is_set() or self.jobs.should_cancel(job_id),
+                    registry_scope=run.project_id,
+                    story_scope=run.story_id,
+                    structure_resume_artifact=structure_resume_artifact,
+                )
+                if checkpointed_result_fingerprint is None:
+                    if not self.jobs.save_checkpoint(job_id, result):
+                        return
+                elif request_fingerprint(result) != checkpointed_result_fingerprint:
+                    raise ServiceError(
+                        422,
+                        "ANALYSIS_OUTPUT_INVALID",
+                        "The whole-book analysis output failed verification.",
+                        retryable=False,
+                    )
+            else:
+                if (
+                    result.get("inputFingerprint") != run.input_fingerprint
+                    or result.get("profileFingerprint") != run.profile_fingerprint
+                    or result.get("correctionSetFingerprint") != run.correction_set_fingerprint
+                ):
+                    raise ServiceError(
+                        409,
+                        "CHECKPOINT_INCOMPATIBLE",
+                        "The whole-book checkpoint no longer matches the frozen run.",
+                        retryable=False,
+                    )
+                if not self.jobs.update_progress(
+                    job_id,
+                    stage=WHOLE_BOOK_JOB_STAGES[12],
+                    progress=0.82,
+                    completed_units=12,
+                    total_units=len(WHOLE_BOOK_JOB_STAGES),
+                ):
+                    return
+            if not self._wait_at_boundary(self.controls.after_checkpoint_gate, job_id):
+                return
+            if self._consume_injected_failure():
+                self.jobs.finish_failed(
+                    job_id,
+                    code="ANALYSIS_FAILED",
+                    message="Whole-book analysis could not be completed safely.",
+                    retryable=True,
+                )
+                return
+            if not self.jobs.update_progress(
+                job_id,
+                stage=WHOLE_BOOK_JOB_STAGES[13],
+                progress=0.94,
+                completed_units=13,
+                total_units=len(WHOLE_BOOK_JOB_STAGES),
+            ):
+                return
+            if not self._wait_at_boundary(self.controls.before_publication_gate, job_id):
+                return
+            self.controls.publication_claimed.clear()
+            published = self.jobs.publish_whole_book_and_finish(
+                job_id,
+                result=result,
+                after_write_claim=self._wait_after_publication_claim,
+            )
+            if not published and self._stop.is_set():
+                self.jobs.interrupt_active(job_id)
+        except _StageStopped:
+            return
+        except AnalysisCancelled:
+            if self._stop.is_set():
+                self.jobs.interrupt_active(job_id)
+            elif self.jobs.should_cancel(job_id):
+                self.jobs.update_progress(
+                    job_id,
+                    stage="cancelling",
+                    progress=0.99,
+                )
+            else:
+                self.jobs.finish_failed(
+                    job_id,
+                    code="ANALYSIS_FAILED",
+                    message="Whole-book analysis could not be completed safely.",
+                    retryable=True,
+                )
+        except ServiceError as exc:
+            self.jobs.finish_failed(
+                job_id,
+                code=exc.code,
+                message="Whole-book analysis could not be completed safely.",
+                retryable=exc.retryable,
+            )
+        except Exception:
+            self.jobs.finish_failed(
+                job_id,
+                code="ANALYSIS_FAILED",
+                message="Whole-book analysis could not be completed safely.",
                 retryable=True,
             )
 

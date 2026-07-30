@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 
 def _to_camel(value: str) -> str:
@@ -93,4 +100,135 @@ class DecideImportReviewRequest(StrictRequest):
     @field_validator("idempotency_key")
     @classmethod
     def validate_review_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+
+class AnalysisProfileRequest(StrictRequest):
+    profile_id: Literal["whole-book-intelligence-v1"] = "whole-book-intelligence-v1"
+    semantic_version: Literal["1.0.0"] = "1.0.0"
+    fingerprint: Literal[
+        "6ae73e83e89fbcfc0261ff339950407913cd990093fa13cdcc83ce3b1da810ec"
+    ] = "6ae73e83e89fbcfc0261ff339950407913cd990093fa13cdcc83ce3b1da810ec"
+
+
+class CreateAnalysisRunRequest(StrictRequest):
+    expected_extraction_id: str = Field(min_length=1, max_length=128)
+    expected_extraction_revision: int = Field(ge=1)
+    expected_review_id: str = Field(min_length=1, max_length=128)
+    expected_review_revision: int = Field(ge=1)
+    expected_evidence_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expected_profile_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    profile: AnalysisProfileRequest = Field(default_factory=AnalysisProfileRequest)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_analysis_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+    @model_validator(mode="after")
+    def validate_profile_fingerprint(self) -> CreateAnalysisRunRequest:
+        if self.profile.fingerprint != self.expected_profile_fingerprint:
+            raise ValueError(
+                "profile.fingerprint must equal expectedProfileFingerprint."
+            )
+        return self
+
+
+AnalysisCollection = Literal[
+    "agent-executions",
+    "chapters",
+    "scenes",
+    "beats",
+    "characters",
+    "mentions",
+    "dialogue-lines",
+    "narration-spans",
+    "pov-segments",
+    "locations",
+    "timeline-events",
+    "temporal-constraints",
+    "relationships",
+    "emotional-states",
+    "dramatic-intents",
+    "continuity-findings",
+]
+
+CorrectionCategory = Literal[
+    "structure_boundary",
+    "structure_label",
+    "character_identity",
+    "character_alias",
+    "character_merge",
+    "character_split",
+    "mention_resolution",
+    "dialogue_speaker",
+    "point_of_view",
+    "location_identity",
+    "location_alias",
+    "temporal_order",
+    "relationship",
+    "emotional_state",
+    "dramatic_intent",
+    "continuity_disposition",
+]
+
+
+class AppendAnalysisCorrectionRequest(StrictRequest):
+    category: CorrectionCategory
+    target_collection: AnalysisCollection
+    target_entity_id: str = Field(min_length=1, max_length=128)
+    expected_target_revision: int = Field(ge=1)
+    expected_run_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    previous_value_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    patch: dict[str, JsonValue] = Field(min_length=1, max_length=32)
+    reason: str = Field(min_length=1, max_length=1000)
+    supersedes_correction_id: str | None = Field(default=None, max_length=128)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_correction_reason(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("The correction reason must not be blank.")
+        if any(ord(character) < 32 and character != "\t" for character in cleaned):
+            raise ValueError("The correction reason contains control characters.")
+        return cleaned
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_correction_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+
+class DecideAnalysisReviewRequest(StrictRequest):
+    decision: Literal["approve", "reject", "request_changes"]
+    expected_revision: int = Field(ge=1)
+    expected_artifact_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expected_evidence_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    acknowledged_warning_ids: list[str] = Field(default_factory=list, max_length=32)
+    rationale: str = Field(min_length=1, max_length=4000)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_analysis_rationale(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("A review rationale is required.")
+        if any(ord(character) < 32 and character != "\t" for character in cleaned):
+            raise ValueError("The review rationale contains control characters.")
+        return cleaned
+
+    @field_validator("acknowledged_warning_ids")
+    @classmethod
+    def validate_acknowledged_warning_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("Warning acknowledgements must be unique.")
+        return value
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_analysis_review_idempotency_key(cls, value: str) -> str:
         return CreateJobRequest.validate_idempotency_key(value)

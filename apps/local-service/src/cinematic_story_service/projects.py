@@ -27,6 +27,10 @@ from .document_ingest import (
 )
 from .errors import ServiceError, not_found
 from .models import (
+    AnalysisCorrectionRow,
+    AnalysisEntityRow,
+    AnalysisReviewDecisionRow,
+    AnalysisRunRow,
     ChapterRow,
     CharacterRow,
     DialogueAttributionRow,
@@ -1958,9 +1962,11 @@ class ProjectRepository:
                 raise not_found("dialogue line")
             scene = session.get(SceneRow, line.scene_id)
             chapter = session.get(ChapterRow, scene.chapter_id) if scene is not None else None
+            story = session.get(ImportedStoryRow, chapter.story_id) if chapter is not None else None
             if (
                 scene is None
                 or chapter is None
+                or story is None
                 or scene.project_id != project_id
                 or chapter.project_id != project_id
                 or project.story_id != chapter.story_id
@@ -2008,21 +2014,144 @@ class ProjectRepository:
             )
             now = utc_now()
             new_revision = line.revision + 1
+            correction_reason = (
+                reason.strip()
+                if isinstance(reason, str) and reason.strip()
+                else "Speaker corrected by the local user."
+            )
+            correction_id = new_id()
             correction = HumanCorrectionRow(
-                id=new_id(),
+                id=correction_id,
                 project_id=project_id,
                 line_id=line_id,
                 attribution_id=attribution.id,
                 previous_value_fingerprint=previous_fingerprint,
                 previous_character_id=previous_id,
                 corrected_character_id=character_id,
-                reason=reason or "Speaker corrected by the local user.",
+                reason=correction_reason,
                 actor_id="local_user",
                 line_revision=new_revision,
                 recorded_at=now,
                 supersedes_correction_id=previous_correction.id if previous_correction else None,
             )
             session.add(correction)
+            legacy_patch = {
+                "characterId": character_id,
+                "kind": "dialogue_speaker",
+                "legacyPhase": 0,
+            }
+            generalized_target_key = f"dialogue-lines:{line.start_offset - 1}:{line.end_offset + 1}"
+            session.add(
+                AnalysisCorrectionRow(
+                    id=correction_id,
+                    project_id=project_id,
+                    run_id=None,
+                    category="dialogue_speaker",
+                    target_entity_id=None,
+                    target_key=generalized_target_key,
+                    revision=new_revision - 1,
+                    expected_target_revision=new_revision - 1,
+                    expected_run_fingerprint=story.content_fingerprint,
+                    previous_value_fingerprint=previous_fingerprint,
+                    patch_json=canonical_json(legacy_patch),
+                    correction_fingerprint=request_fingerprint(
+                        {
+                            "projectId": project_id,
+                            "category": "dialogue_speaker",
+                            "targetKey": generalized_target_key,
+                            "revision": new_revision - 1,
+                            "previousValueFingerprint": previous_fingerprint,
+                            "patch": legacy_patch,
+                            "reason": correction_reason,
+                            "legacyCorrectionId": correction_id,
+                        }
+                    ),
+                    reason=correction_reason,
+                    actor_id="local_user",
+                    supersedes_correction_id=(
+                        previous_correction.id if previous_correction is not None else None
+                    ),
+                    legacy_correction_id=correction_id,
+                    idempotency_key=None,
+                    recorded_at=now,
+                )
+            )
+            for compatible_run in session.scalars(
+                select(AnalysisRunRow).where(
+                    AnalysisRunRow.project_id == project_id,
+                    AnalysisRunRow.story_id == story.id,
+                    AnalysisRunRow.story_revision == story.revision,
+                    AnalysisRunRow.input_fingerprint == story.content_fingerprint,
+                )
+            ):
+                target_exists = session.scalar(
+                    select(AnalysisEntityRow.id)
+                    .where(
+                        AnalysisEntityRow.run_id == compatible_run.id,
+                        AnalysisEntityRow.collection == "dialogue-lines",
+                        AnalysisEntityRow.identity_key
+                        == generalized_target_key.removeprefix("dialogue-lines:"),
+                    )
+                    .limit(1)
+                )
+                if target_exists is None:
+                    continue
+                for gate_id in (
+                    "dialogue_attribution_review",
+                    "whole_book_analysis_review",
+                ):
+                    prior_gate = session.scalar(
+                        select(AnalysisReviewDecisionRow)
+                        .where(
+                            AnalysisReviewDecisionRow.run_id == compatible_run.id,
+                            AnalysisReviewDecisionRow.gate_id == gate_id,
+                        )
+                        .order_by(
+                            AnalysisReviewDecisionRow.revision.desc(),
+                            AnalysisReviewDecisionRow.id.desc(),
+                        )
+                        .limit(1)
+                    )
+                    if prior_gate is None:
+                        continue
+                    next_state = "invalidated" if prior_gate.state == "approved" else "pending"
+                    gate_change_fingerprint = request_fingerprint(
+                        {
+                            "prior": prior_gate.evidence_fingerprint,
+                            "correction": correction_id,
+                        }
+                    )
+                    session.add(
+                        AnalysisReviewDecisionRow(
+                            id=new_id(),
+                            project_id=project_id,
+                            run_id=compatible_run.id,
+                            snapshot_id=prior_gate.snapshot_id,
+                            gate_id=gate_id,
+                            revision=prior_gate.revision + 1,
+                            state=next_state,
+                            artifact_fingerprint=gate_change_fingerprint,
+                            evidence_fingerprint=gate_change_fingerprint,
+                            eligible=gate_id != "whole_book_analysis_review",
+                            rationale=(
+                                "A protected Phase 0 speaker correction changed "
+                                "governed dialogue evidence."
+                            ),
+                            warning_acknowledgements_json="[]",
+                            provenance_json=canonical_json(
+                                {
+                                    "origin": "human",
+                                    "actorId": "local_user",
+                                    "correctionId": correction_id,
+                                }
+                            ),
+                            actor_id="local_user",
+                            idempotency_key=None,
+                            supersedes_decision_id=prior_gate.id,
+                            decided_at=(now if next_state == "invalidated" else None),
+                            created_at=now,
+                        )
+                    )
             compare_and_swap = session.execute(
                 update(DialogueLineRow)
                 .where(

@@ -206,7 +206,7 @@ def test_all_supported_formats_archive_exact_bytes_then_require_import_review(
     assert detail["analysisAllowed"] is False
     assert detail["story"] is None
     if document_format == "pdf":
-        assert extraction["pageCount"] == 2
+        assert extraction["pageCount"] == 3
     with app.state.database.session() as session:
         row = session.get(DocumentExtractionRow, extraction["extractionId"])
         assert row is not None

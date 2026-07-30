@@ -1,8 +1,11 @@
 import type {
   CorrectDialogueSpeakerResponse,
   CreateProjectResponse,
+  DecideImportReviewResponse,
   FfmpegCapabilityResponse,
   HealthResponse,
+  ImportReviewDecision,
+  ImportReviewResponse,
   ImportStoryResponse,
   JobEventsResponse,
   JobResponse,
@@ -23,6 +26,8 @@ export const IPC_CHANNELS = {
   projectsOpen: "css:projects:open",
   projectsRestoreRecent: "css:projects:restore-recent",
   projectsImportSelectedFile: "css:projects:import-selected-file",
+  projectsGetImportReview: "css:projects:get-import-review",
+  projectsDecideImportReview: "css:projects:decide-import-review",
   dialogueCorrectSpeaker: "css:dialogue:correct-speaker",
   jobsCreate: "css:jobs:create",
   jobsGet: "css:jobs:get",
@@ -76,6 +81,23 @@ export interface ProjectIdInput {
   readonly projectId: string;
 }
 
+export interface ImportReviewIdInput extends ProjectIdInput {
+  readonly reviewId: string;
+  readonly sourceDocumentId: string;
+  readonly extractionId: string;
+  readonly candidateStoryId: string;
+  readonly candidateStoryRevision: number;
+  readonly evidenceFingerprint: string;
+}
+
+export interface DecideImportReviewInput extends ImportReviewIdInput {
+  readonly decision: ImportReviewDecision;
+  readonly rationale?: string;
+  readonly expectedRevision: number;
+  readonly evidenceFingerprint: string;
+  readonly idempotencyKey: string;
+}
+
 export interface CorrectSpeakerInput {
   readonly projectId: string;
   readonly lineId: string;
@@ -120,6 +142,12 @@ export interface CinematicStoryDesktopApi {
     readonly importSelectedFile: (
       projectId: string
     ) => Promise<DesktopResult<ImportStoryResponse | null>>;
+    readonly getImportReview: (
+      input: ImportReviewIdInput
+    ) => Promise<DesktopResult<ImportReviewResponse>>;
+    readonly decideImportReview: (
+      input: DecideImportReviewInput
+    ) => Promise<DesktopResult<DecideImportReviewResponse>>;
   };
   readonly dialogue: {
     readonly correctSpeaker: (

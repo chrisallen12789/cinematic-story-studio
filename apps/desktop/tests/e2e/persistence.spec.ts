@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,17 +8,22 @@ import {
   _electron as electron,
   expect,
   test,
-  type ElectronApplication
+  type ElectronApplication,
+  type Locator,
+  type Page
 } from "@playwright/test";
+
+import { materializeStrictBase64Docx } from "../../src/verification/packaged-e2e-evidence";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../.."
 );
-const fixturePath = path.resolve(
+const encodedFixturePath = path.resolve(
   desktopRoot,
-  "../../fixtures/synthetic-story/sample-story.md"
+  "../../fixtures/synthetic-story/sample-story.docx.base64"
 );
+const correctionReason = "fixture correction";
 
 test.describe("desktop persistence", () => {
   test.skip(
@@ -27,12 +32,25 @@ test.describe("desktop persistence", () => {
   );
 
   test("restores the most recent project after a real service restart", async () => {
-    const dataDirectory = await mkdtemp(
+    const isolationRoot = await mkdtemp(
       path.join(tmpdir(), "css-desktop-e2e-")
     );
+    const dataDirectory = path.join(isolationRoot, "Data");
+    const fixtureDirectory = path.join(isolationRoot, "Fixture");
+    const fixturePath = path.join(fixtureDirectory, "sample-story.docx");
+    let fixtureSha256: string;
     let first: ElectronApplication | null = null;
     let second: ElectronApplication | null = null;
     try {
+      await Promise.all([
+        mkdir(dataDirectory),
+        mkdir(fixtureDirectory)
+      ]);
+      fixtureSha256 = await materializeStrictBase64Docx(
+        encodedFixturePath,
+        isolationRoot,
+        fixturePath
+      );
       first = await launch(dataDirectory);
       const firstPage = await first.firstWindow();
       await expect(
@@ -52,44 +70,128 @@ test.describe("desktop persistence", () => {
           });
       }, fixturePath);
       await firstPage
-        .getByRole("button", { name: "Import TXT / MD" })
+        .getByRole("button", { name: "Import document" })
         .click();
       await expect(
         firstPage.getByText(
-          "Imported sample-story.md without changing its text."
+          "Queued secure extraction for sample-story.docx."
         )
-      ).toBeVisible({ timeout: 15_000 });
+      ).toBeVisible({ timeout: 20_000 });
+      await expect(
+        firstPage.getByRole("button", { name: "Analyze story" })
+      ).toBeDisabled();
       await firstPage
         .getByRole("button", { name: "Dismiss notification" })
         .click();
+      await waitForJobState(
+        firstPage,
+        "Extract document progress",
+        "Succeeded",
+        45_000
+      );
+      const firstReviewCard = firstPage.locator(".import-review-card");
+      await expect(
+        firstReviewCard.getByRole("heading", {
+          name: "sample-story.docx"
+        })
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(
+        reviewEvidence(firstReviewCard, "Declared format")
+      ).toHaveText("DOCX");
+      await expect(
+        reviewEvidence(firstReviewCard, "Detected format")
+      ).toHaveText("DOCX");
+      await expect(
+        reviewEvidence(firstReviewCard, "Media type")
+      ).toHaveText(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      );
+      await expect(
+        reviewEvidence(firstReviewCard, "Preservation")
+      ).toHaveText("Exact original bytes preserved");
+      await expect(
+        reviewEvidence(firstReviewCard, "Extraction status")
+      ).toHaveText("Complete");
+      await expect(
+        reviewEvidence(firstReviewCard, "Intervention required")
+      ).toHaveText("Yes");
+      await expect(
+        reviewEvidence(firstReviewCard, "Analysis may continue")
+      ).toHaveText("No");
+      const pendingSnapshot = await readPersistedImportSnapshot(firstPage);
+      expect(pendingSnapshot.sourceSha256).toBe(fixtureSha256);
+      expect(pendingSnapshot.extractedTextSha256).toMatch(
+        /^[a-f0-9]{64}$/u
+      );
+      expect(pendingSnapshot.extractionRevision).toBeGreaterThan(0);
+      expect(pendingSnapshot.reviewState).toBe("pending");
+      expect(pendingSnapshot.analysisAllowed).toBe(false);
+      if (pendingSnapshot.warningCount === 0) {
+        await expect(
+          firstReviewCard.getByText("No extraction warnings", {
+            exact: true
+          })
+        ).toBeVisible();
+      } else {
+        await expect(
+          firstReviewCard.locator(".import-warnings li")
+        ).toHaveCount(pendingSnapshot.warningCount);
+      }
+      await firstPage
+        .getByLabel("Review rationale (optional for approval)")
+        .clear();
+      await firstPage
+        .getByRole("button", { name: "Approve import" })
+        .click();
+      const approvalNotice = firstPage.getByText(
+        "Import approved. Story analysis is now available.",
+        { exact: true }
+      );
+      await expect(approvalNotice).toBeVisible({ timeout: 20_000 });
+      await expect(
+        firstPage.getByRole("button", { name: "Analyze story" })
+      ).toBeEnabled();
+      await expect(
+        firstPage.locator(".import-review-card .review-state")
+      ).toHaveText("Approved");
+      await firstPage
+        .getByRole("button", { name: "Dismiss notification" })
+        .click();
+      await expect(approvalNotice).toBeHidden();
+
       await firstPage.getByRole("button", { name: "Analyze story" }).click();
-      await expect
-        .poll(
-          async () => firstPage.locator(".job-state").allTextContents(),
-          { timeout: 30_000 }
-        )
-        .toContain("Succeeded");
+      await waitForJobState(
+        firstPage,
+        "Analyze story progress",
+        "Succeeded",
+        45_000
+      );
+      const analysisNotice = firstPage.getByText("Story analysis queued.", {
+        exact: true
+      });
+      if (await analysisNotice.isVisible()) {
+        await firstPage
+          .getByRole("button", { name: "Dismiss notification" })
+          .click();
+      }
       const chapterButtons = firstPage
         .getByRole("navigation", { name: "Chapters" })
         .getByRole("button");
       const sceneButtons = firstPage
         .getByRole("navigation", { name: "Scenes" })
         .getByRole("button");
-      await expect(chapterButtons).toHaveCount(2, { timeout: 30_000 });
-      await expect(sceneButtons).toHaveCount(2);
-      await chapterButtons.nth(1).click();
-      await expect(sceneButtons).toHaveCount(1);
-      await chapterButtons.nth(0).click();
-      await firstPage
-        .getByRole("button", { name: /Platform Glass/u })
-        .click();
+      await expect(chapterButtons.first()).toBeVisible({
+        timeout: 30_000
+      });
+      await expect(sceneButtons.first()).toBeVisible();
+      await sceneButtons.first().click();
 
       const firstSpeaker = firstPage.getByLabel("Speaker").first();
       await firstSpeaker.selectOption({ label: "Mira" });
       await firstPage
         .getByLabel("Correction reason")
         .first()
-        .fill("fixture correction");
+        .fill(correctionReason);
       await firstPage
         .getByRole("button", { name: "Save correction" })
         .first()
@@ -97,6 +199,31 @@ test.describe("desktop persistence", () => {
       await expect(
         firstPage.getByText("Speaker correction saved as human provenance.")
       ).toBeVisible({ timeout: 15_000 });
+      const firstSnapshot = await readPersistedImportSnapshot(
+        firstPage,
+        correctionReason
+      );
+      expect(firstSnapshot).toMatchObject({
+        format: "docx",
+        sourceSha256: fixtureSha256,
+        extractedTextSha256: pendingSnapshot.extractedTextSha256,
+        extractionRevision: pendingSnapshot.extractionRevision,
+        warningCount: pendingSnapshot.warningCount,
+        reviewState: "approved",
+        analysisAllowed: true,
+        analysisSucceeded: true
+      });
+      expect(firstSnapshot.humanCorrection).toMatchObject({
+        characterDisplayName: "Mira",
+        correctedValue: firstSnapshot.humanCorrection?.effectiveSpeakerId,
+        effectiveAuthority: "human",
+        reason: correctionReason,
+        authoritySource: "human",
+        immutable: true,
+        lockedAgainstAutomation: true,
+        fieldPath: "/effectiveSpeakerId",
+        targetEntityType: "DialogueLine"
+      });
       await first.close();
       first = null;
 
@@ -108,8 +235,38 @@ test.describe("desktop persistence", () => {
       await expect(
         secondPage.getByRole("heading", { name: "Persistence Demo" })
       ).toBeVisible({ timeout: 15_000 });
+      const secondReviewCard = secondPage.locator(".import-review-card");
+      await expect(
+        secondReviewCard.getByRole("heading", {
+          name: "sample-story.docx"
+        })
+      ).toBeVisible({ timeout: 20_000 });
+      await expect(
+        secondReviewCard.locator(".review-state")
+      ).toHaveText("Approved");
+      await expect(
+        reviewEvidence(secondReviewCard, "Declared format")
+      ).toHaveText("DOCX");
+      await expect(
+        reviewEvidence(secondReviewCard, "Detected format")
+      ).toHaveText("DOCX");
+      await expect(
+        reviewEvidence(secondReviewCard, "Analysis may continue")
+      ).toHaveText("Yes");
+      const restoredSnapshot =
+        await readPersistedImportSnapshot(secondPage, correctionReason);
+      expect(restoredSnapshot).toEqual(firstSnapshot);
+      if (restoredSnapshot.warningCount === 0) {
+        await expect(
+          secondReviewCard.getByText("No extraction warnings", {
+            exact: true
+          })
+        ).toBeVisible();
+      }
       await secondPage
-        .getByRole("button", { name: /Platform Glass/u })
+        .getByRole("navigation", { name: "Scenes" })
+        .getByRole("button")
+        .first()
         .click();
       await expect(
         secondPage.getByText("Human correction").first()
@@ -119,7 +276,7 @@ test.describe("desktop persistence", () => {
     } finally {
       await closeElectron(second);
       await closeElectron(first);
-      await rm(dataDirectory, {
+      await rm(isolationRoot, {
         recursive: true,
         force: true,
         maxRetries: 20,
@@ -128,6 +285,213 @@ test.describe("desktop persistence", () => {
     }
   });
 });
+
+interface PersistedImportSnapshot {
+  readonly format: "docx";
+  readonly sourceSha256: string;
+  readonly sourceRevision: number;
+  readonly extractedTextSha256: string;
+  readonly extractionRevision: number;
+  readonly extractionStatus: "complete" | "partial";
+  readonly warningCount: number;
+  readonly reviewState:
+    | "pending"
+    | "approved"
+    | "changes_requested"
+    | "rejected"
+    | "invalidated";
+  readonly analysisAllowed: boolean;
+  readonly analysisSucceeded: boolean;
+  readonly humanCorrection: PersistedHumanCorrection | null;
+}
+
+interface PersistedHumanCorrection {
+  readonly correctionId: string;
+  readonly attributionId: string;
+  readonly attributionRevision: number;
+  readonly lineId: string;
+  readonly lineRevision: number;
+  readonly effectiveSpeakerId: string;
+  readonly effectiveAuthority: "human";
+  readonly characterDisplayName: "Mira";
+  readonly targetEntityType: string;
+  readonly targetEntityId: string;
+  readonly targetRevision: number;
+  readonly fieldPath: string;
+  readonly previousValueFingerprint: string | null;
+  readonly correctedValue: string;
+  readonly reason: string;
+  readonly authoritySource: "human";
+  readonly authorityActorId: string;
+  readonly recordedAt: string;
+  readonly immutable: true;
+  readonly lockedAgainstAutomation: true;
+  readonly supersedesCorrectionId: string | null;
+}
+
+async function readPersistedImportSnapshot(
+  page: Page,
+  expectedCorrectionReason: string | null = null
+): Promise<PersistedImportSnapshot> {
+  return page.evaluate(async (correctionReasonToFind) => {
+    const result = await window.cinematicStory.projects.restoreRecent();
+    if (!result.ok) {
+      throw new Error(
+        `Project evidence read failed with ${result.error.code}.`
+      );
+    }
+    const detail = result.value;
+    if (detail === null) {
+      throw new Error("The persisted project was unavailable.");
+    }
+    const extraction = [...detail.extractions].sort((left, right) => {
+      const byTime = left.updatedAt.localeCompare(right.updatedAt);
+      return byTime === 0
+        ? left.revision - right.revision
+        : byTime;
+    }).at(-1);
+    if (
+      extraction === undefined ||
+      extraction.detectedFormat !== "docx" ||
+      extraction.extractedTextSha256 === undefined ||
+      (extraction.status !== "complete" &&
+        extraction.status !== "partial")
+    ) {
+      throw new Error("The persisted DOCX extraction was incomplete.");
+    }
+    const source = detail.sourceDocuments.find(
+      (item) => item.documentId === extraction.sourceDocumentId
+    );
+    const review = [...detail.importReviews]
+      .filter((item) => item.extractionId === extraction.extractionId)
+      .sort((left, right) => left.revision - right.revision)
+      .at(-1);
+    if (source === undefined || review === undefined) {
+      throw new Error("The persisted import evidence was incomplete.");
+    }
+    let humanCorrection: PersistedHumanCorrection | null = null;
+    if (correctionReasonToFind !== null) {
+      const mira = detail.characters.find(
+        (character) => character.displayName === "Mira"
+      );
+      if (mira === undefined) {
+        throw new Error("The persisted Mira character was unavailable.");
+      }
+      const matches = detail.dialogueAttributions.flatMap((attribution) =>
+        attribution.humanCorrections
+          .filter(
+            (correction) =>
+              correction.reason === correctionReasonToFind &&
+              correction.correctedValue === mira.characterId
+          )
+          .map((correction) => ({ attribution, correction }))
+      );
+      if (matches.length !== 1) {
+        throw new Error(
+          "The exact persisted human speaker correction was ambiguous."
+        );
+      }
+      const match = matches[0];
+      if (match === undefined) {
+        throw new Error("The persisted human correction was unavailable.");
+      }
+      const line = detail.dialogueLines.find(
+        (candidate) => candidate.lineId === match.attribution.lineId
+      );
+      if (
+        line === undefined ||
+        match.attribution.effectiveSpeakerId !== mira.characterId ||
+        match.attribution.effectiveAuthority !== "human" ||
+        typeof match.correction.correctedValue !== "string" ||
+        match.correction.correctedValue !== mira.characterId ||
+        match.correction.target.entityType !== "DialogueLine" ||
+        match.correction.target.entityId !== line.lineId ||
+        match.correction.target.revision !== line.revision ||
+        match.correction.fieldPath !== "/effectiveSpeakerId" ||
+        match.correction.authority.source !== "human" ||
+        match.correction.immutable !== true ||
+        match.correction.lockedAgainstAutomation !== true
+      ) {
+        throw new Error(
+          "The persisted human correction lost identity or authority."
+        );
+      }
+      humanCorrection = {
+        correctionId: match.correction.correctionId,
+        attributionId: match.attribution.attributionId,
+        attributionRevision: match.attribution.revision,
+        lineId: line.lineId,
+        lineRevision: line.revision,
+        effectiveSpeakerId: mira.characterId,
+        effectiveAuthority: "human",
+        characterDisplayName: "Mira",
+        targetEntityType: match.correction.target.entityType,
+        targetEntityId: match.correction.target.entityId,
+        targetRevision: match.correction.target.revision,
+        fieldPath: match.correction.fieldPath,
+        previousValueFingerprint:
+          match.correction.previousValueFingerprint ?? null,
+        correctedValue: match.correction.correctedValue,
+        reason: match.correction.reason,
+        authoritySource: match.correction.authority.source,
+        authorityActorId: match.correction.authority.actorId,
+        recordedAt: match.correction.recordedAt,
+        immutable: match.correction.immutable,
+        lockedAgainstAutomation:
+          match.correction.lockedAgainstAutomation,
+        supersedesCorrectionId:
+          match.correction.supersedesCorrectionId ?? null
+      };
+    }
+    return {
+      format: "docx",
+      sourceSha256: extraction.sourceSha256,
+      sourceRevision: source.revision,
+      extractedTextSha256: extraction.extractedTextSha256,
+      extractionRevision: extraction.revision,
+      extractionStatus: extraction.status,
+      warningCount: review.warnings.length,
+      reviewState: review.state,
+      analysisAllowed: detail.analysisAllowed,
+      analysisSucceeded: detail.jobs.some(
+        (job) =>
+          job.type === "analyze_story" && job.state === "succeeded"
+      ),
+      humanCorrection
+    };
+  }, expectedCorrectionReason);
+}
+
+async function waitForJobState(
+  page: Page,
+  progressName: string,
+  state: string,
+  timeout: number
+): Promise<void> {
+  const progress = page
+    .getByRole("progressbar", { name: progressName })
+    .last();
+  await expect(progress).toBeVisible({ timeout });
+  const article = progress.locator("xpath=ancestor::article[1]");
+  const jobState = article.locator(".job-state");
+  await expect(jobState).toHaveText(
+    new RegExp(`^(?:${state}|Failed)$`, "u"),
+    { timeout }
+  );
+  if ((await jobState.textContent())?.trim() === "Failed") {
+    const jobError =
+      (await article.locator(".job-error").textContent())?.trim() ??
+      "No stable job error was rendered.";
+    throw new Error(`${progressName} failed: ${jobError}`);
+  }
+}
+
+function reviewEvidence(card: Locator, label: string): Locator {
+  return card
+    .getByText(label, { exact: true })
+    .locator("..")
+    .locator("dd");
+}
 
 async function closeElectron(
   application: ElectronApplication | null

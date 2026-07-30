@@ -1,14 +1,18 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import http, { type IncomingMessage } from "node:http";
 import path from "node:path";
+import { Transform } from "node:stream";
 
 import type {
   ApiErrorResponse,
   CorrectDialogueSpeakerResponse,
   CreateProjectResponse,
+  DecideImportReviewResponse,
+  DeclaredImportFormat,
   FfmpegCapabilityResponse,
+  ImportReviewResponse,
   ImportStoryResponse,
   JobEventsResponse,
   JobResponse,
@@ -20,12 +24,17 @@ import type {
 import type {
   CorrectSpeakerInput,
   CreateJobInput,
-  CreateProjectInput
+  CreateProjectInput,
+  DecideImportReviewInput,
+  ImportReviewIdInput
 } from "../shared/desktop-api.js";
 import { BackendUnavailableError, DesktopMainError } from "./errors.js";
 import type { ServiceManager } from "./service-manager.js";
 import {
   validateFfmpegCapabilityResponse,
+  validateDecideImportReviewResponse,
+  validateImportReviewResponse,
+  validateImportStoryResponse,
   validateProjectDetail,
   validateProjectPageResponse,
   validateProviderHealthResponse,
@@ -42,7 +51,15 @@ const JSON_REQUEST_LIMIT_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 12_000;
 const IMPORT_TIMEOUT_MS = 45_000;
 
-type DeclaredTextFormat = "txt" | "markdown";
+interface ImportFileSnapshot {
+  readonly sha256: string;
+  readonly byteLength: number;
+}
+
+interface MultipartImportResult {
+  readonly response: unknown;
+  readonly snapshot: ImportFileSnapshot;
+}
 
 export class BackendApiClient {
   readonly #service: ServiceManager;
@@ -78,22 +95,66 @@ export class BackendApiClient {
         undefined,
         undefined,
         PROJECT_RESPONSE_LIMIT_BYTES
-      )
+      ),
+      projectId
     );
   }
 
   async importSelectedFile(
     projectId: string,
     selectedPath: string,
-    declaredFormat: DeclaredTextFormat
+    declaredFormat: DeclaredImportFormat
   ): Promise<ImportStoryResponse> {
-    const response = await this.#multipartImport(
+    const upload = await this.#multipartImport(
       `/api/v1/projects/${encodeURIComponent(projectId)}/imports`,
       selectedPath,
       declaredFormat
     );
-    validateImportResponse(response);
-    return response as ImportStoryResponse;
+    return validateImportStoryResponse(upload.response, {
+      projectId,
+      declaredFormat,
+      sourceSha256: upload.snapshot.sha256,
+      sourceByteCount: upload.snapshot.byteLength
+    });
+  }
+
+  async getImportReview(
+    input: ImportReviewIdInput
+  ): Promise<ImportReviewResponse> {
+    return validateImportReviewResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/imports/${encodeURIComponent(input.reviewId)}/review`
+      ),
+      input
+    );
+  }
+
+  async decideImportReview(
+    input: DecideImportReviewInput
+  ): Promise<DecideImportReviewResponse> {
+    return validateDecideImportReviewResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/imports/${encodeURIComponent(input.reviewId)}/review/decision`,
+        {
+          reviewId: input.reviewId,
+          decision: input.decision,
+          ...(input.rationale === undefined
+            ? {}
+            : { rationale: input.rationale }),
+          expectedRevision: input.expectedRevision,
+          evidenceFingerprint: input.evidenceFingerprint,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
   }
 
   async correctSpeaker(
@@ -246,8 +307,8 @@ export class BackendApiClient {
   async #multipartImport(
     route: string,
     selectedPath: string,
-    declaredFormat: DeclaredTextFormat
-  ): Promise<unknown> {
+    declaredFormat: DeclaredImportFormat
+  ): Promise<MultipartImportResult> {
     const credentials = this.#service.connection();
     ensureFixedApiRoute(route);
     const initialMetadata = await lstat(selectedPath);
@@ -262,8 +323,8 @@ export class BackendApiClient {
           ? "IMPORT_TOO_LARGE"
           : "IMPORT_FILE_INVALID",
         initialMetadata.size > IMPORT_LIMIT_BYTES
-          ? "The selected story exceeds the 8 MiB desktop import limit."
-          : "The selected story is not a supported regular file.",
+          ? "The selected document exceeds the 8 MiB desktop import limit."
+          : "The selected document is not a supported regular file.",
         false
       );
     }
@@ -288,8 +349,8 @@ export class BackendApiClient {
             ? "IMPORT_TOO_LARGE"
             : "IMPORT_FILE_CHANGED",
           openedMetadata.size > IMPORT_LIMIT_BYTES
-            ? "The selected story exceeds the 8 MiB desktop import limit."
-            : "The selected story changed before it could be imported.",
+            ? "The selected document exceeds the 8 MiB desktop import limit."
+            : "The selected document changed before it could be imported.",
           false
         );
       }
@@ -301,9 +362,7 @@ export class BackendApiClient {
           `${declaredFormat}\r\n` +
           `--${boundary}\r\n` +
           `Content-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
-          `Content-Type: ${
-            declaredFormat === "markdown" ? "text/markdown" : "text/plain"
-          }\r\n\r\n`,
+          `Content-Type: ${importMediaType(declaredFormat)}\r\n\r\n`,
         "utf8"
       );
       const suffix = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
@@ -315,8 +374,21 @@ export class BackendApiClient {
         end: openedMetadata.size - 1,
         highWaterMark: 64 * 1024
       });
+      const digest = createHash("sha256");
+      let observedByteLength = 0;
+      let snapshot: ImportFileSnapshot | null = null;
+      const hashingStream = new Transform({
+        transform(chunk, _encoding, callback) {
+          const bytes = Buffer.isBuffer(chunk)
+            ? chunk
+            : Buffer.from(chunk as Uint8Array);
+          digest.update(bytes);
+          observedByteLength += bytes.byteLength;
+          callback(null, bytes);
+        }
+      });
 
-      return await new Promise<unknown>((resolve, reject) => {
+      return await new Promise<MultipartImportResult>((resolve, reject) => {
         const request = http.request(
           {
             hostname: "127.0.0.1",
@@ -335,23 +407,28 @@ export class BackendApiClient {
             timeout: IMPORT_TIMEOUT_MS
           },
           (response) => {
-            void parseNodeResponse(
-              response,
-              PROJECT_RESPONSE_LIMIT_BYTES
-            ).then(resolve, reject);
+            void parseNodeResponse(response).then((value) => {
+              const verifiedSnapshot = snapshot;
+              if (verifiedSnapshot === null) {
+                reject(importFileChangedError());
+                return;
+              }
+              resolve({ response: value, snapshot: verifiedSnapshot });
+            }, reject);
           }
         );
         request.once("timeout", () => {
           request.destroy(
             new DesktopMainError(
               "IMPORT_TIMEOUT",
-              "The selected story import timed out.",
+              "The selected document import timed out.",
               true
             )
           );
         });
         request.once("error", (error) => {
           source.destroy();
+          hashingStream.destroy();
           reject(
             error instanceof DesktopMainError
               ? error
@@ -363,15 +440,45 @@ export class BackendApiClient {
           request.destroy(
             new DesktopMainError(
               "IMPORT_READ_FAILED",
-              "The selected story could not be read.",
+              "The selected document could not be read.",
               false
             )
           );
         });
-        source.once("end", () => {
-          request.end(suffix);
+        hashingStream.once("error", () => {
+          request.destroy(
+            new DesktopMainError(
+              "IMPORT_READ_FAILED",
+              "The selected document could not be read.",
+              false
+            )
+          );
         });
-        source.pipe(request, { end: false });
+        hashingStream.once("end", () => {
+          void (async () => {
+            try {
+              const [finalOpenedMetadata, finalPathMetadata] =
+                await Promise.all([fileHandle.stat(), lstat(selectedPath)]);
+              if (
+                observedByteLength !== openedMetadata.size ||
+                !finalOpenedMetadata.isFile() ||
+                finalPathMetadata.isSymbolicLink() ||
+                !sameFileIdentity(openedMetadata, finalOpenedMetadata) ||
+                !sameFileIdentity(finalOpenedMetadata, finalPathMetadata)
+              ) {
+                throw importFileChangedError();
+              }
+              snapshot = {
+                sha256: digest.digest("hex"),
+                byteLength: observedByteLength
+              };
+              request.end(suffix);
+            } catch {
+              request.destroy(importFileChangedError());
+            }
+          })();
+        });
+        source.pipe(hashingStream).pipe(request, { end: false });
       });
     } finally {
       await fileHandle.close().catch(() => undefined);
@@ -551,12 +658,35 @@ function sanitizeMultipartFilename(filename: string): string {
   return sanitized;
 }
 
+function importMediaType(format: DeclaredImportFormat): string {
+  switch (format) {
+    case "txt":
+      return "text/plain";
+    case "markdown":
+      return "text/markdown";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "epub":
+      return "application/epub+zip";
+    case "pdf":
+      return "application/pdf";
+  }
+}
+
 function sameFileIdentity(opened: Stats, current: Stats): boolean {
   return (
     opened.dev === current.dev &&
     opened.ino === current.ino &&
     opened.size === current.size &&
     opened.mtimeMs === current.mtimeMs
+  );
+}
+
+function importFileChangedError(): DesktopMainError {
+  return new DesktopMainError(
+    "IMPORT_FILE_CHANGED",
+    "The selected document changed while it was being imported.",
+    false
   );
 }
 
@@ -596,16 +726,6 @@ function validateCreateProjectResponse(value: unknown): void {
   requireIdentifier(project.projectId, "projectId");
   requireText(project.name, "name", 120);
   requireInteger(project.revision, "revision");
-}
-
-function validateImportResponse(value: unknown): void {
-  const record = requireRecord(value, "import response");
-  requireIdentifier(record.correlationId, "correlationId");
-  const source = requireRecord(record.sourceDocument, "sourceDocument");
-  const story = requireRecord(record.story, "story");
-  requireIdentifier(source.documentId, "documentId");
-  requireIdentifier(story.storyId, "storyId");
-  requireInteger(source.byteLength, "byteLength");
 }
 
 function validateCorrectionResponse(value: unknown): void {

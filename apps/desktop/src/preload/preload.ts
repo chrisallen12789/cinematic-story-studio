@@ -6,9 +6,11 @@ import {
   type BackendSnapshot,
   type CinematicStoryDesktopApi,
   type CorrectSpeakerInput,
+  type DecideImportReviewInput,
   type CreateJobInput,
   type CreateProjectInput,
   type DesktopRequest,
+  type ImportReviewIdInput,
   type JobEventsInput,
   type JobIdInput,
   type ProjectIdInput
@@ -57,7 +59,16 @@ const api: CinematicStoryDesktopApi = {
     restoreRecent: () =>
       request(IPC_CHANNELS.projectsRestoreRecent, Object.freeze({})),
     importSelectedFile: (projectId: string) =>
-      request(IPC_CHANNELS.projectsImportSelectedFile, { projectId })
+      request(IPC_CHANNELS.projectsImportSelectedFile, { projectId }),
+    getImportReview: (input: ImportReviewIdInput) =>
+      request<
+        ImportReviewIdInput,
+        Awaited<
+          ReturnType<CinematicStoryDesktopApi["projects"]["getImportReview"]>
+        >
+      >(IPC_CHANNELS.projectsGetImportReview, input),
+    decideImportReview: (input: DecideImportReviewInput) =>
+      request(IPC_CHANNELS.projectsDecideImportReview, input)
   },
   dialogue: {
     correctSpeaker: (input: CorrectSpeakerInput) =>

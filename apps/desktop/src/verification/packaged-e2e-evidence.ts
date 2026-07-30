@@ -1,21 +1,33 @@
-import { rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  lstat,
+  readFile,
+  rename,
+  rm,
+  writeFile
+} from "node:fs/promises";
+import path from "node:path";
 
 import {
   ProcessInventoryError,
   type ProcessInventoryFailureCode
 } from "./packaged-process-inventory";
 
-export const packagedE2eSchemaVersion = "2.0.0";
+export const packagedE2eSchemaVersion = "3.0.0";
 export const packagedFixture =
-  "fixtures/synthetic-story/sample-story.md";
+  "fixtures/synthetic-story/sample-story.docx.base64";
 export const packagedFlow = Object.freeze([
   "create",
-  "import_synthetic_fixture",
+  "import_synthetic_docx",
+  "wait_for_extraction",
+  "review_import",
+  "approve_import",
   "analyze",
   "correct_speaker",
   "close",
   "restart",
   "restore",
+  "verify_import_review_persistence",
   "close"
 ]);
 export const isolatedEnvironmentNames = Object.freeze([
@@ -26,6 +38,8 @@ export const isolatedEnvironmentNames = Object.freeze([
 ]);
 
 const maximumMachineResultBytes = 1024 * 1024;
+const maximumEncodedFixtureBytes = 2 * 1024 * 1024;
+const maximumDecodedFixtureBytes = 1024 * 1024;
 
 export type PackagedFailureStage =
   | "prelaunch_inventory_1"
@@ -88,6 +102,18 @@ export interface MachineLaunchEvidence {
   };
 }
 
+export interface PackagedImportReviewEvidence {
+  readonly format: "docx";
+  readonly sourceSha256: string;
+  readonly extractedTextSha256: string;
+  readonly extractionRevision: number;
+  readonly warningCount: number;
+  readonly approvalDecision: "approved";
+  readonly approvalPersistedAfterRestart: boolean;
+  readonly extractionPersistedAfterRestart: boolean;
+  readonly analysisPersistedAfterRestart: boolean;
+}
+
 export interface PackagedE2eMachineResult {
   readonly schemaVersion: typeof packagedE2eSchemaVersion;
   readonly completedAt: string;
@@ -110,6 +136,7 @@ export interface PackagedE2eMachineResult {
     readonly artifactId: "packaged-ui-screenshot";
     readonly captured: boolean;
   };
+  readonly importReview: PackagedImportReviewEvidence | null;
   readonly launches: readonly MachineLaunchEvidence[];
 }
 
@@ -171,6 +198,89 @@ export async function writePackagedE2eMachineResult(
   } finally {
     await rm(temporaryPath, { force: true });
   }
+}
+
+export async function materializeStrictBase64Docx(
+  encodedPath: string,
+  isolatedRoot: string,
+  destinationPath: string
+): Promise<string> {
+  const resolvedRoot = path.resolve(isolatedRoot);
+  const resolvedDestination = path.resolve(destinationPath);
+  const relativeDestination = path.relative(
+    resolvedRoot,
+    resolvedDestination
+  );
+  if (
+    !path.isAbsolute(isolatedRoot) ||
+    relativeDestination.length === 0 ||
+    relativeDestination === ".." ||
+    relativeDestination.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeDestination) ||
+    path.extname(resolvedDestination).toLowerCase() !== ".docx"
+  ) {
+    throw new Error(
+      "The synthetic DOCX destination is outside its isolated root."
+    );
+  }
+  const [encodedMetadata, rootMetadata, destinationParentMetadata] =
+    await Promise.all([
+      lstat(encodedPath),
+      lstat(resolvedRoot),
+      lstat(path.dirname(resolvedDestination))
+    ]);
+  if (
+    !encodedMetadata.isFile() ||
+    encodedMetadata.isSymbolicLink() ||
+    encodedMetadata.size <= 0 ||
+    encodedMetadata.size > maximumEncodedFixtureBytes ||
+    !rootMetadata.isDirectory() ||
+    rootMetadata.isSymbolicLink() ||
+    !destinationParentMetadata.isDirectory() ||
+    destinationParentMetadata.isSymbolicLink()
+  ) {
+    throw new Error("The synthetic DOCX fixture location is invalid.");
+  }
+  const encodedBytes = await readFile(encodedPath);
+  if (
+    encodedBytes.length !== encodedMetadata.size ||
+    encodedBytes.some((value) => value > 0x7f)
+  ) {
+    throw new Error("The synthetic DOCX fixture encoding is invalid.");
+  }
+  const encodedText = encodedBytes.toString("ascii");
+  if (
+    encodedText.includes("\0") ||
+    /\r(?!\n)/u.test(encodedText) ||
+    /[^A-Za-z0-9+/=\r\n]/u.test(encodedText)
+  ) {
+    throw new Error("The synthetic DOCX fixture is not strict base64.");
+  }
+  const compact = encodedText.replace(/\r?\n/gu, "");
+  if (
+    compact.length === 0 ||
+    compact.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+      compact
+    )
+  ) {
+    throw new Error("The synthetic DOCX fixture is not strict base64.");
+  }
+  const decoded = Buffer.from(compact, "base64");
+  if (
+    decoded.length === 0 ||
+    decoded.length > maximumDecodedFixtureBytes ||
+    decoded.toString("base64") !== compact ||
+    decoded.subarray(0, 4).compare(Buffer.from([0x50, 0x4b, 0x03, 0x04])) !==
+      0
+  ) {
+    throw new Error("The synthetic DOCX fixture bytes are invalid.");
+  }
+  await writeFile(resolvedDestination, decoded, {
+    flag: "wx",
+    mode: 0o600
+  });
+  return createHash("sha256").update(decoded).digest("hex");
 }
 
 export async function runPackagedE2eEvidenceStep<T>(

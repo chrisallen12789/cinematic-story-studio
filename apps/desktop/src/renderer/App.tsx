@@ -9,6 +9,8 @@ import {
 
 import type {
   FfmpegCapabilityResponse,
+  ImportReview,
+  ImportReviewDecision,
   Job,
   ProjectDetail,
   ProjectSummary,
@@ -48,6 +50,9 @@ const activeJobStates = new Set<Job["state"]>([
   "cancel_requested"
 ]);
 
+const defaultImportReviewRationale =
+  "Reviewed source identity, extraction status, warnings, and preview.";
+
 export interface AppProps {
   readonly api?: CinematicStoryDesktopApi;
 }
@@ -56,6 +61,10 @@ export function App({ api = window.cinematicStory }: AppProps) {
   const [backend, setBackend] = useState<BackendSnapshot>(initialBackend);
   const [projects, setProjects] = useState<readonly ProjectSummary[]>([]);
   const [project, setProject] = useState<ProjectDetail | null>(null);
+  const [importReview, setImportReview] = useState<ImportReview | null>(null);
+  const [reviewRationale, setReviewRationale] = useState(
+    defaultImportReviewRationale
+  );
   const [projectLoading, setProjectLoading] = useState(false);
   const [view, setView] = useState<WorkspaceView>("studio");
   const [projectName, setProjectName] = useState("");
@@ -78,9 +87,16 @@ export function App({ api = window.cinematicStory }: AppProps) {
 
   const connected =
     backend.state === "ready" || backend.state === "degraded";
+  const activeProjectId = project?.project.projectId ?? null;
+  const projectedImportReview =
+    project === null ? null : latestImportReview(project.importReviews);
+  const projectedImportReviewId = projectedImportReview?.reviewId ?? null;
+  const projectedImportReviewRevision =
+    projectedImportReview?.revision ?? null;
 
   const applyProject = useCallback((detail: ProjectDetail) => {
     setProject(detail);
+    setImportReview(latestImportReview(detail.importReviews));
     const chapters = [...detail.chapters].sort(
       (left, right) => left.ordinal - right.ordinal
     );
@@ -193,6 +209,48 @@ export function App({ api = window.cinematicStory }: AppProps) {
     }
     wasConnected.current = connected;
   }, [connected, loadWorkspace]);
+
+  useEffect(() => {
+    if (
+      !connected ||
+      activeProjectId === null ||
+      projectedImportReview === null
+    ) {
+      return;
+    }
+    let current = true;
+    void api.projects
+      .getImportReview({
+        projectId: activeProjectId,
+        reviewId: projectedImportReview.reviewId,
+        sourceDocumentId: projectedImportReview.sourceDocumentId,
+        extractionId: projectedImportReview.extractionId,
+        candidateStoryId: projectedImportReview.candidateStoryId,
+        candidateStoryRevision:
+          projectedImportReview.candidateStoryRevision,
+        evidenceFingerprint: projectedImportReview.evidenceFingerprint
+      })
+      .then((result) => {
+        if (!current) {
+          return;
+        }
+        if (result.ok) {
+          setImportReview(result.value.review);
+        } else {
+          setError(result.error);
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [
+    api,
+    activeProjectId,
+    connected,
+    projectedImportReview,
+    projectedImportReviewId,
+    projectedImportReviewRevision
+  ]);
 
   useEffect(() => {
     if (project === null || !connected) {
@@ -311,10 +369,41 @@ export function App({ api = window.cinematicStory }: AppProps) {
         api.projects.importSelectedFile(project.project.projectId)
       );
       if (imported !== null) {
-        setNotice(
-          `Imported ${imported.sourceDocument.displayName} without changing its text.`
+        setImportReview(null);
+        setReviewRationale(defaultImportReviewRationale);
+        setProject((current) =>
+          current === null
+            ? current
+            : {
+                ...current,
+                sourceDocuments: [
+                  imported.sourceDocument,
+                  ...current.sourceDocuments.filter(
+                    (source) =>
+                      source.documentId !==
+                      imported.sourceDocument.documentId
+                  )
+                ],
+                extractions: [
+                  imported.extraction,
+                  ...current.extractions.filter(
+                    (extraction) =>
+                      extraction.extractionId !==
+                      imported.extraction.extractionId
+                  )
+                ],
+                jobs: [
+                  imported.job,
+                  ...current.jobs.filter(
+                    (job) => job.jobId !== imported.job.jobId
+                  )
+                ],
+                analysisAllowed: false
+              }
         );
-        await openProject(project.project.projectId, false);
+        setNotice(
+          `Queued secure extraction for ${imported.sourceDocument.displayName}.`
+        );
       }
     } catch (caught) {
       setError(asDesktopError(caught));
@@ -323,8 +412,66 @@ export function App({ api = window.cinematicStory }: AppProps) {
     }
   };
 
+  const decideImportReview = async (decision: ImportReviewDecision) => {
+    if (
+      project === null ||
+      importReview === null ||
+      !connected ||
+      (decision !== "approved" && reviewRationale.trim().length === 0)
+    ) {
+      return;
+    }
+    setBusyAction(`review-${decision}`);
+    setError(null);
+    try {
+      const response = await unwrap(
+        api.projects.decideImportReview({
+          projectId: project.project.projectId,
+          reviewId: importReview.reviewId,
+          sourceDocumentId: importReview.sourceDocumentId,
+          extractionId: importReview.extractionId,
+          candidateStoryId: importReview.candidateStoryId,
+          candidateStoryRevision: importReview.candidateStoryRevision,
+          decision,
+          ...(reviewRationale.trim().length === 0
+            ? {}
+            : { rationale: reviewRationale.trim() }),
+          expectedRevision: importReview.revision,
+          evidenceFingerprint: importReview.evidenceFingerprint,
+          idempotencyKey: crypto.randomUUID()
+        })
+      );
+      setImportReview(response.review);
+      setNotice(
+        decision === "approved"
+          ? "Import approved. Story analysis is now available."
+          : decision === "changes_requested"
+            ? "Changes requested for this import."
+            : "Import rejected."
+      );
+      setReviewRationale(defaultImportReviewRationale);
+      await openProject(project.project.projectId, false);
+    } catch (caught) {
+      const desktopError = asDesktopError(caught);
+      setError(desktopError);
+      if (
+        desktopError.code === "REVISION_CONFLICT" ||
+        desktopError.code === "SERVICE_HTTP_409"
+      ) {
+        await openProject(project.project.projectId, false);
+      }
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const createAnalysisJob = async () => {
-    if (project === null || project.story === null || !connected) {
+    if (
+      project === null ||
+      project.story === null ||
+      !project.analysisAllowed ||
+      !connected
+    ) {
       return;
     }
     setBusyAction("create-job");
@@ -636,6 +783,8 @@ export function App({ api = window.cinematicStory }: AppProps) {
         ) : view === "studio" ? (
           <StoryWorkspace
             project={project}
+            importReview={importReview}
+            reviewRationale={reviewRationale}
             chapters={chapters}
             selectedChapterId={selectedChapter?.chapterId ?? null}
             scenes={scenes}
@@ -649,6 +798,10 @@ export function App({ api = window.cinematicStory }: AppProps) {
             onSelectScene={setSelectedSceneId}
             onImport={() => void importStory()}
             onAnalyze={() => void createAnalysisJob()}
+            onReviewRationale={setReviewRationale}
+            onDecideImport={(decision) =>
+              void decideImportReview(decision)
+            }
             onUpdateDraft={updateDraft}
             onSaveSpeaker={(line) => void saveSpeaker(line)}
             onRefreshConflict={() =>
@@ -675,6 +828,8 @@ export function App({ api = window.cinematicStory }: AppProps) {
 
 function StoryWorkspace({
   project,
+  importReview,
+  reviewRationale,
   chapters,
   selectedChapterId,
   scenes,
@@ -688,12 +843,16 @@ function StoryWorkspace({
   onSelectScene,
   onImport,
   onAnalyze,
+  onReviewRationale,
+  onDecideImport,
   onUpdateDraft,
   onSaveSpeaker,
   onRefreshConflict,
   onControlJob
 }: {
   readonly project: ProjectDetail;
+  readonly importReview: ImportReview | null;
+  readonly reviewRationale: string;
   readonly chapters: ProjectDetail["chapters"];
   readonly selectedChapterId: string | null;
   readonly scenes: readonly Scene[];
@@ -707,6 +866,8 @@ function StoryWorkspace({
   readonly onSelectScene: (sceneId: string) => void;
   readonly onImport: () => void;
   readonly onAnalyze: () => void;
+  readonly onReviewRationale: (value: string) => void;
+  readonly onDecideImport: (decision: ImportReviewDecision) => void;
   readonly onUpdateDraft: (
     lineId: string,
     field: keyof DialogueDraft,
@@ -734,7 +895,9 @@ function StoryWorkspace({
               onClick={onImport}
               disabled={!connected || busyAction === "import-story"}
             >
-              {busyAction === "import-story" ? "Importing..." : "Import TXT / MD"}
+              {busyAction === "import-story"
+                ? "Selecting..."
+                : "Import document"}
             </button>
             <button
               type="button"
@@ -743,7 +906,13 @@ function StoryWorkspace({
               disabled={
                 !connected ||
                 project.story === null ||
+                !project.analysisAllowed ||
                 busyAction === "create-job"
+              }
+              title={
+                project.analysisAllowed
+                  ? undefined
+                  : "Approve the current import before analysis."
               }
             >
               {busyAction === "create-job" ? "Queueing..." : "Analyze story"}
@@ -751,16 +920,34 @@ function StoryWorkspace({
           </div>
         </div>
 
-        {project.story === null ? (
+        <ImportReviewPanel
+          project={project}
+          review={importReview}
+          rationale={reviewRationale}
+          connected={connected}
+          busyAction={busyAction}
+          onRationale={onReviewRationale}
+          onDecision={onDecideImport}
+        />
+
+        {!project.analysisAllowed &&
+          project.story !== null &&
+          importReview !== null && (
+            <p className="analysis-lock" role="status">
+              Analysis is locked until this exact import revision is approved.
+            </p>
+          )}
+
+        {project.story === null && project.extractions.length === 0 ? (
           <section className="import-callout">
             <span className="callout-number">01</span>
             <div>
               <span className="eyebrow">Begin with the written word</span>
               <h2>Import the story exactly as authored.</h2>
               <p>
-                Select a TXT or Markdown file. The desktop streams it through
-                the authenticated local service and never exposes its path to
-                this renderer.
+                Select TXT, Markdown, DOCX, EPUB, or a text-based PDF. The
+                desktop streams it through the authenticated local service and
+                never exposes its path to this renderer.
               </p>
               <button
                 type="button"
@@ -770,6 +957,22 @@ function StoryWorkspace({
               >
                 Choose story file
               </button>
+            </div>
+          </section>
+        ) : project.story === null ? (
+          <section className="waiting-card">
+            <span className="pulse-dot" aria-hidden="true" />
+            <div>
+              <h2>
+                {importReview === null
+                  ? "Extracting document"
+                  : "Import review required"}
+              </h2>
+              <p>
+                {importReview === null
+                  ? "The original bytes are preserved while the local service extracts reviewable text."
+                  : "Review the source identity, warnings, and preview above before approving analysis."}
+              </p>
             </div>
           </section>
         ) : chapters.length === 0 ? (
@@ -859,6 +1062,275 @@ function StoryWorkspace({
         />
       </aside>
     </div>
+  );
+}
+
+function ImportReviewPanel({
+  project,
+  review,
+  rationale,
+  connected,
+  busyAction,
+  onRationale,
+  onDecision
+}: {
+  readonly project: ProjectDetail;
+  readonly review: ImportReview | null;
+  readonly rationale: string;
+  readonly connected: boolean;
+  readonly busyAction: string | null;
+  readonly onRationale: (value: string) => void;
+  readonly onDecision: (decision: ImportReviewDecision) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const extraction =
+    review === null
+      ? latestDocumentExtraction(project.extractions)
+      : (project.extractions.find(
+          (item) => item.extractionId === review.extractionId
+        ) ?? null);
+  if (extraction === null) {
+    return null;
+  }
+  const source = project.sourceDocuments.find(
+    (item) => item.documentId === extraction.sourceDocumentId
+  );
+  const warnings = review?.warnings ?? extraction.warnings;
+  const decisionBusy = busyAction?.startsWith("review-") === true;
+  const decisionBaseAvailable =
+    review !== null &&
+    review.state === "pending" &&
+    connected &&
+    !decisionBusy;
+  const responseDecisionAvailable =
+    decisionBaseAvailable && rationale.trim().length > 0;
+
+  if (!expanded) {
+    return (
+      <section className="import-review-card compact">
+        <header>
+          <div>
+            <span className="eyebrow">Import review</span>
+            <h2>{source?.displayName ?? "Selected document"}</h2>
+          </div>
+          <div className="review-header-actions">
+            <span
+              className={`review-state state-${review?.state ?? extraction.status}`}
+            >
+              {sentenceCase(review?.state ?? extraction.status)}
+            </span>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setExpanded(true)}
+            >
+              Review import
+            </button>
+          </div>
+        </header>
+      </section>
+    );
+  }
+
+  return (
+    <section className="import-review-card" aria-labelledby="import-review-title">
+      <header>
+        <div>
+          <span className="eyebrow">Import review</span>
+          <h2 id="import-review-title">
+            {source?.displayName ?? "Selected document"}
+          </h2>
+        </div>
+        <div className="review-header-actions">
+          <span
+            className={`review-state state-${review?.state ?? extraction.status}`}
+          >
+            {sentenceCase(review?.state ?? extraction.status)}
+          </span>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setExpanded(false)}
+          >
+            Return to project
+          </button>
+        </div>
+      </header>
+
+      <dl className="import-evidence">
+        <div>
+          <dt>Declared format</dt>
+          <dd>{extraction.declaredFormat.toUpperCase()}</dd>
+        </div>
+        <div>
+          <dt>Detected format</dt>
+          <dd>{extraction.detectedFormat.toUpperCase()}</dd>
+        </div>
+        <div>
+          <dt>Media type</dt>
+          <dd>{extraction.mediaType}</dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd>{formatBytes(extraction.sourceByteCount)}</dd>
+        </div>
+        <div>
+          <dt>Preservation</dt>
+          <dd>
+            {source?.originalTextPreserved === true &&
+            extraction.originalPreserved
+              ? "Exact original bytes preserved"
+              : "Not yet verified"}
+          </dd>
+        </div>
+        <div>
+          <dt>Extractor</dt>
+          <dd>
+            {extraction.adapterId} {extraction.adapterVersion}
+          </dd>
+        </div>
+        <div>
+          <dt>Extracted title</dt>
+          <dd>{extraction.extractedTitle ?? "Not detected"}</dd>
+        </div>
+        <div>
+          <dt>Extraction status</dt>
+          <dd>{sentenceCase(extraction.status)}</dd>
+        </div>
+        <div>
+          <dt>Characters</dt>
+          <dd>{extraction.extractedCharacterCount ?? "Pending"}</dd>
+        </div>
+        <div>
+          <dt>Sections</dt>
+          <dd>{extraction.sectionCount ?? "Pending"}</dd>
+        </div>
+        <div>
+          <dt>PDF pages</dt>
+          <dd>{extraction.pageCount ?? "Not applicable"}</dd>
+        </div>
+        <div>
+          <dt>Intervention required</dt>
+          <dd>{extraction.reviewRequired ? "Yes" : "No"}</dd>
+        </div>
+        <div>
+          <dt>Analysis may continue</dt>
+          <dd>{project.analysisAllowed ? "Yes" : "No"}</dd>
+        </div>
+        <div className="digest-evidence">
+          <dt>Source SHA-256</dt>
+          <dd>
+            <code>{extraction.sourceSha256}</code>
+          </dd>
+        </div>
+        <div className="digest-evidence">
+          <dt>Extracted text SHA-256</dt>
+          <dd>
+            <code>{extraction.extractedTextSha256 ?? "Pending"}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>Parser</dt>
+          <dd>
+            {extraction.parserDependency} {extraction.parserVersion}
+          </dd>
+        </div>
+        <div>
+          <dt>Quality</dt>
+          <dd>
+            {sentenceCase(extraction.quality.classification)} /{" "}
+            {Math.round(extraction.quality.confidence * 100)}%
+          </dd>
+        </div>
+      </dl>
+
+      {warnings.length > 0 ? (
+        <div className="import-warnings" role="status">
+          <strong>Extraction warnings</strong>
+          <ul>
+            {warnings.map((warning, index) => (
+              <li key={`${warning.code}-${index}`}>
+                {warning.code}: {warning.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="import-warnings empty" role="status">
+          No extraction warnings
+        </div>
+      )}
+
+      {review !== null && (
+        <>
+          <div className="import-preview">
+            <div>
+              <strong>Extracted text preview</strong>
+              <span>
+                Revision {review.candidateStoryRevision}
+                {review.previewTruncated ? " / preview truncated" : ""}
+              </span>
+            </div>
+            <pre>{review.previewText || "No displayable text was extracted."}</pre>
+          </div>
+
+          <div className="review-fingerprint">
+            Evidence fingerprint <code>{review.evidenceFingerprint}</code>
+          </div>
+
+          {review.state === "pending" ? (
+            <div className="review-actions">
+              <label htmlFor={`import-review-rationale-${review.reviewId}`}>
+                Review rationale (optional for approval)
+                <textarea
+                  id={`import-review-rationale-${review.reviewId}`}
+                  value={rationale}
+                  onChange={(event) => onRationale(event.target.value)}
+                  maxLength={2_000}
+                  disabled={!connected || decisionBusy}
+                />
+              </label>
+              <div>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!decisionBaseAvailable}
+                  onClick={() => onDecision("approved")}
+                >
+                  {busyAction === "review-approved"
+                    ? "Approving..."
+                    : "Approve import"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!responseDecisionAvailable}
+                  onClick={() => onDecision("changes_requested")}
+                >
+                  Request changes
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={!responseDecisionAvailable}
+                  onClick={() => onDecision("rejected")}
+                >
+                  Reject import
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="review-decision-summary">
+              Effective decision: {sentenceCase(review.state)}
+              {review.latestDecision === undefined ||
+              review.latestDecision.rationale.length === 0
+                ? "."
+                : ` - ${review.latestDecision.rationale}`}
+            </p>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -1171,12 +1643,12 @@ function JobsInspector({
       <header>
         <div>
           <span className="eyebrow">Background work</span>
-          <h2>Analysis jobs</h2>
+          <h2>Document and analysis jobs</h2>
         </div>
         <span>{jobs.length}</span>
       </header>
       {ordered.length === 0 ? (
-        <p className="quiet">No analysis jobs yet.</p>
+        <p className="quiet">No background jobs yet.</p>
       ) : (
         <div className="jobs-list" aria-live="polite">
           {ordered.map((job) => (
@@ -1472,6 +1944,42 @@ function LoadingWorkspace() {
       <p>Opening project...</p>
     </section>
   );
+}
+
+function latestImportReview(
+  reviews: ProjectDetail["importReviews"]
+): ImportReview | null {
+  return (
+    [...reviews].sort((left, right) => {
+      const byUpdatedAt = right.updatedAt.localeCompare(left.updatedAt);
+      return byUpdatedAt === 0
+        ? right.revision - left.revision
+        : byUpdatedAt;
+    })[0] ?? null
+  );
+}
+
+function latestDocumentExtraction(
+  extractions: ProjectDetail["extractions"]
+): ProjectDetail["extractions"][number] | null {
+  return (
+    [...extractions].sort((left, right) => {
+      const byUpdatedAt = right.updatedAt.localeCompare(left.updatedAt);
+      return byUpdatedAt === 0
+        ? right.revision - left.revision
+        : byUpdatedAt;
+    })[0] ?? null
+  );
+}
+
+function formatBytes(value: number): string {
+  if (value < 1_024) {
+    return `${value} B`;
+  }
+  if (value < 1_024 * 1_024) {
+    return `${(value / 1_024).toFixed(1)} KiB`;
+  }
+  return `${(value / (1_024 * 1_024)).toFixed(1)} MiB`;
 }
 
 function dialogueForBeat(

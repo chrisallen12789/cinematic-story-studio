@@ -140,18 +140,36 @@ export type SourceMediaType =
   | "application/epub+zip"
   | "application/pdf";
 
+export type DocumentFormat =
+  | "txt"
+  | "markdown"
+  | "docx"
+  | "epub"
+  | "pdf";
+
 export interface SourceDocument extends VersionedEntity {
   readonly documentId: EntityId;
   readonly projectId: EntityId;
   readonly displayName: string;
   readonly mediaType: SourceMediaType;
+  readonly declaredFormat: DocumentFormat;
   readonly contentSha256: Sha256;
   readonly byteLength: number;
   readonly importedAt: IsoDateTime;
   readonly originalTextPreserved: true;
+  readonly originalBytesPreserved: true;
   readonly storageKey: string;
-  readonly extractionStatus: "pending" | "complete" | "partial" | "failed";
-  readonly pageCount?: number;
+  readonly extractionStatus:
+    | "pending"
+    | "running"
+    | "complete"
+    | "partial"
+    | "failed";
+  readonly sourceRevision: number;
+  readonly supersedesDocumentId?: EntityId;
+  readonly textSha256?: Sha256;
+  readonly encoding?: string;
+  readonly newlineStyle?: "none" | "mixed" | "crlf" | "lf" | "cr";
   readonly warnings: readonly ContractWarning[];
 }
 

@@ -1,6 +1,9 @@
 # Contributing
 
-Phase 0 changes must preserve the local-first trust boundaries, typed contracts, immutable source text, durable human corrections, reproducible build inputs, and the rule that Electron owns one authenticated loopback service process.
+Changes must preserve the local-first trust boundaries, typed contracts,
+immutable original sources and derived extraction revisions, durable human
+decisions/corrections, reproducible build inputs, and the rule that Electron
+owns one authenticated loopback service process.
 
 ## Before editing
 
@@ -50,7 +53,11 @@ The command runs with the repository as its working directory and passes every v
 2. Run the pinned PyInstaller spec in one-file mode by default, smoke-test `--help`, and stage `cinematic-story-service.exe` under `apps/desktop/build-resources/service`.
 3. Build the renderer, main, and preload code.
 4. Run electron-builder with `--dir`.
-5. Verify both the desktop executable and staged service exist under `apps/desktop/release/<version>/win-unpacked`.
+5. Verify the staged service at
+   `apps/desktop/build-resources/service/cinematic-story-service.exe`, the
+   desktop executable under `apps/desktop/release/<version>/win-unpacked`, and
+   the embedded service at
+   `apps/desktop/release/<version>/win-unpacked/resources/service/cinematic-story-service.exe`.
 
 For a diagnostic one-directory PyInstaller build, set `CSS_PYINSTALLER_MODE=onedir` only for that command. Both modes stage the same executable name and are ignored by Git.
 
@@ -61,8 +68,8 @@ The service keeps standard input/output for its bounded bootstrap record and rea
 Normal development uses `pnpm dev`; do not start another service beside the Electron-owned child. Run bounded backend tools through the prepared cross-platform interpreter:
 
 ```powershell
-pnpm service:python -- -m pytest apps/local-service/tests
-pnpm service:python -- -m ruff check apps/local-service
+pnpm service:python -m pytest apps/local-service/tests
+pnpm service:python -m ruff check apps/local-service
 ```
 
 The helper resolves `apps/local-service/.venv/Scripts/python.exe` on Windows and the corresponding `bin/python` on other development hosts, then spawns an argument array with `shell=false`. The application service itself is always bootstrapped by its owning Electron parent over inherited standard input. Never place a launch token in an environment variable, command-line argument, URL, committed `.env`, screenshot, issue, or log.
@@ -80,9 +87,17 @@ git status --short
 
 The repository scan checks prohibited paths, private-content markers, personal paths, common secret formats, databases, source documents, generated audio, dependency trees, and build/runtime output. It reports only file, line, and rule; matched values are never printed. `pnpm precommit` scans the exact staged blobs and runs a redacted `git diff --cached --check`.
 
-Only `.gitkeep` is tracked in `local-projects`, `local-models`, `local-cache`, and `local-renders`. Their other contents are ignored and must remain local. The only story fixture used by automated tests is `fixtures/synthetic-story/sample-story.md`.
+Only `.gitkeep` is tracked in `local-projects`, `local-models`, `local-cache`,
+and `local-renders`. Their other contents are ignored and must remain local.
+Automated ingest tests may use only the compact public synthetic fixture family
+under `fixtures/synthetic-story/`; binary DOCX, EPUB, and PDF fixtures are
+generated deterministically from that source and committed only as base64 text.
 
-CI repeats lint, type checks, tests, tracked-content scanning, Gitleaks history scanning with redaction, dependency review on supported pull requests, and the Windows unpackaged build. CI uploads a seven-day development artifact and never publishes a release.
+CI repeats lint, type checks, tests, development Electron E2E, the Windows
+build, exact-artifact packaged E2E, build-evidence validation, tracked-content
+scanning, Gitleaks history scanning with redaction, and dependency review on
+supported pull requests. CI uploads a seven-day development artifact and never
+publishes a release.
 
 ## Manual verification record
 
@@ -110,7 +125,10 @@ Use the sequence in `README.md` and the exact pass criteria in `docs/product/ver
 
 ## Rollback
 
-Phase 0 has no updater and does not support database downgrade. Roll back code and artifacts without mutating the current worktree or opening existing data with an older schema:
+The application has no updater and does not support an in-place database
+downgrade. Phase 1 retains a verified schema-v1 backup before migration. Roll
+back code and artifacts without mutating the current worktree or opening
+schema-v2 data with an older application:
 
 1. Close every Cinematic Story Studio window and confirm only the service process owned by that window has exited.
 2. Record `git status --short`; do not discard unrelated changes.

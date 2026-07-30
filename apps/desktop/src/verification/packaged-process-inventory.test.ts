@@ -341,7 +341,7 @@ describe("packaged process inventory", () => {
     );
   });
 
-  it("fails closed when an owned live identity loses its executable path", () => {
+  it("retains an owned identity through a partial exit observation", () => {
     const expected = ownedProcess({
       pid: 4100,
       parentPid: 5100,
@@ -349,10 +349,41 @@ describe("packaged process inventory", () => {
       executablePath: packaged.executablePath,
       kind: "app"
     });
+    const partialObservation = {
+      ...expected,
+      executablePath: null
+    };
+
+    expect(
+      adoptVerifiedProcessTree({
+        current: [partialObservation],
+        baseline: [],
+        owned: [expected],
+        rootPid: expected.pid,
+        packaged
+      })
+    ).toEqual([expected]);
+    expect(
+      remainingOwnedProcesses([partialObservation], [expected])
+    ).toEqual([expected]);
+  });
+
+  it("still rejects a different observed path for an owned PID", () => {
+    const expected = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const contradictoryObservation = {
+      ...expected,
+      executablePath: "C:\\Unrelated\\Cinematic Story Studio.exe"
+    };
 
     expect(() =>
       remainingOwnedProcesses(
-        [{ ...expected, executablePath: null }],
+        [contradictoryObservation],
         [expected]
       )
     ).toThrowError(
@@ -360,6 +391,42 @@ describe("packaged process inventory", () => {
         code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
       })
     );
+  });
+
+  it("retains a previously adopted process after shutdown re-parenting", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      creationDate: "2026-07-29T18:15:20.0000000Z",
+      kind: "app"
+    });
+    const service = ownedProcess({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:21.0000000Z",
+      kind: "service"
+    });
+    const reparentedService = {
+      ...service,
+      parentPid: 6100
+    };
+
+    const adopted = adoptVerifiedProcessTree({
+      current: [reparentedService],
+      baseline: [],
+      owned: [root, service],
+      rootPid: root.pid,
+      packaged
+    });
+
+    expect(adopted).toEqual([root, service]);
+    expect(
+      remainingOwnedProcesses([reparentedService], adopted)
+    ).toEqual([service]);
   });
 
   it("accepts only the verified application and embedded-service tree", () => {
@@ -398,6 +465,84 @@ describe("packaged process inventory", () => {
       { ...child, kind: "app" },
       { ...service, kind: "service" }
     ]);
+  });
+
+  it("adopts a transient service-image child only from an owned service", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const service = ownedProcess({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:21.0000000Z",
+      kind: "service"
+    });
+    const parserChild = processIdentity({
+      pid: 4102,
+      parentPid: service.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:22.0000000Z"
+    });
+
+    expect(
+      adoptVerifiedProcessTree({
+        current: [root, service, parserChild],
+        baseline: [],
+        owned: [root, service],
+        rootPid: root.pid,
+        packaged
+      })
+    ).toEqual([
+      root,
+      service,
+      { ...parserChild, kind: "service" }
+    ]);
+  });
+
+  it("rejects a later service-image child spawned outside the service tree", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const service = ownedProcess({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:21.0000000Z",
+      kind: "service"
+    });
+    const unrelatedService = processIdentity({
+      pid: 4102,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:22.0000000Z"
+    });
+
+    expect(() =>
+      adoptVerifiedProcessTree({
+        current: [root, service, unrelatedService],
+        baseline: [],
+        owned: [root, service],
+        rootPid: root.pid,
+        packaged
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
+      })
+    );
   });
 
   it("fails closed on an ancestry-linked child with an unavailable path", () => {
@@ -552,6 +697,66 @@ describe("packaged process inventory", () => {
         code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
       })
     );
+  });
+
+  it("fails closed on an exact-path orphan created through an unobserved intermediary", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      creationDate: "2026-07-29T18:15:20.0000000Z",
+      kind: "app"
+    });
+    const orphanedService = processIdentity({
+      pid: 4102,
+      parentPid: 4101,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:22.0000000Z"
+    });
+
+    expect(() =>
+      adoptVerifiedProcessTree({
+        current: [orphanedService],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
+      })
+    );
+  });
+
+  it("does not adopt an older exact-path identity outside the launch window", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      creationDate: "2026-07-29T18:15:20.0000000Z",
+      kind: "app"
+    });
+    const olderUnrelated = processIdentity({
+      pid: 3900,
+      parentPid: 1,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:14:59.0000000Z"
+    });
+
+    expect(
+      adoptVerifiedProcessTree({
+        current: [olderUnrelated, root],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged
+      })
+    ).toEqual([root]);
   });
 
   it("fails closed when a parent PID is reused before a candidate appears", () => {

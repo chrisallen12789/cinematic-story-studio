@@ -10,7 +10,7 @@ Protect unpublished manuscripts, credentials, generated audio, project decisions
 | --- | --- |
 | Web content or malicious renderer calls local service (CSRF/DNS rebinding/local process) | Bind IPv4 loopback only; random OS port; per-launch 256-bit bearer token delivered by inherited pipe; authenticate every API route; no CORS; validate `Host`; token retained only in Electron main. |
 | Renderer compromise reaches OS | Sandbox and context isolation; no Node integration; restrictive CSP/navigation; allow-listed validated preload IPC; main owns files, credentials, and HTTP. |
-| Malicious TXT/DOCX/EPUB/PDF escapes staging or exhausts resources | Streamed size/type checks; strict decoding; canonical paths beneath fresh root; reject absolute/drive/`..`/links/devices; archive member/expanded-size/ratio/depth limits; parser time/memory isolation. |
+| Malicious TXT/DOCX/EPUB/PDF escapes staging or exhausts resources | Streamed size/type checks; strict decoding; canonical package paths; reject absolute/drive/`..`/links/devices; fixed source/archive/text/section/page budgets; parent-supervised spawned parser; 30-second hard wall-clock deadline; exact-owned-process cancellation; Windows Job Object kill-on-close and 768 MiB per-process memory ceiling. |
 | Filename/story/provider data becomes a command | Direct executable plus validated argument array, `shell=false`, private working directory, bounded environment/output/time, no user-controlled filter text. |
 | Secret/manuscript leaks through DB, logs, telemetry, crash reports, Git, or cloud | OS credential store; no secret columns; allow-listed redacted structured logs; no request bodies/source excerpts; telemetry off in Phase 0; ignore/scan private artifacts; explicit cloud disclosure/approval. |
 | Tampered provider/tool output corrupts project | Treat as untrusted; schema/size/decode/hash/QC validation; immutable staging; transactional/atomic publication; provenance. |
@@ -47,6 +47,7 @@ Cloud adapters default disabled. Before story text/audio/metadata leaves the mac
 - Native picker selection is streamed; the service never accepts a renderer-controlled arbitrary read path.
 - Application records verified relative paths under typed roots. Resolve/canonicalize before use and re-check after creating/opening; reject links/reparse points where they can cross roots.
 - Imports and provider/tool artifacts enter unique restrictive staging, are validated/hashes checked, and publish atomically.
+- The import boundary applies its separately named source-size ceiling, then document adapters apply the fixed `secure-ingest-v1` archive/text/section/page/deadline/process-memory profile. Each extraction runs in a spawned child with bounded typed IPC. On Windows, a named Job Object applies kill-on-close ownership and a 768 MiB per-process ceiling to the launcher and actual parser target. Adapters disable XML entity/network/DTD behavior, never execute document active content, and never fetch EPUB/PDF references. This is not a low-integrity process or an OS-enforced outbound-network sandbox. See the [document ingest threat model](../security/document-ingest-threat-model.md).
 - Downloads/models, if later supported, require explicit action, size/hash/signature/license metadata, safe staging, and cancellation. CI never downloads large models.
 - FFmpeg and local runtimes are invoked only through reviewed wrappers with safe arrays, resource bounds, sanitized output, and verified owned-process termination.
 - No inbound listener other than authenticated loopback. Outbound network is adapter-specific, policy-gated, TLS-validated, and destination allow-listed where practical.
@@ -66,7 +67,10 @@ SQLite secure delete/VACUUM and file removal cannot guarantee forensic erasure o
 ## Secure development and release
 
 - Public-repository ignores cover `.env`, databases, sources, audio, models, caches, logs, staging, dependencies, builds, installers, and prototype extraction.
-- CI runs lint/type/tests/build plus secret scanning; dependency review applies to external contributions and scheduled vulnerability scans.
+- CI runs lint/type/tests/build plus secret scanning. Pull requests run GitHub
+  dependency review with a moderate-severity failure threshold. The scheduled
+  security workflow scans repository policy and Git history for private
+  content/secrets; it is not a scheduled dependency-vulnerability audit.
 - Lock dependencies and justify additions. Generate an SBOM and preserve build provenance for distributable artifacts.
 - Production installers/executables require trusted code signing and signature verification before public distribution; signing secrets live only in protected CI.
 - Security tests cover auth/binding, renderer isolation/IPC validation, traversal/archive bombs, import limits, revision conflicts, safe subprocesses, redaction, credential persistence, project deletion, and corrupted artifacts/database recovery.

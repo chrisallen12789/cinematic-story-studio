@@ -31,8 +31,11 @@ Every route below is rooted at `/api/v1` and authenticated. Writes use a transac
 | `GET /capabilities/ffmpeg` | Managed FFmpeg availability, compatible version, and required features. |
 | `GET /projects` | Paginated project summaries with deterministic sort and opaque cursor. |
 | `POST /projects` | Create one durable project from a validated name. |
-| `GET /projects/{projectId}` | Load the project detail projection used by Phase 0 UI. |
-| `POST /projects/{projectId}/imports` | Stream and validate a multipart source, then atomically publish it. |
+| `GET /projects/{projectId}` | Load the project detail projection, including current extraction and Import Review state. |
+| `POST /projects/{projectId}/imports` | Stream and validate a multipart TXT/Markdown/DOCX/EPUB/PDF source, preserve immutable bytes, and create extraction work. |
+| `GET /projects/{projectId}/imports/{reviewId}/review` | Read one bounded extraction preview, its warnings/revision, state, and latest decision. |
+| `POST /projects/{projectId}/imports/{reviewId}/review/decision` | Append an idempotent local-human decision for the exact source/extraction revision. |
+| `POST /projects/{projectId}/imports/{sourceDocumentId}/reextract` | Append extraction work for an existing immutable source. |
 | `PUT /projects/{projectId}/dialogue-lines/{lineId}/speaker` | Save a human correction using `expectedRevision`. |
 | `POST /projects/{projectId}/jobs` | Persist a typed job; `analyze_story` is required in Phase 0. |
 | `GET /jobs/{jobId}` | Read durable job state and current attempt. |
@@ -81,7 +84,7 @@ Use `400` invalid input, `401` failed launch authentication, `404` absent/inacce
 
 ## Import boundary
 
-Multipart uploads are streamed to a newly created project-scoped staging directory with restrictive permissions. Phase 0 defaults to a documented 100 MiB hard limit for TXT/Markdown; tests use a lower injected limit. Detection considers extension, declared type, magic/signature where applicable, and decoder result rather than trusting any one value.
+Uploads are streamed to a newly created project-scoped staging directory with restrictive permissions. The service has a 100 MiB source ceiling. Detection considers extension, declared type, magic/signature/package structure, and decoder result rather than trusting any one value. The desktop's current byte-transfer bridge enforces a separate 8 MiB client cap and reports it distinctly.
 
 TXT/Markdown import:
 
@@ -89,9 +92,20 @@ TXT/Markdown import:
 - detects BOM/encoding from a small allow-list;
 - decodes strictly and records encoding/newline metadata;
 - stores exact decoded characters with no newline or Unicode normalization;
-- uses UTF-8 byte offsets in all cross-language source spans.
+- records Phase 1 extraction sections/mappings as half-open Unicode-code-point
+  offsets; downstream Phase 0 story/analysis entities retain their existing
+  half-open UTF-8 byte-span contract, and typed boundaries do not conflate the
+  two units.
 
-Future DOCX/EPUB/PDF import runs behind format-specific extractors with archive member-count, expanded-size, compression-ratio, recursion, timeout, and memory limits. Each archive path is canonicalized beneath a fresh staging root; links, devices, absolute paths, drive prefixes, `..`, active content, embedded executables, and unexpected encrypted members are rejected or quarantined according to the importer contract.
+Phase 1 DOCX/EPUB/PDF import runs behind format-specific extractors with the
+fixed `secure-ingest-v1` profile: 2,048 archive members, 512 Unicode code points
+per member name, 32 MiB per member, 200 MiB total expansion, 100:1 compression
+ratio, path depth 20, 10,000,000 characters, 10,000 sections, 2,000 PDF pages,
+and a 30-second deadline. Archive
+paths are validated as relative package names; links, devices, absolute/drive
+paths, backslashes, `..`, active content, external fetches, and encrypted PDF
+are rejected or explicitly omitted. See
+[secure-document-ingest.md](secure-document-ingest.md).
 
 ## Internal ports
 

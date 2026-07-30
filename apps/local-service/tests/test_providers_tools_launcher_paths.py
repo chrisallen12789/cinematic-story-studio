@@ -7,10 +7,12 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -20,7 +22,7 @@ from cinematic_story_service.providers import ProviderRegistry
 from cinematic_story_service.tools import FfmpegCapabilityChecker, _run_bounded_process
 from cinematic_story_service.util import resolve_beneath, safe_display_filename
 
-from .conftest import TOKEN
+from .conftest import TOKEN, synthetic_fixture
 
 
 class _FakeResponse:
@@ -231,6 +233,144 @@ def test_launcher_bootstrap_ready_line_and_eof_shutdown(tmp_path: Path) -> None:
     assert isinstance(ready["port"], int) and ready["port"] > 0
     assert ready["instanceId"]
     assert TOKEN not in stdout
+    assert TOKEN not in stderr
+
+
+def test_launcher_trailing_control_data_shuts_down_with_stdin_open(tmp_path: Path) -> None:
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "cinematic_story_service.launcher",
+            "--data-dir",
+            str(tmp_path / "trailing-control-data"),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stderr = ""
+    try:
+        assert process.stdin is not None
+        assert process.stdout is not None
+        process.stdin.write(
+            json.dumps(
+                {
+                    "token": TOKEN,
+                    "nonce": "trailing-control-nonce",
+                    "protocolVersion": "1.0.0",
+                }
+            )
+            + "\n\x01"
+        )
+        process.stdin.flush()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            ready_line = pool.submit(process.stdout.readline).result(timeout=15)
+        assert ready_line.startswith("CSS_READY ")
+        process.wait(timeout=15)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
+        if process.stderr is not None:
+            stderr = process.stderr.read()
+            process.stderr.close()
+        if process.stdout is not None:
+            process.stdout.close()
+    assert process.returncode == 0, stderr
+    assert TOKEN not in stderr
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows spawn/control-pipe regression")
+def test_launcher_control_monitor_allows_spawned_docx_parser(tmp_path: Path) -> None:
+    nonce = "spawned-parser-nonce"
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "cinematic_story_service.launcher",
+            "--data-dir",
+            str(tmp_path / "spawned-parser-launcher-data"),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stderr = ""
+    terminal_job: dict[str, Any] | None = None
+    try:
+        assert process.stdin is not None
+        assert process.stdout is not None
+        process.stdin.write(
+            json.dumps(
+                {
+                    "token": TOKEN,
+                    "nonce": nonce,
+                    "protocolVersion": "1.0.0",
+                }
+            )
+            + "\n"
+        )
+        process.stdin.flush()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            ready_line = pool.submit(process.stdout.readline).result(timeout=15)
+        assert ready_line.startswith("CSS_READY ")
+        ready = json.loads(ready_line.removeprefix("CSS_READY "))
+        assert ready["nonce"] == nonce
+
+        filename, content, media_type = synthetic_fixture("docx")
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{ready['port']}",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            timeout=10,
+        ) as client:
+            project_response = client.post(
+                "/api/v1/projects",
+                headers={"Idempotency-Key": "spawned-parser-project"},
+                json={"name": "Spawned parser regression"},
+            )
+            assert project_response.status_code == 200, project_response.text
+            project_id = project_response.json()["project"]["projectId"]
+            import_response = client.post(
+                f"/api/v1/projects/{project_id}/imports",
+                headers={"Idempotency-Key": "spawned-parser-import"},
+                data={"declaredFormat": "docx"},
+                files={"file": (filename, content, media_type)},
+            )
+            assert import_response.status_code == 202, import_response.text
+            job_id = import_response.json()["job"]["jobId"]
+
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                terminal_job = client.get(f"/api/v1/jobs/{job_id}").json()["job"]
+                if terminal_job["state"] in {
+                    "succeeded",
+                    "failed",
+                    "cancelled",
+                    "interrupted",
+                }:
+                    break
+                time.sleep(0.05)
+        assert terminal_job is not None
+        assert terminal_job["state"] == "succeeded", terminal_job
+    finally:
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        if process.stderr is not None:
+            stderr = process.stderr.read()
+            process.stderr.close()
+        if process.stdout is not None:
+            process.stdout.close()
+    assert process.returncode == 0, stderr
     assert TOKEN not in stderr
 
 

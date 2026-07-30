@@ -900,12 +900,15 @@
             "projectId",
             "displayName",
             "mediaType",
+            "declaredFormat",
             "contentSha256",
             "byteLength",
             "importedAt",
             "originalTextPreserved",
+            "originalBytesPreserved",
             "storageKey",
             "extractionStatus",
+            "sourceRevision",
             "warnings"
           ],
           "properties": {
@@ -930,6 +933,9 @@
                 "application/pdf"
               ]
             },
+            "declaredFormat": {
+              "$ref": "#/$defs/DocumentFormat"
+            },
             "contentSha256": {
               "$ref": "#/$defs/Sha256"
             },
@@ -944,6 +950,10 @@
               "type": "boolean",
               "const": true
             },
+            "originalBytesPreserved": {
+              "type": "boolean",
+              "const": true
+            },
             "storageKey": {
               "type": "string",
               "minLength": 1,
@@ -954,14 +964,36 @@
               "type": "string",
               "enum": [
                 "pending",
+                "running",
                 "complete",
                 "partial",
                 "failed"
               ]
             },
-            "pageCount": {
+            "sourceRevision": {
               "type": "integer",
               "minimum": 1
+            },
+            "supersedesDocumentId": {
+              "$ref": "#/$defs/Id"
+            },
+            "textSha256": {
+              "$ref": "#/$defs/Sha256"
+            },
+            "encoding": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 24
+            },
+            "newlineStyle": {
+              "type": "string",
+              "enum": [
+                "none",
+                "mixed",
+                "crlf",
+                "lf",
+                "cr"
+              ]
             },
             "warnings": {
               "type": "array",
@@ -973,6 +1005,841 @@
         }
       ],
       "unevaluatedProperties": false
+    },
+    "DocumentFormat": {
+      "type": "string",
+      "enum": [
+        "txt",
+        "markdown",
+        "docx",
+        "epub",
+        "pdf"
+      ]
+    },
+    "SecureIngestBoundaryLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "sourceBytes",
+        "previewCodePoints"
+      ],
+      "properties": {
+        "sourceBytes": {
+          "type": "integer",
+          "const": 104857600,
+          "description": "Authenticated local-service source request ceiling enforced before parser execution."
+        },
+        "previewCodePoints": {
+          "type": "integer",
+          "const": 8000,
+          "description": "Maximum Import Review preview length; canonical extracted text is stored separately."
+        }
+      }
+    },
+    "ParserLimitsProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "profileId",
+        "ingestContractVersion",
+        "archiveMembers",
+        "archiveMemberNameCodePoints",
+        "archiveMemberBytes",
+        "archiveExpandedBytes",
+        "maximumCompressionRatio",
+        "archivePathDepth",
+        "canonicalTextCodePoints",
+        "extractedSections",
+        "pdfPages",
+        "parserDeadlineMs",
+        "parserProcessMemoryBytes"
+      ],
+      "properties": {
+        "profileId": {
+          "type": "string",
+          "const": "secure-ingest-v1"
+        },
+        "ingestContractVersion": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "archiveMembers": {
+          "type": "integer",
+          "const": 2048
+        },
+        "archiveMemberNameCodePoints": {
+          "type": "integer",
+          "const": 512,
+          "description": "Maximum Unicode-code-point length of a validated package-relative member name."
+        },
+        "archiveMemberBytes": {
+          "type": "integer",
+          "const": 33554432
+        },
+        "archiveExpandedBytes": {
+          "type": "integer",
+          "const": 209715200
+        },
+        "maximumCompressionRatio": {
+          "type": "number",
+          "const": 100
+        },
+        "archivePathDepth": {
+          "type": "integer",
+          "const": 20
+        },
+        "canonicalTextCodePoints": {
+          "type": "integer",
+          "const": 10000000
+        },
+        "extractedSections": {
+          "type": "integer",
+          "const": 10000
+        },
+        "pdfPages": {
+          "type": "integer",
+          "const": 2000
+        },
+        "parserDeadlineMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000,
+          "description": "Parent-enforced wall-clock deadline for one spawned parser attempt, including its ownership handshake."
+        },
+        "parserProcessMemoryBytes": {
+          "type": "integer",
+          "const": 805306368,
+          "description": "Windows Job Object per-process memory ceiling for the parser launcher and actual parser target."
+        }
+      }
+    },
+    "IngestProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "contractVersion",
+        "origin",
+        "actorId",
+        "recordedAt"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "import",
+            "human",
+            "system"
+          ]
+        },
+        "actorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "recordedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "inputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "sourceReferences": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/EntityReference"
+          }
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "DocumentProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "contractVersion",
+        "declaredFormat",
+        "detectedFormat",
+        "mediaType",
+        "sourceSha256",
+        "sourceByteCount"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "declaredFormat": {
+          "$ref": "#/$defs/DocumentFormat"
+        },
+        "detectedFormat": {
+          "$ref": "#/$defs/DocumentFormat"
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": [
+            "text/plain",
+            "text/markdown",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/epub+zip",
+            "application/pdf"
+          ]
+        },
+        "sourceSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "sourceByteCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 104857600
+        }
+      }
+    },
+    "SourceLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "kind",
+        "member",
+        "page",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "text",
+            "package_part",
+            "pdf_page"
+          ]
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\u0000-\\u001F\\u007F]+$",
+          "description": "A validated package-relative member name, never a user filesystem path."
+        },
+        "page": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "start": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 10000000,
+          "description": "Inclusive Unicode-code-point offset into canonical text."
+        },
+        "end": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 10000000,
+          "description": "Exclusive Unicode-code-point offset into canonical text."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "text"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "member": {
+                "const": null
+              },
+              "page": {
+                "const": null
+              },
+              "start": {
+                "type": "integer"
+              },
+              "end": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "package_part"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "member": {
+                "type": "string"
+              },
+              "page": {
+                "const": null
+              },
+              "start": {
+                "const": null
+              },
+              "end": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "pdf_page"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "member": {
+                "const": null
+              },
+              "page": {
+                "type": "integer"
+              },
+              "start": {
+                "const": null
+              },
+              "end": {
+                "const": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ExtractionWarning": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "requiresHumanReview"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,79}$"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Stable operator-safe text without manuscript excerpts, secrets, or absolute paths."
+        },
+        "requiresHumanReview": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ExtractedSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "ordinal",
+        "kind",
+        "title",
+        "start",
+        "end",
+        "location"
+      ],
+      "properties": {
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9999
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "document",
+            "chapter",
+            "heading",
+            "paragraph",
+            "list_item",
+            "table",
+            "footnote",
+            "endnote",
+            "page"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 255
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000,
+          "description": "Inclusive Unicode-code-point offset into canonicalText."
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000,
+          "description": "Exclusive Unicode-code-point offset into canonicalText."
+        },
+        "location": {
+          "$ref": "#/$defs/SourceLocation"
+        }
+      }
+    },
+    "ParserExecutionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "contractVersion",
+        "adapterId",
+        "adapterVersion",
+        "parserDependency",
+        "parserVersion",
+        "startedAt",
+        "completedAt",
+        "durationMs",
+        "retryability",
+        "networkAccessPermitted",
+        "status",
+        "limitsProfile",
+        "limitsFingerprint"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "adapterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "adapterVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "parserDependency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "parserVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "startedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Measured child-parser duration. The parent rejects a result whose duration exceeds the configured hard wall-clock deadline."
+        },
+        "retryability": {
+          "type": "string",
+          "enum": [
+            "retryable",
+            "not_retryable"
+          ]
+        },
+        "networkAccessPermitted": {
+          "type": "boolean",
+          "const": false
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial"
+          ]
+        },
+        "limitsProfile": {
+          "$ref": "#/$defs/ParserLimitsProfile"
+        },
+        "limitsFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "DocumentExtractionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "contractVersion",
+        "adapterId",
+        "adapterVersion",
+        "parserDependency",
+        "parserVersion",
+        "sourceSha256",
+        "sourceByteCount",
+        "declaredFormat",
+        "detectedFormat",
+        "mediaType",
+        "canonicalText",
+        "extractedTextSha256",
+        "sections",
+        "warnings",
+        "confidence",
+        "startedAt",
+        "completedAt",
+        "retryability",
+        "reviewRequired",
+        "provenance",
+        "pageCount",
+        "title",
+        "status",
+        "encoding",
+        "newlineStyle",
+        "manifest",
+        "parserExecution"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "adapterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "adapterVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "parserDependency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "parserVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "sourceSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "sourceByteCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 104857600
+        },
+        "declaredFormat": {
+          "$ref": "#/$defs/DocumentFormat"
+        },
+        "detectedFormat": {
+          "$ref": "#/$defs/DocumentFormat"
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": [
+            "text/plain",
+            "text/markdown",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/epub+zip",
+            "application/pdf"
+          ]
+        },
+        "canonicalText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000000
+        },
+        "extractedTextSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "sections": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/ExtractedSection"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/ExtractionWarning"
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "startedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "retryability": {
+          "type": "string",
+          "enum": [
+            "retryable",
+            "not_retryable"
+          ]
+        },
+        "reviewRequired": {
+          "type": "boolean",
+          "const": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/IngestProvenance"
+        },
+        "pageCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 255
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial"
+          ]
+        },
+        "encoding": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 24
+        },
+        "newlineStyle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "none",
+            "mixed",
+            "crlf",
+            "lf",
+            "cr",
+            null
+          ]
+        },
+        "manifest": {
+          "$ref": "#/$defs/ImportManifest"
+        },
+        "parserExecution": {
+          "$ref": "#/$defs/ParserExecutionRecord"
+        }
+      }
+    },
+    "ImportManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "contractVersion",
+        "originalPreserved",
+        "sourceSha256",
+        "sourceByteCount",
+        "declaredFormat",
+        "detectedFormat",
+        "mediaType",
+        "extractedTextSha256",
+        "extractedCharacterCount",
+        "sectionCount",
+        "pageCount"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "originalPreserved": {
+          "type": "boolean",
+          "const": true
+        },
+        "sourceSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "sourceByteCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 104857600
+        },
+        "declaredFormat": {
+          "$ref": "#/$defs/DocumentFormat"
+        },
+        "detectedFormat": {
+          "$ref": "#/$defs/DocumentFormat"
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": [
+            "text/plain",
+            "text/markdown",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/epub+zip",
+            "application/pdf"
+          ]
+        },
+        "extractedTextSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "extractedCharacterCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "sectionCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "pageCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 2000
+        }
+      }
+    },
+    "IngestImportReviewDecisionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": [
+        "contractVersion",
+        "decisionId",
+        "projectId",
+        "sourceDocumentId",
+        "extractionRevision",
+        "decision",
+        "actorClassification",
+        "decidedAt",
+        "warningAcknowledgements",
+        "reason",
+        "provenance"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "decisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "sourceDocumentId": {
+          "$ref": "#/$defs/Id"
+        },
+        "extractionRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "changes_requested",
+            "rejected"
+          ]
+        },
+        "actorClassification": {
+          "type": "string",
+          "const": "human"
+        },
+        "decidedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "warningAcknowledgements": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{2,79}$"
+          },
+          "uniqueItems": true
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "provenance": {
+          "$ref": "#/$defs/IngestProvenance"
+        }
+      }
     },
     "Chapter": {
       "allOf": [

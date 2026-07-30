@@ -15,14 +15,14 @@ All IDs are opaque strings. Timestamps are UTC RFC 3339. API errors use the docu
 | VS-001 | Launch the unpackaged desktop with no service running. | Exactly one owned service process starts without a visible shell; it binds an OS-assigned `127.0.0.1` port, authenticated health reaches `ready`, and the UI shows `Backend ready`. | Playwright/manual Windows |
 | VS-002 | Call an authenticated service route without a token and with a wrong token. | Both return `401`; no project data is returned; the correct per-launch/dev token succeeds. A non-loopback bind configuration is rejected at startup. | Pytest integration |
 | VS-003 | Start with an empty database and create project `Synthetic Demo` twice using one idempotency key. | Both successful responses have the same project ID; only one project row exists; name is `Synthetic Demo`, revision is at least `1`, and status is `empty`. | Pytest/API |
-| VS-004 | Import the canonical fixture into that project twice with one import idempotency key. | One immutable source/story revision is created; stored bytes hash equals the file SHA-256; returned format is `markdown`; extracted text is character-for-character equal; no absolute source path is persisted. | Pytest/API |
+| VS-004 | Import the canonical fixture into that project twice with one import idempotency key and wait for its Phase 1 extraction job. | One immutable source/extraction/story revision is created; stored bytes hash equals the file SHA-256; detected format is `markdown`; extracted text is character-for-character equal; no absolute source path is persisted. | Pytest/API |
 | VS-005 | Submit an executable, oversized file, unsupported extension, and malformed text. | Each is rejected with `400` or `413` and a stable error code; no source/story revision or staging file remains; the service remains healthy. | Pytest/security |
-| VS-006 | Run `analyze_story` for the imported revision. | The terminal job state is `succeeded`; project detail contains at least one chapter, one scene, narration, two dialogue lines in source order, and two characters; every derived object has source/provenance and revision data. | Pytest/integration |
+| VS-006 | Approve the current Import Review, then run `analyze_story` for that extraction revision. | Analysis is blocked before approval. After approval, the terminal job state is `succeeded`; project detail contains at least one chapter, one scene, narration, two dialogue lines in source order, and two characters; every derived object has source/provenance and revision data. | Pytest/integration |
 | VS-007 | Open the analyzed project in the UI. | Chapter and scene navigation is keyboard operable; selecting the first scene displays its narration/dialogue in source order and the detected character list; loading and empty states are not shown as success. | Vitest/Playwright |
 | VS-008 | Inspect each automated dialogue attribution. | It exposes `characterId` or `null`, confidence in `[0,1]`, warnings, method/agent version, and source span. An unresolved case is displayed as uncertain, never coerced to a character. | Contract/component |
 | VS-009 | Correct one dialogue line to the other fixture character with its current revision and reason `fixture correction`. | API returns the selected character and `source=human`; a provenance event stores prior/new IDs, reason, actor, timestamp, and revision; project and line revisions advance exactly once. | Pytest/API |
 | VS-010 | Repeat VS-009 with the stale pre-correction revision. | Response is `409 REVISION_CONFLICT` and includes current revision; the saved character and provenance are unchanged. | Pytest/API |
-| VS-011 | Fully stop desktop/service and reopen the same data directory/project. | The imported hash, chapter/scene structure, human-corrected speaker, correction reason/provenance, and project revision match the pre-restart values. | Playwright/integration |
+| VS-011 | Fully stop desktop/service and reopen the same data directory/project. | The imported hash, extraction and Import Review revisions, approval, chapter/scene structure, human-corrected speaker, correction reason/provenance, and project revision match the pre-restart values. | Playwright/integration |
 | VS-012 | Create an analysis job while its test worker is held before execution. | Creation returns state `queued`; release moves it through `running` to `succeeded`; events have strictly increasing sequence numbers; progress is bounded `[0,1]`, never decreases within the attempt, and ends at `1`. | Pytest/API/UI |
 | VS-013 | Hold a running job at a cancellation point and request cancel twice. | Both requests are safe; state becomes `cancel_requested`, then `cancelled`; no result is published, temporary output is removed, and the worker can execute a later job. | Pytest/integration |
 | VS-014 | Cause a deterministic test failure, then retry. | First attempt is `failed` with a redacted stable error; retry increments `attempt` by one, preserves attempt-one events/error, and can reach `succeeded` without a duplicate job row/result. | Pytest/integration |
@@ -38,9 +38,31 @@ All IDs are opaque strings. Timestamps are UTC RFC 3339. API errors use the docu
 | VS-024 | Build the desktop and local service in development configuration. | Root build exits `0`, creates the expected renderer/main artifacts and bundled-service staging artifact, and a smoke test can start the artifact on Windows. This does not assert a signed installer. | CI Windows |
 | VS-025 | Inspect all tracked/staged files and produced test artifacts. | No private manuscript, credential, `.env` value, project database, generated audio, model, cache, personal path, or extracted prototype temp directory is tracked. Secret scan exits `0`. | CI/review |
 
-## Concrete Phase 0 service contract
+## Phase 1 secure-ingest extension
 
-All routes are under `/api/v1`, require `Authorization: Bearer <launch-token>`, accept/return JSON unless the import is multipart, and return a correlation ID. Required routes:
+The Phase 0 cases remain regression gates. Phase 1 also uses the deterministic
+TXT, DOCX, EPUB, and PDF files generated from
+`fixtures/synthetic-story/sample-story.txt`; only their base64 encodings are
+committed for binary formats. No test may depend on a private manuscript,
+network fetch, cloud credential, downloaded model, or OCR engine.
+
+| ID | Setup and action | Exact pass criteria | Primary level |
+| --- | --- | --- | --- |
+| VS-101 | Import each valid Phase 1 fixture twice with the same idempotency key. | Format detection, immutable source hash, extraction revision/hash, ordered sections/mappings, parser record, and warnings are stable; replay creates no duplicate source, extraction, review, or job. | Pytest/API |
+| VS-102 | Import DOCX/EPUB packages containing traversal, links, excessive members, a member name above 512 Unicode code points, a member above 32 MiB, expansion above 200 MiB, ratio above 100:1, depth above 20, malformed XML, script, or remote references. | Unsafe packages fail with typed redacted errors or omit passive content with an explicit warning; no path escapes staging, script executes, shell starts, or remote request occurs. | Pytest/security |
+| VS-103 | Import an encrypted, image-only, malformed, truncated, or 2,001-page PDF. | The service reports the applicable typed failure or OCR-required state, publishes no analyzable story, and remains healthy. A valid text PDF preserves page-aware source mappings. | Pytest/security |
+| VS-104 | Cross the fixed source, extracted-character, section, page, archive, and 30-second deadline boundaries by one unit. | The exact limit passes when semantically valid; one unit above fails closed without a partial extraction, review, or analyzable story. A post-publication parser failure may retain its immutable source and redacted attempt evidence. The 8,000-character preview truncates only the review projection, never canonical text. | Pytest/boundary |
+| VS-105 | Complete extraction and attempt analysis before approval, then approve using a stale and current extraction revision. | Pending/stale calls fail closed; one local-human approval for the current revision succeeds idempotently and unlocks only that extraction. Changed-byte reimport or explicit re-extraction invalidates the effective gate without rewriting history. | Pytest/API |
+| VS-106 | Migrate a representative schema-v1 database and inject backup/migration failures. | A verified `*.v1-backup.sqlite3` recovery copy exists before mutation; schema v2 preserves Phase 0 projects, source/story bytes and hashes, jobs, corrections, and synthesized pending import-review history; failure leaves the original usable or fails read-only with a recovery code. | Pytest/migration |
+| VS-107 | Build on GitHub Windows and run the committed packaged persistence test against the exact unpacked executable. | The synthetic DOCX is imported, reviewed, approved, analyzed, corrected, closed, reopened, and restored; source/extraction/approval/analysis/correction persist; owned Electron/service PIDs are identified by ancestry and creation identity and are gone after both shutdowns. | Playwright/CI Windows |
+| VS-108 | Generate build evidence after the exact CI build. | Schema-v2 manifest records tested SHA, runner/time, app/staged/embedded hashes, parser pins, exact canonical parser-profile fingerprint, separately named source/preview boundary limits, DOCX fixture hash, packaged Import Review result, and owned-process exit proof; staged and embedded services match. | Tooling/CI Windows |
+
+## Concrete service contract
+
+All routes are under `/api/v1`, require `Authorization: Bearer <launch-token>`,
+accept/return JSON unless the import is multipart, and return a correlation ID.
+Phase 1 preserves the Phase 0 routes and makes import extraction asynchronous.
+Required routes:
 
 | Method and route | Minimum typed behavior |
 | --- | --- |
@@ -50,7 +72,10 @@ All routes are under `/api/v1`, require `Authorization: Bearer <launch-token>`, 
 | `GET /projects` | Returns paginated project summaries in stable updated/name/ID order. |
 | `POST /projects` | Accepts `{name}` and idempotency key; returns the durable project. |
 | `GET /projects/{projectId}` | Returns a `ProjectDetail` with source/story revision, chapters/scenes/lines/characters, casting placeholders, approvals, and relevant jobs. |
-| `POST /projects/{projectId}/imports` | Streams multipart `file` plus optional declared format; validates before transactional publication and returns immutable source/story metadata. |
+| `POST /projects/{projectId}/imports` | Streams multipart `file` plus optional declared format; preserves the immutable source and returns source, pending extraction, and persisted extraction-job metadata. |
+| `GET /projects/{projectId}/imports/{reviewId}/review` | Returns the bounded current Import Review projection, state, warnings, and latest decision. |
+| `POST /projects/{projectId}/imports/{reviewId}/review/decision` | Appends an idempotent local-human decision for the exact review revision and evidence fingerprint. |
+| `POST /projects/{projectId}/imports/{sourceDocumentId}/reextract` | Appends a pending extraction revision and persisted job for an existing immutable source. |
 | `PUT /projects/{projectId}/dialogue-lines/{lineId}/speaker` | Accepts `{characterId, reason?, expectedRevision}` and returns corrected attribution plus provenance/revisions. |
 | `POST /projects/{projectId}/jobs` | Accepts `{type, inputRevision, idempotencyKey}`; returns a persisted job (`analyze_story` required). |
 | `GET /jobs/{jobId}` | Returns current state, attempt, stage/progress, checkpoint availability, timestamps, warnings, and redacted error. |

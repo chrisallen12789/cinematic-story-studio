@@ -42,21 +42,106 @@ class SourceDocumentRow(Base):
     media_type: Mapped[str] = mapped_column(String(80))
     declared_format: Mapped[str] = mapped_column(String(16))
     content_sha256: Mapped[str] = mapped_column(String(64))
-    text_sha256: Mapped[str] = mapped_column(String(64))
+    text_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     byte_length: Mapped[int] = mapped_column(Integer)
-    encoding: Mapped[str] = mapped_column(String(24))
-    newline_style: Mapped[str] = mapped_column(String(24))
+    encoding: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    newline_style: Mapped[str | None] = mapped_column(String(24), nullable=True)
     storage_key: Mapped[str] = mapped_column(String(512))
     imported_at: Mapped[str] = mapped_column(String(32))
     revision: Mapped[int] = mapped_column(Integer, default=1)
+    source_revision: Mapped[int] = mapped_column(Integer, default=1)
+    supersedes_document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT"), nullable=True
+    )
+    extraction_status: Mapped[str] = mapped_column(String(24), default="complete")
     provenance_json: Mapped[str] = mapped_column(Text)
     warnings_json: Mapped[str] = mapped_column(Text, default="[]")
 
     __table_args__ = (
-        UniqueConstraint("project_id", "content_sha256", name="uq_source_project_hash"),
+        UniqueConstraint(
+            "project_id",
+            "source_revision",
+            name="uq_source_project_source_revision",
+        ),
         CheckConstraint("byte_length >= 0", name="ck_source_byte_length"),
         CheckConstraint("revision >= 1", name="ck_source_revision"),
+        CheckConstraint("source_revision >= 1", name="ck_source_logical_revision"),
+        CheckConstraint(
+            "extraction_status IN ('pending', 'running', 'complete', 'partial', 'failed')",
+            name="ck_source_extraction_status",
+        ),
         Index("ix_source_project_imported", "project_id", "imported_at", "id"),
+        Index("ix_source_project_hash", "project_id", "content_sha256"),
+    )
+
+
+class DocumentExtractionRow(Base):
+    """One immutable extraction result for a source revision.
+
+    A source can be re-extracted by appending a higher extraction revision. Terminal
+    records are never overwritten; lifecycle progress belongs to the job and parser
+    execution records.
+    """
+
+    __tablename__ = "document_extractions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    source_document_id: Mapped[str] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT"), index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    supersedes_extraction_id: Mapped[str | None] = mapped_column(
+        ForeignKey("document_extractions.id", ondelete="RESTRICT"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(24))
+    format: Mapped[str] = mapped_column(String(16))
+    extractor_name: Mapped[str] = mapped_column(String(80))
+    extractor_version: Mapped[str] = mapped_column(String(40))
+    input_sha256: Mapped[str] = mapped_column(String(64))
+    text_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    character_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    encoding: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    newline_style: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    exact_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    manifest_json: Mapped[str] = mapped_column(Text)
+    sections_json: Mapped[str] = mapped_column(Text, default="[]")
+    source_mappings_json: Mapped[str] = mapped_column(Text, default="[]")
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64))
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[str] = mapped_column(String(32))
+    updated_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_document_id",
+            "revision",
+            name="uq_extraction_source_revision",
+        ),
+        CheckConstraint("revision >= 1", name="ck_extraction_revision"),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'complete', 'partial', 'failed')",
+            name="ck_extraction_status",
+        ),
+        CheckConstraint(
+            "character_count IS NULL OR character_count >= 0",
+            name="ck_extraction_character_count",
+        ),
+        CheckConstraint(
+            "page_count IS NULL OR page_count >= 0",
+            name="ck_extraction_page_count",
+        ),
+        Index(
+            "ix_extraction_project_source_created",
+            "project_id",
+            "source_document_id",
+            "created_at",
+            "id",
+        ),
     )
 
 
@@ -68,8 +153,12 @@ class ImportedStoryRow(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     source_document_id: Mapped[str] = mapped_column(
-        ForeignKey("source_documents.id", ondelete="RESTRICT"), unique=True
+        ForeignKey("source_documents.id", ondelete="RESTRICT"), index=True
     )
+    extraction_id: Mapped[str] = mapped_column(
+        ForeignKey("document_extractions.id", ondelete="RESTRICT"), unique=True
+    )
+    extraction_revision: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(255))
     exact_text: Mapped[str] = mapped_column(Text)
     content_fingerprint: Mapped[str] = mapped_column(String(64))
@@ -80,6 +169,7 @@ class ImportedStoryRow(Base):
 
     __table_args__ = (
         CheckConstraint("revision >= 1", name="ck_story_revision"),
+        CheckConstraint("extraction_revision >= 1", name="ck_story_extraction_revision"),
         Index("ix_story_project_imported", "project_id", "imported_at", "id"),
     )
 
@@ -280,6 +370,64 @@ class HumanCorrectionRow(Base):
     )
 
 
+class ImportReviewRow(Base):
+    """Append-only snapshot in the Import Review decision history."""
+
+    __tablename__ = "import_reviews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    review_id: Mapped[str] = mapped_column(String(36), index=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    source_document_id: Mapped[str] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT"), index=True
+    )
+    extraction_id: Mapped[str] = mapped_column(
+        ForeignKey("document_extractions.id", ondelete="RESTRICT"), index=True
+    )
+    candidate_story_id: Mapped[str] = mapped_column(String(36))
+    revision: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(24))
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64))
+    preview_text: Mapped[str] = mapped_column(Text)
+    preview_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    warning_acknowledgements_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    decision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    decision_rationale: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    actor_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    decided_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    supersedes_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("import_reviews.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint("review_id", "revision", name="uq_import_review_revision"),
+        UniqueConstraint(
+            "review_id",
+            "idempotency_key",
+            name="uq_import_review_idempotency",
+        ),
+        CheckConstraint("revision >= 1", name="ck_import_review_revision"),
+        CheckConstraint(
+            "state IN ('pending', 'approved', 'changes_requested', 'rejected', 'invalidated')",
+            name="ck_import_review_state",
+        ),
+        Index(
+            "ix_import_review_project_created",
+            "project_id",
+            "created_at",
+            "review_id",
+            "revision",
+        ),
+    )
+
+
 class IdempotencyRow(Base):
     __tablename__ = "idempotency_records"
 
@@ -301,6 +449,9 @@ class JobRow(Base):
     state: Mapped[str] = mapped_column(String(24))
     input_revision: Mapped[int] = mapped_column(Integer)
     input_fingerprint: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str] = mapped_column(String(40), default="story")
+    target_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
     current_attempt: Mapped[int] = mapped_column(Integer, default=1)
     stage: Mapped[str] = mapped_column(String(80))
     progress: Mapped[int] = mapped_column(Integer, default=0)
@@ -321,6 +472,7 @@ class JobRow(Base):
         CheckConstraint("progress >= 0 AND progress <= 1000000", name="ck_job_progress"),
         Index("ix_job_project_created", "project_id", "created_at", "id"),
         Index("ix_job_queue", "state", "created_at", "id"),
+        Index("ix_job_target", "target_type", "target_id", "created_at", "id"),
     )
 
 
@@ -388,4 +540,55 @@ class JobCheckpointRow(Base):
         CheckConstraint("attempt >= 1", name="ck_checkpoint_attempt"),
         CheckConstraint("sequence >= 1", name="ck_checkpoint_sequence"),
         CheckConstraint("schema_version >= 1", name="ck_checkpoint_schema"),
+    )
+
+
+class ParserExecutionRow(Base):
+    """Append-only parser outcome for one persisted extraction job attempt."""
+
+    __tablename__ = "parser_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    source_document_id: Mapped[str] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT"), index=True
+    )
+    extraction_id: Mapped[str] = mapped_column(
+        ForeignKey("document_extractions.id", ondelete="RESTRICT"), index=True
+    )
+    job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer)
+    parser_name: Mapped[str] = mapped_column(String(80))
+    parser_version: Mapped[str] = mapped_column(String(40))
+    outcome: Mapped[str] = mapped_column(String(24))
+    input_sha256: Mapped[str] = mapped_column(String(64))
+    limits_fingerprint: Mapped[str] = mapped_column(String(64))
+    output_text_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    manifest_json: Mapped[str] = mapped_column(Text)
+    sections_json: Mapped[str] = mapped_column(Text, default="[]")
+    source_mappings_json: Mapped[str] = mapped_column(Text, default="[]")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    error_retryable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    started_at: Mapped[str] = mapped_column(String(32))
+    finished_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "attempt", name="uq_parser_job_attempt"),
+        CheckConstraint("attempt >= 1", name="ck_parser_attempt"),
+        CheckConstraint(
+            "outcome IN ('succeeded', 'partial', 'failed', 'cancelled', 'interrupted')",
+            name="ck_parser_outcome",
+        ),
+        Index(
+            "ix_parser_extraction_attempt",
+            "extraction_id",
+            "attempt",
+            "id",
+        ),
     )

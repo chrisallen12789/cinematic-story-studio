@@ -34,7 +34,34 @@ export const BUILD_EVIDENCE_ENVIRONMENT = Object.freeze({
 const APP_EXECUTABLE_NAME = "Cinematic Story Studio.exe";
 const SERVICE_EXECUTABLE_NAME = "cinematic-story-service.exe";
 const MAX_HARNESS_RESULT_BYTES = 1024 * 1024;
-const PACKAGED_E2E_RESULT_SCHEMA_VERSION = "2.0.0";
+const MAX_SECURITY_INPUT_BYTES = 5 * 1024 * 1024;
+const PACKAGED_E2E_RESULT_SCHEMA_VERSION = "3.0.0";
+const SECURE_INGEST_DEPENDENCIES = Object.freeze([
+  Object.freeze({
+    name: "lxml",
+    version: "6.1.1",
+    license: "BSD-3-Clause",
+    purpose: "Strict XML parsing for validated DOCX and EPUB package parts.",
+  }),
+  Object.freeze({
+    name: "pypdf",
+    version: "6.14.2",
+    license: "BSD-3-Clause",
+    purpose: "Bounded page-aware text extraction from text-based PDF files.",
+  }),
+]);
+const SECURE_INGEST_BOUNDARY_LIMITS = Object.freeze({
+  sourceBytes: 100 * 1024 * 1024,
+  previewCodePoints: 8_000,
+});
+const PARSER_LIMITS_PROFILE_CANONICAL_JSON =
+  '{"archiveExpandedBytes":209715200,"archiveMemberBytes":33554432,"archiveMemberNameCodePoints":512,"archiveMembers":2048,"archivePathDepth":20,"canonicalTextCodePoints":10000000,"extractedSections":10000,"ingestContractVersion":"1.0.0","maximumCompressionRatio":100.0,"parserDeadlineMs":30000,"parserProcessMemoryBytes":805306368,"pdfPages":2000,"profileId":"secure-ingest-v1"}';
+const PARSER_LIMITS_PROFILE = Object.freeze(
+  JSON.parse(PARSER_LIMITS_PROFILE_CANONICAL_JSON),
+);
+const PARSER_LIMITS_FINGERPRINT = sha256Bytes(
+  Buffer.from(PARSER_LIMITS_PROFILE_CANONICAL_JSON, "utf8"),
+);
 const PACKAGED_FAILURE_STAGES = new Set([
   "prelaunch_inventory_1",
   "isolation_setup",
@@ -156,12 +183,14 @@ export async function generateBuildEvidence({
     embeddedServiceEvidence,
     screenshotEvidence,
     resultEvidence,
+    secureIngestEvidence,
   ] = await Promise.all([
     requiredFileEvidence(canonicalRoot, root, expectedExecutable, "desktop application"),
     requiredFileEvidence(canonicalRoot, root, stagedService, "staged service"),
     requiredFileEvidence(canonicalRoot, root, embeddedService, "embedded service"),
     optionalFileEvidence(canonicalRoot, root, expectedScreenshot, "packaged E2E screenshot"),
     optionalFileEvidence(canonicalRoot, root, expectedResult, "packaged E2E result"),
+    collectSecureIngestEvidence(canonicalRoot, root),
   ]);
 
   const stagedServiceMatchesEmbeddedService =
@@ -180,13 +209,22 @@ export async function generateBuildEvidence({
     harnessResult.reportedStatus === expectedHarnessStatus;
   const packagedE2eOwnershipExitProven =
     harnessResult.ownershipExitProven;
+  const phase1DocxImportReviewProven =
+    harnessResult.importReview !== null &&
+    harnessResult.importReview.sourceSha256 ===
+      secureIngestEvidence.syntheticDocx.decodedSha256 &&
+    harnessResult.importReview.approvalDecision === "approved" &&
+    harnessResult.importReview.approvalPersistedAfterRestart &&
+    harnessResult.importReview.extractionPersistedAfterRestart &&
+    harnessResult.importReview.analysisPersistedAfterRestart;
   const packagedE2eEvidenceComplete =
     normalizedStepOutcome === "success" &&
     harnessResultMatchesStepOutcome &&
     screenshotEvidence.exists &&
     screenshotEvidence.sizeBytes > 0 &&
     harnessResult.screenshotCaptured === true &&
-    packagedE2eOwnershipExitProven;
+    packagedE2eOwnershipExitProven &&
+    phase1DocxImportReviewProven;
   const normalizedWorkflowHeadSha = normalizeHeadSha(workflowHeadSha);
   const normalizedTestedCheckoutSha = normalizeHeadSha(
     testedCheckoutSha,
@@ -198,7 +236,7 @@ export async function generateBuildEvidence({
   }
 
   const manifest = {
-    schemaVersion: "1.0.0",
+    schemaVersion: "2.0.0",
     artifactPathScope: "repository-root",
     workflowHeadSha: normalizedWorkflowHeadSha,
     testedCheckoutSha: normalizedTestedCheckoutSha,
@@ -214,8 +252,10 @@ export async function generateBuildEvidence({
       packagedE2eHarnessResultMatchesStepOutcome:
         harnessResultMatchesStepOutcome,
       packagedE2eOwnershipExitProven,
+      phase1DocxImportReviewProven,
       packagedE2eEvidenceComplete,
     },
+    secureIngest: secureIngestEvidence,
     packagedE2e: {
       result: harnessResult.reportedStatus ?? expectedHarnessStatus,
       stepOutcome: normalizedStepOutcome,
@@ -232,6 +272,7 @@ export async function generateBuildEvidence({
         cleanupCompleted: harnessResult.cleanupCompleted,
         completedLaunches: harnessResult.completedLaunches,
       },
+      importReview: harnessResult.importReview,
       launches: harnessResult.launches,
     },
     testTimestamp:
@@ -278,6 +319,187 @@ async function readAppVersion(repositoryRoot) {
     throw new Error("The desktop package version is invalid.");
   }
   return version;
+}
+
+async function collectSecureIngestEvidence(
+  canonicalRoot,
+  repositoryRoot,
+) {
+  const requirementsInputPath = path.join(
+    repositoryRoot,
+    "apps",
+    "local-service",
+    "requirements.in",
+  );
+  const requirementsLockPath = path.join(
+    repositoryRoot,
+    "apps",
+    "local-service",
+    "requirements.lock",
+  );
+  const generatorPath = path.join(
+    repositoryRoot,
+    "fixtures",
+    "synthetic-story",
+    "generate-fixtures.mjs",
+  );
+  const encodedDocxPath = path.join(
+    repositoryRoot,
+    "fixtures",
+    "synthetic-story",
+    "sample-story.docx.base64",
+  );
+  const [
+    requirementsInput,
+    requirementsLock,
+    fixtureGenerator,
+    encodedDocx,
+  ] = await Promise.all([
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      requirementsInputPath,
+      "Python requirements input",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      requirementsLockPath,
+      "Python requirements lock",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      generatorPath,
+      "synthetic fixture generator",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      encodedDocxPath,
+      "synthetic DOCX base64 fixture",
+    ),
+  ]);
+  const [requirementsInputText, requirementsLockText, encodedDocxText] =
+    await Promise.all([
+      readBoundedUtf8(
+        requirementsInputPath,
+        "Python requirements input",
+      ),
+      readBoundedUtf8(
+        requirementsLockPath,
+        "Python requirements lock",
+      ),
+      readBoundedAscii(
+        encodedDocxPath,
+        "synthetic DOCX base64 fixture",
+      ),
+    ]);
+  assertSecureIngestDependencyPins(
+    requirementsInputText,
+    requirementsLockText,
+  );
+  const decodedDocx = decodeStrictBase64(encodedDocxText);
+  if (
+    decodedDocx.length === 0 ||
+    decodedDocx.length > 1024 * 1024 ||
+    decodedDocx.subarray(0, 4).compare(
+      Buffer.from("PK\u0003\u0004", "binary"),
+    ) !== 0
+  ) {
+    throw new Error("The synthetic DOCX fixture bytes are invalid.");
+  }
+  return {
+    supportedFormats: ["txt", "markdown", "docx", "epub", "pdf"],
+    boundaryLimits: {
+      ...SECURE_INGEST_BOUNDARY_LIMITS,
+    },
+    parserProfile: {
+      values: {
+        ...PARSER_LIMITS_PROFILE,
+      },
+      canonicalJson: PARSER_LIMITS_PROFILE_CANONICAL_JSON,
+      fingerprint: PARSER_LIMITS_FINGERPRINT,
+    },
+    parserDependencies: SECURE_INGEST_DEPENDENCIES,
+    inputs: {
+      requirementsInput,
+      requirementsLock,
+      fixtureGenerator,
+      syntheticDocxEncoding: encodedDocx,
+    },
+    syntheticDocx: {
+      encodedPath: encodedDocx.path,
+      decodedName: "sample-story.docx",
+      decodedSizeBytes: decodedDocx.length,
+      decodedSha256: sha256Bytes(decodedDocx),
+    },
+  };
+}
+
+async function readBoundedUtf8(target, label) {
+  const bytes = await readFile(target);
+  if (
+    bytes.length === 0 ||
+    bytes.length > MAX_SECURITY_INPUT_BYTES ||
+    bytes.includes(0)
+  ) {
+    throw new Error(`The ${label} content is invalid.`);
+  }
+  const text = bytes.toString("utf8");
+  if (Buffer.from(text, "utf8").compare(bytes) !== 0) {
+    throw new Error(`The ${label} must be valid UTF-8.`);
+  }
+  return text;
+}
+
+async function readBoundedAscii(target, label) {
+  const text = await readBoundedUtf8(target, label);
+  if ([...text].some((character) => character.codePointAt(0) > 0x7f)) {
+    throw new Error(`The ${label} must contain ASCII only.`);
+  }
+  return text;
+}
+
+function assertSecureIngestDependencyPins(requirementsInput, requirementsLock) {
+  const inputLines = requirementsInput.split(/\r?\n/gu);
+  const lockLines = requirementsLock.split(/\r?\n/gu);
+  for (const dependency of SECURE_INGEST_DEPENDENCIES) {
+    const pin = `${dependency.name}==${dependency.version}`;
+    if (inputLines.filter((line) => line === pin).length !== 1) {
+      throw new Error(`The ${dependency.name} input pin is invalid.`);
+    }
+    const lockIndex = lockLines.indexOf(`${pin} \\`);
+    const firstHash = lockLines[lockIndex + 1] ?? "";
+    if (
+      lockIndex < 0 ||
+      !/^ {4}--hash=sha256:[a-f0-9]{64}(?: \\)?$/u.test(firstHash)
+    ) {
+      throw new Error(`The ${dependency.name} hash lock is invalid.`);
+    }
+  }
+}
+
+function decodeStrictBase64(text) {
+  if (
+    text.length === 0 ||
+    /[^A-Za-z0-9+/=\r\n]/u.test(text)
+  ) {
+    throw new Error("The synthetic DOCX fixture is not strict base64.");
+  }
+  const compact = text.replace(/\r?\n/gu, "");
+  if (
+    compact.length === 0 ||
+    compact.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/u.test(compact)
+  ) {
+    throw new Error("The synthetic DOCX fixture is not strict base64.");
+  }
+  const decoded = Buffer.from(compact, "base64");
+  if (decoded.toString("base64") !== compact) {
+    throw new Error("The synthetic DOCX fixture base64 is not canonical.");
+  }
+  return decoded;
 }
 
 async function requiredFileEvidence(
@@ -389,6 +611,7 @@ async function inspectHarnessResult(
         "preexistingRelevantProcesses",
         "flow",
         "screenshot",
+        "importReview",
         "launches",
       ])
     ) {
@@ -403,6 +626,12 @@ async function inspectHarnessResult(
     const completedLaunches = sanitizeCompletedLaunchNumbers(
       value.completedLaunches,
     );
+    const importReview =
+      value.importReview === null
+        ? null
+        : sanitizeImportReviewEvidence(value.importReview);
+    const importReviewShapeValid =
+      value.importReview === null || importReview !== null;
     const preexistingRelevantProcessesWereUnavailable =
       value.preexistingRelevantProcesses === null;
     const preexistingRelevantProcesses =
@@ -439,7 +668,8 @@ async function inspectHarnessResult(
       completedAt !== null &&
       value.packagedVersion === appVersion &&
       value.executable === expectedExecutable &&
-      value.fixture === "fixtures/synthetic-story/sample-story.md" &&
+      value.fixture ===
+        "fixtures/synthetic-story/sample-story.docx.base64" &&
       equalStringArrays(value.isolationEnvironment, [
         "APPDATA",
         "LOCALAPPDATA",
@@ -448,18 +678,23 @@ async function inspectHarnessResult(
       ]) &&
       equalStringArrays(value.flow, [
         "create",
-        "import_synthetic_fixture",
+        "import_synthetic_docx",
+        "wait_for_extraction",
+        "review_import",
+        "approve_import",
         "analyze",
         "correct_speaker",
         "close",
         "restart",
         "restore",
+        "verify_import_review_persistence",
         "close",
       ]) &&
       isPlainObject(value.screenshot) &&
       hasExactKeys(value.screenshot, ["artifactId", "captured"]) &&
       value.screenshot.artifactId === "packaged-ui-screenshot" &&
       typeof value.screenshot.captured === "boolean" &&
+      importReviewShapeValid &&
       Array.isArray(launches) &&
       Array.isArray(completedLaunches) &&
       equalNumberArrays(
@@ -488,6 +723,10 @@ async function inspectHarnessResult(
       value.ownershipEstablished === true &&
       value.cleanupCompleted === true &&
       value.screenshot.captured === true &&
+      importReview !== null &&
+      importReview.approvalPersistedAfterRestart &&
+      importReview.extractionPersistedAfterRestart &&
+      importReview.analysisPersistedAfterRestart &&
       equalNumberArrays(completedLaunches ?? [], [1, 2]) &&
       actualOwnershipExitProof;
     const failedContractValid =
@@ -528,10 +767,57 @@ async function inspectHarnessResult(
       ownershipEstablished: value.ownershipEstablished,
       cleanupCompleted: value.cleanupCompleted,
       completedLaunches,
+      importReview,
     };
   } catch {
     return invalidHarnessResult();
   }
+}
+
+function sanitizeImportReviewEvidence(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "format",
+      "sourceSha256",
+      "extractedTextSha256",
+      "extractionRevision",
+      "warningCount",
+      "approvalDecision",
+      "approvalPersistedAfterRestart",
+      "extractionPersistedAfterRestart",
+      "analysisPersistedAfterRestart",
+    ]) ||
+    value.format !== "docx" ||
+    !isSha256(value.sourceSha256) ||
+    !isSha256(value.extractedTextSha256) ||
+    !Number.isSafeInteger(value.extractionRevision) ||
+    value.extractionRevision < 1 ||
+    value.extractionRevision > 1_000_000 ||
+    !Number.isSafeInteger(value.warningCount) ||
+    value.warningCount < 0 ||
+    value.warningCount > 256 ||
+    value.approvalDecision !== "approved" ||
+    typeof value.approvalPersistedAfterRestart !== "boolean" ||
+    typeof value.extractionPersistedAfterRestart !== "boolean" ||
+    typeof value.analysisPersistedAfterRestart !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    format: value.format,
+    sourceSha256: value.sourceSha256,
+    extractedTextSha256: value.extractedTextSha256,
+    extractionRevision: value.extractionRevision,
+    warningCount: value.warningCount,
+    approvalDecision: value.approvalDecision,
+    approvalPersistedAfterRestart:
+      value.approvalPersistedAfterRestart,
+    extractionPersistedAfterRestart:
+      value.extractionPersistedAfterRestart,
+    analysisPersistedAfterRestart:
+      value.analysisPersistedAfterRestart,
+  };
 }
 
 function validFailureCodeForStage(stage, code) {
@@ -741,6 +1027,7 @@ function invalidHarnessResult() {
     ownershipEstablished: null,
     cleanupCompleted: null,
     completedLaunches: [],
+    importReview: null,
   };
 }
 
@@ -877,7 +1164,49 @@ function sanitizeLaunchProof(value) {
       },
     });
   }
-  return launches.sort((left, right) => left.launch - right.launch);
+  const sortedLaunches = launches.sort(
+    (left, right) => left.launch - right.launch,
+  );
+  if (
+    sortedLaunches.length === 2 &&
+    !validCrossLaunchProcessProof(sortedLaunches[0], sortedLaunches[1])
+  ) {
+    return null;
+  }
+  return sortedLaunches;
+}
+
+function validCrossLaunchProcessProof(first, second) {
+  const firstIdentities = new Set(
+    first.ownership.processes.map(processIdentityEvidenceKey),
+  );
+  if (
+    second.ownership.processes.some((process) =>
+      firstIdentities.has(processIdentityEvidenceKey(process)),
+    )
+  ) {
+    return false;
+  }
+  const latestFirstCreation = first.ownership.processes.reduce(
+    (latest, process) =>
+      process.creationDate > latest ? process.creationDate : latest,
+    first.ownership.processes[0].creationDate,
+  );
+  const secondRoot = second.ownership.processes.find(
+    (process) => process.pid === second.ownership.rootPid,
+  );
+  return (
+    secondRoot !== undefined &&
+    secondRoot.creationDate > latestFirstCreation
+  );
+}
+
+function processIdentityEvidenceKey(process) {
+  return JSON.stringify([
+    process.pid,
+    process.executableName,
+    process.creationDate,
+  ]);
 }
 
 function sanitizePreexistingProcesses(value) {
@@ -982,6 +1311,10 @@ function isPositivePid(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+function isSha256(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
 function equalStringArrays(value, expected) {
   return (
     Array.isArray(value) &&
@@ -1003,6 +1336,10 @@ async function sha256File(target) {
     digest.update(chunk);
   }
   return digest.digest("hex");
+}
+
+function sha256Bytes(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function normalizeHeadSha(value) {

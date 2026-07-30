@@ -1,8 +1,11 @@
 import {
+  mkdir,
   mkdtemp,
   readFile,
-  rm
+  rm,
+  writeFile
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -14,10 +17,12 @@ import {
   packagedFailureCode,
   packagedFixture,
   packagedFlow,
+  materializeStrictBase64Docx,
   runPackagedE2eEvidenceStep,
   writePackagedE2eMachineResult,
   type PackagedE2eMachineResult,
-  type PackagedFailureCode
+  type PackagedFailureCode,
+  type PackagedImportReviewEvidence
 } from "./packaged-e2e-evidence";
 import { ProcessInventoryError } from "./packaged-process-inventory";
 
@@ -32,6 +37,87 @@ afterEach(async () => {
 });
 
 describe("packaged E2E machine evidence", () => {
+  it("locks the schema 3 DOCX review flow and exact evidence keys", () => {
+    const importReview = {
+      format: "docx",
+      sourceSha256: "a".repeat(64),
+      extractedTextSha256: "b".repeat(64),
+      extractionRevision: 1,
+      warningCount: 0,
+      approvalDecision: "approved",
+      approvalPersistedAfterRestart: true,
+      extractionPersistedAfterRestart: true,
+      analysisPersistedAfterRestart: true
+    } satisfies PackagedImportReviewEvidence;
+
+    expect(packagedE2eSchemaVersion).toBe("3.0.0");
+    expect(packagedFixture).toBe(
+      "fixtures/synthetic-story/sample-story.docx.base64"
+    );
+    expect(packagedFlow).toEqual([
+      "create",
+      "import_synthetic_docx",
+      "wait_for_extraction",
+      "review_import",
+      "approve_import",
+      "analyze",
+      "correct_speaker",
+      "close",
+      "restart",
+      "restore",
+      "verify_import_review_persistence",
+      "close"
+    ]);
+    expect(Object.keys(importReview)).toEqual([
+      "format",
+      "sourceSha256",
+      "extractedTextSha256",
+      "extractionRevision",
+      "warningCount",
+      "approvalDecision",
+      "approvalPersistedAfterRestart",
+      "extractionPersistedAfterRestart",
+      "analysisPersistedAfterRestart"
+    ]);
+  });
+
+  it("materializes canonical ASCII base64 only inside the isolated root", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "css-packaged-fixture-test-")
+    );
+    temporaryRoots.push(root);
+    const fixtureDirectory = path.join(root, "fixture");
+    await mkdir(fixtureDirectory);
+    const encodedPath = path.join(root, "sample-story.docx.base64");
+    const decoded = Buffer.from([
+      0x50,
+      0x4b,
+      0x03,
+      0x04,
+      0x43,
+      0x53,
+      0x53
+    ]);
+    await writeFile(
+      encodedPath,
+      `${decoded.toString("base64")}\n`,
+      "ascii"
+    );
+    const destination = path.join(fixtureDirectory, "sample-story.docx");
+
+    await expect(
+      materializeStrictBase64Docx(encodedPath, root, destination)
+    ).resolves.toBe(createHash("sha256").update(decoded).digest("hex"));
+    await expect(readFile(destination)).resolves.toEqual(decoded);
+    await expect(
+      materializeStrictBase64Docx(
+        encodedPath,
+        root,
+        path.join(path.dirname(root), "escaped.docx")
+      )
+    ).rejects.toThrow("outside its isolated root");
+  });
+
   it("writes a bounded redacted result for prelaunch inventory failure", async () => {
     const root = await mkdtemp(
       path.join(tmpdir(), "css-packaged-evidence-test-")
@@ -107,6 +193,7 @@ function failedPrelaunchResult(
       artifactId: "packaged-ui-screenshot",
       captured: false
     },
+    importReview: null,
     launches: []
   };
 }

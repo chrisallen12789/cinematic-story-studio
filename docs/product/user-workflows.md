@@ -21,15 +21,19 @@ Deleting a project shows the affected project, local source/cache/render scope, 
 
 ## 3. Import and review a story
 
-1. The user chooses a file through the native picker.
-2. Electron main streams the selected file to the service; the renderer cannot submit an arbitrary local path.
-3. The service validates declared/observed type, configured size, extraction limits, and hash. TXT/Markdown decoding is explicit and lossless; unsupported encoding is a reviewable error.
-4. The UI shows filename, format, size, digest, and an import preview without logging its content.
-5. The user confirms import. An analysis job is created against that immutable story revision.
-6. The outline incrementally shows durable analysis results. Partial results are labelled with their job/agent state and are not treated as approved.
-7. Import review and later review gates record the exact artifact revision.
+1. The user selects TXT, Markdown, DOCX, EPUB, or PDF through the native picker. The renderer never receives an arbitrary path capability.
+2. Main checks picker provenance, bounded metadata, and the Phase 1 desktop transfer cap. A rejection above that client cap is reported as a desktop transfer limit, not as the service's 100 MiB parser ceiling.
+3. The service streams to private staging, hashes and preserves the original bytes, detects the format from extension/signature/package structure, and applies the fixed secure-ingest limits.
+4. A bounded local parser extracts exact canonical text, ordered sections and source mappings. It never starts a shell, executes active content, follows an archive path outside the package, or fetches a network resource.
+5. The service publishes immutable source and extraction records and opens Import Review. The UI shows format, sizes, hashes, parser identity, an 8,000-character preview, structural summary, and typed warnings.
+6. The user explicitly approves, requests changes, or rejects the exact source/extraction revision. The decision endpoint records that local-human action; background extraction and analysis jobs do not write decisions, and only an effective approval unlocks analysis.
+7. An identical import reuses the current source/extraction. A changed-byte reimport or explicit re-extraction appends a revision and invalidates the effective approval without deleting its history. Restart restores the source, extraction, preview/warnings, effective decision, and analysis state; prior decision rows remain durable.
 
-An identical request carrying the same idempotency key returns the original result. A failed import removes staging files and leaves the previous revision active.
+An identical request carrying the same idempotency key returns the original
+result. Validation failure before source publication removes staging and leaves
+the previous revision active. Extraction failure preserves the new immutable
+source and its redacted attempt evidence but publishes no analyzable story or
+Import Review.
 
 ## 4. Inspect and correct dialogue
 

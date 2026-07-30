@@ -45,7 +45,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -66,13 +67,15 @@ select:disabled {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--gold-bright);
   outline-offset: 2px;
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid var(--line-bright);
   border-radius: 8px;
@@ -86,6 +89,12 @@ input {
 
 select {
   padding: 9px 32px 9px 10px;
+}
+
+textarea {
+  min-height: 74px;
+  padding: 10px 12px;
+  resize: vertical;
 }
 
 label {
@@ -505,7 +514,8 @@ label {
 .story-column {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .project-actions {
@@ -581,6 +591,210 @@ label {
 .secondary-button:hover:not(:disabled) {
   border-color: #4a566a;
   background: #202735;
+}
+
+.danger-button {
+  min-height: 34px;
+  padding: 8px 13px;
+  border: 1px solid rgb(224 119 119 / 42%);
+  border-radius: 8px;
+  color: #efb6b6;
+  background: rgb(100 43 49 / 28%);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.danger-button:hover:not(:disabled) {
+  border-color: rgb(224 119 119 / 72%);
+  background: rgb(100 43 49 / 45%);
+}
+
+.import-review-card {
+  display: grid;
+  gap: 14px;
+  margin: 16px 20px;
+  padding: 17px;
+  border: 1px solid rgb(226 183 111 / 24%);
+  border-radius: 12px;
+  background:
+    linear-gradient(145deg, rgb(226 183 111 / 6%), transparent 55%),
+    var(--panel-raised);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 14%);
+}
+
+.import-review-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.import-review-card.compact {
+  padding-block: 13px;
+}
+
+.review-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.import-review-card h2 {
+  margin: 4px 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 19px;
+  font-weight: 500;
+}
+
+.review-state {
+  display: inline-flex;
+  padding: 5px 8px;
+  border: 1px solid rgb(228 180 93 / 28%);
+  border-radius: 999px;
+  color: #d7bb86;
+  background: rgb(95 70 30 / 18%);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.review-state.state-approved,
+.review-state.state-complete {
+  border-color: rgb(105 199 155 / 30%);
+  color: #a9ddc5;
+  background: rgb(37 96 69 / 18%);
+}
+
+.review-state.state-failed,
+.review-state.state-rejected {
+  border-color: rgb(224 119 119 / 35%);
+  color: #e9aaaa;
+  background: rgb(100 43 49 / 22%);
+}
+
+.import-evidence {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.import-evidence > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(5 8 12 / 22%);
+}
+
+.import-evidence dt {
+  color: var(--quiet);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.import-evidence dd {
+  overflow: hidden;
+  margin: 4px 0 0;
+  color: #cbd2dd;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-evidence .digest-evidence {
+  grid-column: span 2;
+}
+
+.import-evidence code,
+.review-fingerprint code {
+  color: #b6c5da;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 9px;
+}
+
+.import-preview {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #0d121a;
+}
+
+.import-preview > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+}
+
+.import-preview > div span {
+  color: var(--quiet);
+}
+
+.import-preview pre {
+  max-height: 170px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: #cbd2dd;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.import-warnings {
+  padding: 10px 12px;
+  border: 1px solid rgb(228 180 93 / 25%);
+  border-radius: 8px;
+  color: #d9c29a;
+  background: rgb(89 65 28 / 14%);
+  font-size: 10px;
+}
+
+.import-warnings ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.review-fingerprint {
+  overflow-wrap: anywhere;
+  color: var(--quiet);
+  font-size: 9px;
+}
+
+.review-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.review-actions label {
+  display: grid;
+  gap: 6px;
+}
+
+.review-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.review-decision-summary,
+.analysis-lock {
+  margin: 0;
+  color: #b9c7d8;
+  font-size: 10px;
+}
+
+.analysis-lock {
+  margin: 0 20px 12px;
+  color: #d7bb86;
 }
 
 .chapter-tabs {

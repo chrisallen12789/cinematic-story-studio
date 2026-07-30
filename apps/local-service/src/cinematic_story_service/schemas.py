@@ -68,3 +68,29 @@ class CreateJobRequest(StrictRequest):
         if not value.strip() or any(ord(character) < 33 for character in value):
             raise ValueError("The idempotency key is invalid.")
         return value
+
+
+class DecideImportReviewRequest(StrictRequest):
+    review_id: str = Field(min_length=1, max_length=128)
+    decision: Literal["approved", "changes_requested", "rejected"]
+    rationale: str | None = Field(default=None, max_length=2000)
+    expected_revision: int = Field(ge=1)
+    evidence_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_rationale(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if any(ord(character) < 32 and character != "\t" for character in value):
+            raise ValueError("The Import Review rationale contains control characters.")
+        return value
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_review_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)

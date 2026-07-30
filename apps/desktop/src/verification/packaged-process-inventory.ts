@@ -280,16 +280,25 @@ export function adoptVerifiedProcessTree({
       );
       if (
         priorPidIdentity !== undefined &&
-        !sameProcessIdentity(priorPidIdentity, item)
+        !sameStableProcessIdentity(priorPidIdentity, item)
       ) {
         throw new ProcessInventoryError(
           "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
           false
         );
       }
+      /*
+       * Parentage proves initial ownership, but it is not a stable continuity
+       * field once shutdown begins. Retain the originally proven ancestry
+       * while matching an already-owned live process by PID, executable, and
+       * creation time so an OS re-parenting observation cannot duplicate or
+       * invalidate that identity.
+       */
+      if (priorPidIdentity !== undefined) {
+        continue;
+      }
       if (
-        containsProcessIdentity(baseline, item) ||
-        containsProcessIdentity(result, item)
+        containsStableProcessIdentity(baseline, item)
       ) {
         continue;
       }
@@ -301,7 +310,7 @@ export function adoptVerifiedProcessTree({
       if (verifiedParent === undefined) {
         continue;
       }
-      if (!containsProcessIdentity(current, verifiedParent)) {
+      if (!containsStableProcessIdentity(current, verifiedParent)) {
         throw new ProcessInventoryError(
           "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
           false
@@ -318,6 +327,21 @@ export function adoptVerifiedProcessTree({
           false
         );
       }
+      if (
+        item.name === serviceExecutableName &&
+        verifiedParent.kind !== "service" &&
+        result.some((candidate) => candidate.kind === "service")
+      ) {
+        /*
+         * The application may establish one embedded-service root. Any later
+         * same-image helper (including a packaged parser worker) must descend
+         * directly from an already-owned service identity.
+         */
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false
+        );
+      }
       result.push({
         ...item,
         kind:
@@ -325,6 +349,27 @@ export function adoptVerifiedProcessTree({
       });
       adoptedInPass = true;
     }
+  }
+  for (const item of current) {
+    if (
+      containsStableProcessIdentity(baseline, item) ||
+      containsStableProcessIdentity(result, item) ||
+      item.creationDate < root.creationDate ||
+      !matchesPackagedProcessPath(item, packaged)
+    ) {
+      continue;
+    }
+    /*
+     * A periodic inventory can miss a short-lived packaged intermediary. An
+     * exact-path descendant left behind by that intermediary would otherwise
+     * have an unknown parent and escape the owned set. Fail closed on every
+     * non-baseline exact packaged identity created during this launch window;
+     * callers never terminate identities that were not positively adopted.
+     */
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
   }
   return result.sort((left, right) => left.pid - right.pid);
 }
@@ -349,6 +394,41 @@ export function sameProcessIdentity(
     right.executablePath !== null &&
     samePath(left.executablePath, right.executablePath)
   );
+}
+
+function containsStableProcessIdentity(
+  values: readonly ProcessIdentity[],
+  expected: ProcessIdentity
+): boolean {
+  return values.some((value) =>
+    sameStableProcessIdentity(value, expected)
+  );
+}
+
+function sameStableProcessIdentity(
+  left: ProcessIdentity,
+  right: ProcessIdentity
+): boolean {
+  if (
+    left.pid !== right.pid ||
+    left.name !== right.name ||
+    left.creationDate !== right.creationDate
+  ) {
+    return false;
+  }
+  if (
+    left.executablePath === null ||
+    right.executablePath === null
+  ) {
+    /*
+     * CIM can transiently lose ExecutablePath while an owned process exits.
+     * One side of every continuity check is an identity whose exact path was
+     * already proven. Treat the partial snapshot as still live; callers keep
+     * polling and never terminate it from this incomplete observation.
+     */
+    return left.executablePath !== right.executablePath;
+  }
+  return samePath(left.executablePath, right.executablePath);
 }
 
 export function matchesPackagedProcessPath(
@@ -377,7 +457,7 @@ export function remainingOwnedProcesses(
     );
     if (
       samePid !== undefined &&
-      !sameProcessIdentity(samePid, item)
+      !sameStableProcessIdentity(samePid, item)
     ) {
       throw new ProcessInventoryError(
         "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",

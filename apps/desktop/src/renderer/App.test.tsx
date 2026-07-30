@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import type {
   CorrectDialogueSpeakerResponse,
+  DecideImportReviewResponse,
+  DocumentExtractionSummary,
   FfmpegCapabilityResponse,
+  ImportReview,
+  ImportReviewResponse,
   ImportStoryResponse,
   Job,
   ProjectDetail,
@@ -15,7 +19,9 @@ import type {
 import type {
   BackendSnapshot,
   CinematicStoryDesktopApi,
-  DesktopResult
+  DecideImportReviewInput,
+  DesktopResult,
+  ImportReviewIdInput
 } from "../shared/desktop-api";
 import { App } from "./App";
 
@@ -111,39 +117,57 @@ describe("Phase 0 desktop workspace", () => {
   it("imports a selected text story through the narrow desktop operation", async () => {
     const detail = createProjectDetail();
     const api = createApi({ project: detail });
+    const sourceDocument = {
+      schemaVersion: "1.0.0" as const,
+      revision: 1,
+      provenance: detail.project.provenance,
+      documentId: "document-2",
+      projectId: "project-1",
+      displayName: "sample-story.docx",
+      mediaType:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" as const,
+      declaredFormat: "docx" as const,
+      contentSha256: "a".repeat(64),
+      byteLength: 512,
+      importedAt: "2026-07-29T12:00:00Z",
+      originalTextPreserved: true as const,
+      originalBytesPreserved: true as const,
+      storageKey: "sources/document-2",
+      extractionStatus: "pending" as const,
+      sourceRevision: 2,
+      warnings: []
+    };
+    const extraction = createExtraction({
+      sourceDocumentId: sourceDocument.documentId
+    });
+    const extractionJob = createJob({
+      jobId: "job-extraction",
+      type: "extract_document",
+      inputFingerprint: sourceDocument.contentSha256,
+      stage: "extract_document"
+    });
     const imported: ImportStoryResponse = {
       correlationId: "import-correlation",
-      sourceDocument: {
-        schemaVersion: "1.0.0",
-        revision: 1,
-        provenance: detail.project.provenance,
-        documentId: "document-1",
-        projectId: "project-1",
-        displayName: "sample-story.md",
-        mediaType: "text/markdown",
-        contentSha256: "a".repeat(64),
-        byteLength: 512,
-        importedAt: "2026-07-29T12:00:00Z",
-        originalTextPreserved: true,
-        storageKey: "sources/document-1",
-        extractionStatus: "complete",
-        warnings: []
-      },
-      story: detail.story!
+      sourceDocument,
+      extraction,
+      job: extractionJob
     };
     vi.mocked(api.projects.importSelectedFile).mockResolvedValue(ok(imported));
     const user = userEvent.setup();
     render(<App api={api} />);
 
     await screen.findByText('"We should go."');
-    await user.click(screen.getByRole("button", { name: "Import TXT / MD" }));
+    await user.click(screen.getByRole("button", { name: "Import document" }));
     await waitFor(() => {
       expect(api.projects.importSelectedFile).toHaveBeenCalledWith("project-1");
     });
     expect(
       await screen.findByText(
-        "Imported sample-story.md without changing its text."
+        "Queued secure extraction for sample-story.docx."
       )
+    ).toBeVisible();
+    expect(
+      screen.getByRole("progressbar", { name: "Extract document progress" })
     ).toBeVisible();
   });
 
@@ -163,6 +187,150 @@ describe("Phase 0 desktop workspace", () => {
     expect(request?.type).toBe("analyze_story");
     expect(request?.inputRevision).toBe(1);
     expect(request?.idempotencyKey).toHaveLength(36);
+  });
+
+  it("gates analysis on exact import review and records approval", async () => {
+    const extraction = createExtraction({
+      status: "complete",
+      extractedTitle: "Synthetic Review",
+      extractedTextSha256: "b".repeat(64),
+      extractedCharacterCount: 72,
+      sectionCount: 4,
+      pageCount: 3,
+      quality: {
+        classification: "structured_extraction",
+        confidence: 0.98
+      },
+      completedAt: "2026-07-29T12:01:00Z"
+    });
+    const review = createImportReview();
+    const detail = createProjectDetail({
+      sourceDocuments: [createSourceDocument()],
+      extractions: [extraction],
+      importReviews: [review],
+      analysisAllowed: false
+    });
+    const api = createApi({ project: detail });
+    vi.mocked(api.projects.open).mockResolvedValue(
+      ok({
+        ...detail,
+        analysisAllowed: true,
+        importReviews: [
+          createImportReview({
+            revision: 2,
+            state: "approved",
+            updatedAt: "2026-07-29T12:10:00Z"
+          })
+        ]
+      })
+    );
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "sample-story.docx" })
+    ).toBeVisible();
+    expect(screen.getByText("Declared format").parentElement).toHaveTextContent(
+      "Declared formatDOCX"
+    );
+    expect(screen.getByText("Detected format").parentElement).toHaveTextContent(
+      "Detected formatDOCX"
+    );
+    expect(screen.getByText("No extraction warnings")).toHaveAttribute(
+      "role",
+      "status"
+    );
+    expect(screen.getByText("A bounded synthetic preview.")).toBeVisible();
+    expect(screen.getByText("Exact original bytes preserved")).toBeVisible();
+    expect(screen.getByText("Synthetic Review")).toBeVisible();
+    expect(
+      screen.getByText(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      )
+    ).toBeVisible();
+    expect(screen.getByText("72")).toBeVisible();
+    expect(screen.getByText("4")).toBeVisible();
+    expect(screen.getByText("3")).toBeVisible();
+    expect(
+      screen.getByText("Analysis may continue").nextElementSibling
+    ).toHaveTextContent("No");
+    expect(
+      screen.getByRole("button", { name: "Analyze story" })
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Return to project" })
+    );
+    expect(
+      screen.getByRole("button", { name: "Review import" })
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Review import" }));
+    const rationaleInput = screen.getByLabelText(
+      "Review rationale (optional for approval)"
+    );
+    expect(rationaleInput).toHaveAttribute("maxlength", "2000");
+    await user.clear(rationaleInput);
+    expect(
+      screen.getByRole("button", { name: "Request changes" })
+    ).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Approve import" }));
+
+    await waitFor(() => {
+      expect(api.projects.decideImportReview).toHaveBeenCalledOnce();
+    });
+    expect(
+      vi.mocked(api.projects.decideImportReview).mock.calls[0]?.[0]
+    ).toMatchObject({
+      projectId: "project-1",
+      reviewId: "review-1",
+      sourceDocumentId: "document-1",
+      extractionId: "extraction-1",
+      candidateStoryId: "story-1",
+      candidateStoryRevision: 1,
+      decision: "approved",
+      expectedRevision: 1,
+      evidenceFingerprint: "c".repeat(64)
+    });
+    expect(
+      vi.mocked(api.projects.decideImportReview).mock.calls[0]?.[0]
+    ).not.toHaveProperty("rationale");
+    expect(api.projects.getImportReview).toHaveBeenCalledWith({
+      projectId: "project-1",
+      reviewId: "review-1",
+      sourceDocumentId: "document-1",
+      extractionId: "extraction-1",
+      candidateStoryId: "story-1",
+      candidateStoryRevision: 1,
+      evidenceFingerprint: "c".repeat(64)
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Analyze story" })
+      ).toBeEnabled();
+    });
+  });
+
+  it("does not pair an import review with an unrelated extraction", async () => {
+    const detail = createProjectDetail({
+      sourceDocuments: [createSourceDocument()],
+      extractions: [createExtraction()],
+      importReviews: [
+        createImportReview({ extractionId: "extraction-missing" })
+      ],
+      analysisAllowed: false
+    });
+    render(<App api={createApi({ project: detail })} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Synthetic Demo" })
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(
+        screen.queryByText("A bounded synthetic preview.")
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: "Approve import" })
+    ).not.toBeInTheDocument();
   });
 
   it("renders job progress and invokes cancel control", async () => {
@@ -277,7 +445,69 @@ function createApi(options?: {
           : ok(project)
       ),
       restoreRecent: vi.fn(async () => ok(project ?? null)),
-      importSelectedFile: vi.fn(async () => ok(null))
+      importSelectedFile: vi.fn(async () => ok(null)),
+      getImportReview: vi.fn(
+        async (
+          input: ImportReviewIdInput
+        ): Promise<DesktopResult<ImportReviewResponse>> => {
+          const review = project?.importReviews.find(
+            (item) => item.reviewId === input.reviewId
+          );
+          return review === undefined
+            ? fail<ImportReviewResponse>("IMPORT_REVIEW_NOT_FOUND")
+            : ok({
+                correlationId: "review-correlation",
+                review
+              });
+        }
+      ),
+      decideImportReview: vi.fn(
+        async (
+          input: DecideImportReviewInput
+        ): Promise<DesktopResult<DecideImportReviewResponse>> => {
+          const review = project?.importReviews.find(
+            (item) => item.reviewId === input.reviewId
+          );
+          if (review === undefined) {
+            return fail("IMPORT_REVIEW_NOT_FOUND");
+          }
+          const decidedReview: ImportReview = {
+            ...review,
+            revision: review.revision + 1,
+            state: input.decision,
+            updatedAt: "2026-07-29T12:10:00Z"
+          };
+          return ok({
+            correlationId: "decision-correlation",
+            review: decidedReview,
+            decision: {
+              schemaVersion: "1.0.0",
+              revision: 1,
+              provenance: {
+                origin: "human",
+                recordedAt: "2026-07-29T12:10:00Z",
+                actorId: "desktop-user"
+              },
+              decisionId: "decision-1",
+              projectId: "project-1",
+              gateId: "import_review",
+              scope: {
+                entityType: "imported_story",
+                entityId: review.candidateStoryId,
+                revision: review.candidateStoryRevision
+              },
+              decision: input.decision,
+              actor: { type: "human", actorId: "desktop-user" },
+              rationale: input.rationale ?? "",
+              evidenceFingerprint: input.evidenceFingerprint,
+              decidedAt: "2026-07-29T12:10:00Z",
+              immutable: true
+            },
+            projectRevision: 4,
+            analysisAllowed: input.decision === "approved"
+          });
+        }
+      )
     },
     dialogue: {
       correctSpeaker: vi.fn(
@@ -342,6 +572,10 @@ function createApi(options?: {
 
 function createProjectDetail(options?: {
   readonly jobs?: readonly Job[];
+  readonly sourceDocuments?: ProjectDetail["sourceDocuments"];
+  readonly extractions?: ProjectDetail["extractions"];
+  readonly importReviews?: ProjectDetail["importReviews"];
+  readonly analysisAllowed?: boolean;
 }): ProjectDetail {
   const provenance = {
     origin: "runtime_agent" as const,
@@ -377,7 +611,10 @@ function createProjectDetail(options?: {
         audioProfile: "cinematic_stereo_v1"
       }
     },
-    sourceDocuments: [],
+    sourceDocuments: options?.sourceDocuments ?? [],
+    extractions: options?.extractions ?? [],
+    importReviews: options?.importReviews ?? [],
+    analysisAllowed: options?.analysisAllowed ?? true,
     story: {
       schemaVersion: "1.0.0",
       revision: 1,
@@ -598,6 +835,100 @@ function createJob(
     warnings: [],
     createdAt: "2026-07-29T12:00:00Z",
     updatedAt: "2026-07-29T12:00:00Z",
+    ...overrides
+  };
+}
+
+function createExtraction(
+  overrides?: Partial<DocumentExtractionSummary>
+): DocumentExtractionSummary {
+  return {
+    schemaVersion: "1.0.0",
+    revision: 1,
+    provenance: {
+      origin: "system",
+      recordedAt: "2026-07-29T12:00:00Z",
+      actorId: "document-extractor"
+    },
+    extractionId: "extraction-1",
+    projectId: "project-1",
+    sourceDocumentId: "document-1",
+    declaredFormat: "docx",
+    detectedFormat: "docx",
+    mediaType:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    status: "pending",
+    adapterId: "secure-ooxml",
+    adapterVersion: "1.0.0",
+    parserDependency: "lxml",
+    parserVersion: "6.0.0",
+    sourceSha256: "a".repeat(64),
+    sourceByteCount: 512,
+    warnings: [],
+    quality: {
+      classification: "pending",
+      confidence: 0
+    },
+    retryability: "not_retryable",
+    reviewRequired: true,
+    originalPreserved: true,
+    createdAt: "2026-07-29T12:00:00Z",
+    updatedAt: "2026-07-29T12:00:00Z",
+    ...overrides
+  };
+}
+
+function createSourceDocument(): ProjectDetail["sourceDocuments"][number] {
+  return {
+    schemaVersion: "1.0.0",
+    revision: 1,
+    provenance: {
+      origin: "import",
+      recordedAt: "2026-07-29T12:00:00Z",
+      actorId: "desktop-user"
+    },
+    documentId: "document-1",
+    projectId: "project-1",
+    displayName: "sample-story.docx",
+    mediaType:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    declaredFormat: "docx",
+    contentSha256: "a".repeat(64),
+    byteLength: 512,
+    importedAt: "2026-07-29T12:00:00Z",
+    originalTextPreserved: true,
+    originalBytesPreserved: true,
+    storageKey: "sources/document-1",
+    extractionStatus: "complete",
+    sourceRevision: 1,
+    warnings: []
+  };
+}
+
+function createImportReview(
+  overrides?: Partial<ImportReview>
+): ImportReview {
+  return {
+    schemaVersion: "1.0.0",
+    revision: 1,
+    provenance: {
+      origin: "system",
+      recordedAt: "2026-07-29T12:01:00Z",
+      actorId: "document-extractor"
+    },
+    reviewId: "review-1",
+    projectId: "project-1",
+    sourceDocumentId: "document-1",
+    extractionId: "extraction-1",
+    candidateStoryId: "story-1",
+    candidateStoryRevision: 1,
+    state: "pending",
+    evidenceFingerprint: "c".repeat(64),
+    previewText: "A bounded synthetic preview.",
+    previewTruncated: false,
+    warnings: [],
+    createdAt: "2026-07-29T12:01:00Z",
+    updatedAt: "2026-07-29T12:01:00Z",
     ...overrides
   };
 }

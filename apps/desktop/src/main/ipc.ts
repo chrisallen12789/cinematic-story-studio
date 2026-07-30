@@ -7,7 +7,10 @@ import {
   type IpcMainInvokeEvent
 } from "electron";
 
-import type { ProjectDetail } from "@cinematic-story-studio/contracts/api";
+import type {
+  DeclaredImportFormat,
+  ProjectDetail
+} from "@cinematic-story-studio/contracts/api";
 
 import {
   IPC_CHANNELS,
@@ -22,7 +25,9 @@ import {
   parseCorrectSpeakerRequest,
   parseCreateJobRequest,
   parseCreateProjectRequest,
+  parseDecideImportReviewRequest,
   parseEmptyRequest,
+  parseImportReviewIdRequest,
   parseJobEventsRequest,
   parseJobIdRequest,
   parseProjectIdRequest,
@@ -79,8 +84,8 @@ export function registerDesktopIpc(options: DesktopIpcOptions): () => void {
       properties: ["openFile", "dontAddToRecent"],
       filters: [
         {
-          name: "Story text",
-          extensions: ["txt", "md", "markdown"]
+          name: "Story documents",
+          extensions: ["txt", "md", "markdown", "docx", "epub", "pdf"]
         }
       ]
     });
@@ -92,15 +97,7 @@ export function registerDesktopIpc(options: DesktopIpcOptions): () => void {
       throw new ValidationError("The selected file path was invalid.");
     }
     const extension = path.extname(selectedPath).toLowerCase();
-    const declaredFormat =
-      extension === ".md" || extension === ".markdown" ? "markdown" : "txt";
-    if (
-      extension !== ".txt" &&
-      extension !== ".md" &&
-      extension !== ".markdown"
-    ) {
-      throw new ValidationError("Only TXT and Markdown files are supported.");
-    }
+    const declaredFormat = declaredImportFormat(extension);
     const imported = await options.api.importSelectedFile(
       request.payload.projectId,
       selectedPath,
@@ -108,6 +105,16 @@ export function registerDesktopIpc(options: DesktopIpcOptions): () => void {
     );
     await options.preferences.setRecentProjectId(request.payload.projectId);
     return imported;
+  });
+
+  register(IPC_CHANNELS.projectsGetImportReview, async (raw) => {
+    const request = parseImportReviewIdRequest(raw);
+    return options.api.getImportReview(request.payload);
+  });
+
+  register(IPC_CHANNELS.projectsDecideImportReview, async (raw) => {
+    const request = parseDecideImportReviewRequest(raw);
+    return options.api.decideImportReview(request.payload);
   });
 
   register(IPC_CHANNELS.dialogueCorrectSpeaker, async (raw) => {
@@ -184,6 +191,26 @@ export function registerDesktopIpc(options: DesktopIpcOptions): () => void {
         return failure(toDesktopError(error));
       }
     });
+  }
+}
+
+function declaredImportFormat(extension: string): DeclaredImportFormat {
+  switch (extension) {
+    case ".txt":
+      return "txt";
+    case ".md":
+    case ".markdown":
+      return "markdown";
+    case ".docx":
+      return "docx";
+    case ".epub":
+      return "epub";
+    case ".pdf":
+      return "pdf";
+    default:
+      throw new ValidationError(
+        "Only TXT, Markdown, DOCX, EPUB, and text-based PDF files are supported."
+      );
   }
 }
 

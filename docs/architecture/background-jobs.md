@@ -73,7 +73,7 @@ The cancel endpoint records `cancel_requested` transactionally and signals the l
 - before checkpoint and result publication;
 - while supervising FFmpeg/local processes.
 
-Cancellation never rolls back previously approved project state. New temporary work is removed, leases are released, and no partial file is registered as a finished artifact. A non-cooperative owned subprocess receives graceful termination, then bounded process-group termination. The application never kills by process name.
+Cancellation never rolls back previously approved project state. New temporary work is removed, leases are released, and no partial file is registered as a finished artifact. Document-parser cancellation terminates the exact parent-owned spawned-process tree through its Windows Job Object and proves that the owned processes exited before returning; other non-cooperative owned subprocesses receive graceful termination, then bounded process-group termination. The application never kills by process name.
 
 ## Failure, retry, and resume
 
@@ -91,7 +91,17 @@ Resume verifies job type, checkpoint schema, input revision/hash, agent/tool ver
 
 ## Startup and shutdown recovery
 
-On startup, after the previous instance's leases expire (or its verified ownership is known gone), all abandoned `running`/`cancel_requested` attempts become `interrupted`. A queued job remains queued. The service never assumes an external provider request did not complete: it reconciles through provider idempotency/status when supported or requires review before possible paid duplication.
+On startup, after the previous instance's leases expire (or its verified
+ownership is known gone), an abandoned `running` attempt becomes
+`interrupted`. A transactionally committed `cancel_requested` intent settles
+as `cancelled`; restart never converts that durable human request into
+resumable work. A queued job remains queued. If an import or re-extraction
+transaction committed its pending extraction but the process stopped before
+the extraction-job transaction committed, startup creates the one missing
+targeted job with a deterministic recovery key. It never duplicates an
+existing extraction target. The service never assumes an external provider
+request did not complete: it reconciles through provider idempotency/status
+when supported or requires review before possible paid duplication.
 
 Graceful shutdown stops new claims, requests checkpoint at the next safe point, persists events, changes unfinished attempts to `interrupted`, releases leases, and closes storage. Phase 0 workers do not continue after the desktop/service exits.
 
@@ -111,4 +121,9 @@ Each registered job type declares:
 - resource/concurrency class;
 - result publication transaction and cleanup behavior.
 
-Phase 0 requires `analyze_story`. Future job types include import extraction, provider synthesis, scene render, chapter render, master render, cache verification, and quality-control analysis.
+Phase 0 requires `analyze_story`. Phase 1 adds persisted document extraction
+work targeted to one immutable source revision. It records parser attempts and
+publishes an extraction plus pending Import Review atomically; analysis remains
+blocked until that exact extraction is approved. Future job types include
+provider synthesis, scene render, chapter render, master render, cache
+verification, and quality-control analysis.

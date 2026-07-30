@@ -19,6 +19,7 @@ class ServiceSettings:
     bearer_token: str
     instance_id: str = field(default_factory=new_id)
     max_import_bytes: int = 100 * 1024 * 1024
+    parser_deadline_seconds: float = 30.0
     worker_enabled: bool = True
     worker_poll_seconds: float = 0.025
     ffmpeg_executable: str | None = None
@@ -38,6 +39,8 @@ class ServiceSettings:
             raise ValueError("A bounded bearer token is required.")
         if self.max_import_bytes < 1:
             raise ValueError("The import byte limit must be positive.")
+        if not 0.1 <= self.parser_deadline_seconds <= 30:
+            raise ValueError("The parser deadline is outside the safe range.")
         if not 0.001 <= self.worker_poll_seconds <= 5:
             raise ValueError("The worker polling interval is outside the safe range.")
         if not 0.05 <= self.kokoro_probe_timeout_seconds <= 2:
@@ -66,6 +69,7 @@ class ServiceSettings:
             bearer_token=self.bearer_token,
             instance_id=self.instance_id,
             max_import_bytes=self.max_import_bytes,
+            parser_deadline_seconds=self.parser_deadline_seconds,
             worker_enabled=self.worker_enabled,
             worker_poll_seconds=self.worker_poll_seconds,
             ffmpeg_executable=self.ffmpeg_executable,

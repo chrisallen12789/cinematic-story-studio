@@ -349,6 +349,14 @@ librt==0.13.0 \
     --hash=sha256:fadc63331f4388c3dc90090448f682a7e9feafc11481391c1e94f2f907a3976e \
     --hash=sha256:fc67741da44c6eaa90e01eafb586bbba9b51eb5b6ed381ee6f5ae72eb3316d21
     # via mypy
+lxml==6.1.1 \
+    --hash=sha256:26e6eda8d38c1fcab1090dd196ee87cbd13788e531937610e2589085de074e77 \
+    --hash=sha256:793033d6c5cdf33a573f910d9bea14ef8f5771820411d118da8e1182edb53d5e \
+    --hash=sha256:a10bd2fd62e8ce916ececb342f348f190724a098c1faa056fdfb2a22ad5e8660 \
+    --hash=sha256:abbefa31eee84842140f67acef1c828e28bba8bbf0c3bc6e5492a9af88152c28 \
+    --hash=sha256:b2d444f2e66624d68e9c6b211e28a76e22fff5fcabcfff4deac18b529b7d4137 \
+    --hash=sha256:ba96ae44888e0185281e937633a743ea90d5a196c6000f82565ebb0580012d40
+    # via -r requirements.in
 mypy==1.20.2 \
     --hash=sha256:0c64e5973df366b747646fc98da921f9d6eba9716d57d1db94a83c026a08e0fb \
     --hash=sha256:0deb80d062b2479f2c87ae568f89845afc71d11bc41b04179e58165fd9f31e98 \
@@ -580,6 +588,10 @@ pyinstaller-hooks-contrib==2026.6 \
     --hash=sha256:bef5002c32f4f50bd55b005da12cff64eca8783e7eaf86a06a62410164bab725 \
     --hash=sha256:fd13b8ac126b35361175edacd41a0d97080b75dd5f4b594ecefefff969509dd3
     # via pyinstaller
+pypdf==6.14.2 \
+    --hash=sha256:3f07891af76dc002657e04993ab9b4de81de29f9013b9761d0b7968bff12e946 \
+    --hash=sha256:7873f502fe4385e79539b21d872392dc0c4e3714327c15881cbc7fbfd1f95b25
+    # via -r requirements.in
 pyproject-hooks==1.2.0 \
     --hash=sha256:1e859bd5c40fae9448642dd871adf459e5e2084186e8d2c2a79a824c970da1f8 \
     --hash=sha256:9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913

@@ -82,9 +82,45 @@ application and temporary directories.
 For each launch, the gate records relevant preexisting process state, establishes ownership from
 the exact test-created Electron process tree, identifies the embedded
 `cinematic-story-service.exe`, and records only those owned Electron and service PIDs. After each
-shutdown it must prove those exact PIDs are absent. It fails without terminating an unrelated
-process if ownership cannot be established. The resulting process evidence feeds the per-run build
-manifest uploaded beside the unpackaged artifact.
+shutdown it must prove those exact identities are absent in two consecutive inventories while
+retaining any late exact-path descendants discovered while their exact parent identity is still
+current. A new candidate whose parent PID matches only a historical identity fails as ambiguous
+instead of being claimed as owned. The harness can force only the direct Electron launcher handle
+created by Playwright; it never sends PID-based termination to descendants. A surviving identity or
+unprovable ownership fails closed without terminating an unrelated process. The resulting process
+evidence feeds the per-run build manifest uploaded beside the unpackaged artifact.
+
+The Windows verification harness obtains that relevant-process inventory with one fixed CIM query
+for exactly `Cinematic Story Studio.exe` and `cinematic-story-service.exe`. Each attempt is capped
+at 15 seconds, at most three attempts are permitted, and the whole inventory operation is capped at
+44 seconds. Each attempt reserves up to two seconds of its own budget to confirm that a cancelled
+PowerShell helper exited before any retry begins. An unconfirmed helper exit fails closed without a
+retry. Transient command-start, provider-exit, and confirmed timeout failures use bounded 250 ms
+and 750 ms backoff. Malformed, oversized, invalid, or ambiguous output fails immediately. Callers
+pass a monotonic absolute deadline into nested queries, so a shorter root-proof or shutdown budget
+cannot start a longer inventory operation. PowerShell/CIM is used only by this Windows verification
+harness; the desktop application and packaged local service do not require PowerShell during normal
+use.
+
+After the executable and evidence destinations are validated, the packaged harness attempts to
+write a bounded, redacted `packaged-e2e-result.json` for every caught failure, including failure
+before the first application launch. The versioned result distinguishes a successful empty
+prelaunch inventory (`[]`) from an unavailable inventory (`null`) and records a stable failure
+stage/code, completed launches, whether launch began, whether ownership was established, and
+whether cleanup completed. It never records command output, arbitrary exception text, environment
+values, manuscript text, tokens, or absolute process paths. A fail-closed checkpoint is written
+before each potentially long stage and overwritten with the caught failure and post-cleanup state.
+The build-evidence generator validates this failed-result contract while keeping the packaged E2E
+failed and the overall evidence incomplete. It preserves a factual ownership-exit assertion only
+when both exact launches already proved clean exit, such as a later temporary-directory cleanup
+failure.
+
+A verification-harness failure is not automatically an application failure. For example, failure
+while CIM initializes before launch proves that the exact-artifact gate did not run; it does not
+prove that the application launched or failed. The gate remains blocking in either case. If CIM
+remains unavailable after the bounded policy, ownership cannot be established and the harness
+fails closed. A missing or unwritable validated result destination cannot describe its own write
+failure, so the manifest continues to treat missing machine evidence as incomplete.
 
 ## Dependency-audit evidence
 

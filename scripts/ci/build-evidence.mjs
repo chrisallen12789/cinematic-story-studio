@@ -34,6 +34,59 @@ export const BUILD_EVIDENCE_ENVIRONMENT = Object.freeze({
 const APP_EXECUTABLE_NAME = "Cinematic Story Studio.exe";
 const SERVICE_EXECUTABLE_NAME = "cinematic-story-service.exe";
 const MAX_HARNESS_RESULT_BYTES = 1024 * 1024;
+const PACKAGED_E2E_RESULT_SCHEMA_VERSION = "2.0.0";
+const PACKAGED_FAILURE_STAGES = new Set([
+  "prelaunch_inventory_1",
+  "isolation_setup",
+  "launch_1",
+  "root_ownership_1",
+  "readiness_1",
+  "service_ownership_1",
+  "workflow_1",
+  "shutdown_1",
+  "prelaunch_inventory_2",
+  "launch_2",
+  "root_ownership_2",
+  "readiness_2",
+  "service_ownership_2",
+  "restore_2",
+  "screenshot",
+  "shutdown_2",
+  "cleanup",
+]);
+const PACKAGED_FAILURE_CODES = new Set([
+  "PROCESS_INVENTORY_TIMEOUT",
+  "PROCESS_INVENTORY_DEADLINE_EXCEEDED",
+  "PROCESS_INVENTORY_COMMAND_FAILED",
+  "PROCESS_INVENTORY_COMMAND_START_FAILED",
+  "PROCESS_INVENTORY_HELPER_EXIT_UNCONFIRMED",
+  "PROCESS_INVENTORY_OUTPUT_LIMIT",
+  "PROCESS_INVENTORY_MALFORMED_OUTPUT",
+  "PROCESS_INVENTORY_INVALID_IDENTITY",
+  "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+  "PROCESS_INVENTORY_UNSUPPORTED_PLATFORM",
+  "ISOLATION_SETUP_FAILED",
+  "APPLICATION_LAUNCH_FAILED",
+  "ROOT_OWNERSHIP_NOT_ESTABLISHED",
+  "APPLICATION_READINESS_FAILED",
+  "SERVICE_OWNERSHIP_NOT_ESTABLISHED",
+  "APPLICATION_WORKFLOW_FAILED",
+  "SHUTDOWN_VERIFICATION_FAILED",
+  "SCREENSHOT_CAPTURE_FAILED",
+  "CLEANUP_FAILED",
+]);
+const PACKAGED_INVENTORY_FAILURE_CODES = new Set([
+  "PROCESS_INVENTORY_TIMEOUT",
+  "PROCESS_INVENTORY_DEADLINE_EXCEEDED",
+  "PROCESS_INVENTORY_COMMAND_FAILED",
+  "PROCESS_INVENTORY_COMMAND_START_FAILED",
+  "PROCESS_INVENTORY_HELPER_EXIT_UNCONFIRMED",
+  "PROCESS_INVENTORY_OUTPUT_LIMIT",
+  "PROCESS_INVENTORY_MALFORMED_OUTPUT",
+  "PROCESS_INVENTORY_INVALID_IDENTITY",
+  "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+  "PROCESS_INVENTORY_UNSUPPORTED_PLATFORM",
+]);
 
 export async function generateBuildEvidence({
   repositoryRoot = defaultRepositoryRoot,
@@ -128,11 +181,12 @@ export async function generateBuildEvidence({
   const packagedE2eOwnershipExitProven =
     harnessResult.ownershipExitProven;
   const packagedE2eEvidenceComplete =
+    normalizedStepOutcome === "success" &&
     harnessResultMatchesStepOutcome &&
-    (normalizedStepOutcome === "failure" ||
-      (screenshotEvidence.exists &&
-        harnessResult.screenshotCaptured === true &&
-        packagedE2eOwnershipExitProven));
+    screenshotEvidence.exists &&
+    screenshotEvidence.sizeBytes > 0 &&
+    harnessResult.screenshotCaptured === true &&
+    packagedE2eOwnershipExitProven;
   const normalizedWorkflowHeadSha = normalizeHeadSha(workflowHeadSha);
   const normalizedTestedCheckoutSha = normalizeHeadSha(
     testedCheckoutSha,
@@ -170,6 +224,13 @@ export async function generateBuildEvidence({
         ...resultEvidence,
         contractValid: harnessResult.contractValid,
         reportedStatus: harnessResult.reportedStatus,
+        failureStage: harnessResult.failureStage,
+        failureCode: harnessResult.failureCode,
+        applicationLaunchBegan:
+          harnessResult.applicationLaunchBegan,
+        ownershipEstablished: harnessResult.ownershipEstablished,
+        cleanupCompleted: harnessResult.cleanupCompleted,
+        completedLaunches: harnessResult.completedLaunches,
       },
       launches: harnessResult.launches,
     },
@@ -298,38 +359,59 @@ async function inspectHarnessResult(
   appVersion,
 ) {
   if (!resultEvidence.exists) {
-    return {
-      contractValid: false,
-      reportedStatus: null,
-      screenshotCaptured: null,
-      completedAt: null,
-      launches: [],
-      ownershipExitProven: false,
-    };
+    return invalidHarnessResult();
   }
   if (
     typeof resultEvidence.sizeBytes !== "number" ||
     resultEvidence.sizeBytes > MAX_HARNESS_RESULT_BYTES
   ) {
-    return {
-      contractValid: false,
-      reportedStatus: null,
-      screenshotCaptured: null,
-      completedAt: null,
-      launches: [],
-      ownershipExitProven: false,
-    };
+    return invalidHarnessResult();
   }
 
   try {
     const value = JSON.parse(await readFile(resultPath, "utf8"));
+    if (
+      !isPlainObject(value) ||
+      !hasExactKeys(value, [
+        "schemaVersion",
+        "completedAt",
+        "status",
+        "failureStage",
+        "failureCode",
+        "packagedVersion",
+        "executable",
+        "fixture",
+        "isolationEnvironment",
+        "completedLaunches",
+        "applicationLaunchBegan",
+        "ownershipEstablished",
+        "cleanupCompleted",
+        "preexistingRelevantProcesses",
+        "flow",
+        "screenshot",
+        "launches",
+      ])
+    ) {
+      return invalidHarnessResult();
+    }
     const expectedExecutable = `release/${appVersion}/win-unpacked/${APP_EXECUTABLE_NAME}`;
     const completedAt =
-      typeof value?.completedAt === "string"
+      typeof value.completedAt === "string"
         ? normalizeUtcTimestamp(value.completedAt)
         : null;
-    const launches = sanitizeLaunchProof(value?.launches);
-    const ownershipExitProven =
+    const launches = sanitizeLaunchProof(value.launches);
+    const completedLaunches = sanitizeCompletedLaunchNumbers(
+      value.completedLaunches,
+    );
+    const preexistingRelevantProcessesWereUnavailable =
+      value.preexistingRelevantProcesses === null;
+    const preexistingRelevantProcesses =
+      preexistingRelevantProcessesWereUnavailable
+        ? null
+        : sanitizePreexistingProcesses(
+            value.preexistingRelevantProcesses,
+          );
+    const actualOwnershipExitProof =
       Array.isArray(launches) &&
       launches.length === 2 &&
       launches.every(
@@ -351,9 +433,8 @@ async function inspectHarnessResult(
           launch.exitProof.forcedPids.length === 0 &&
           launch.exitProof.remainingPids.length === 0,
       );
-    const contractValid =
-      isPlainObject(value) &&
-      value.schemaVersion === "1.0.0" &&
+    const commonContractValid =
+      value.schemaVersion === PACKAGED_E2E_RESULT_SCHEMA_VERSION &&
       (value.status === "passed" || value.status === "failed") &&
       completedAt !== null &&
       value.packagedVersion === appVersion &&
@@ -376,35 +457,291 @@ async function inspectHarnessResult(
         "close",
       ]) &&
       isPlainObject(value.screenshot) &&
+      hasExactKeys(value.screenshot, ["artifactId", "captured"]) &&
       value.screenshot.artifactId === "packaged-ui-screenshot" &&
       typeof value.screenshot.captured === "boolean" &&
       Array.isArray(launches) &&
-      (value.status !== "passed" || ownershipExitProven);
+      Array.isArray(completedLaunches) &&
+      equalNumberArrays(
+        completedLaunches,
+        launches.map((launch) => launch.launch),
+      ) &&
+      (preexistingRelevantProcessesWereUnavailable ||
+        Array.isArray(preexistingRelevantProcesses)) &&
+      typeof value.applicationLaunchBegan === "boolean" &&
+      typeof value.ownershipEstablished === "boolean" &&
+      typeof value.cleanupCompleted === "boolean" &&
+      (!value.ownershipEstablished ||
+        value.applicationLaunchBegan) &&
+      (launches.length === 0 ||
+        (preexistingRelevantProcesses !== null &&
+          equalPreexistingProcesses(
+            preexistingRelevantProcesses,
+            launches[0].preexistingRelevantProcesses,
+          )));
+    const passedContractValid =
+      value.status === "passed" &&
+      value.failureStage === null &&
+      value.failureCode === null &&
+      preexistingRelevantProcesses !== null &&
+      value.applicationLaunchBegan === true &&
+      value.ownershipEstablished === true &&
+      value.cleanupCompleted === true &&
+      value.screenshot.captured === true &&
+      equalNumberArrays(completedLaunches ?? [], [1, 2]) &&
+      actualOwnershipExitProof;
+    const failedContractValid =
+      value.status === "failed" &&
+      PACKAGED_FAILURE_STAGES.has(value.failureStage) &&
+      PACKAGED_FAILURE_CODES.has(value.failureCode) &&
+      validFailureCodeForStage(
+        value.failureStage,
+        value.failureCode,
+      ) &&
+      validFailedProgress({
+        stage: value.failureStage,
+        launches,
+        preexistingRelevantProcesses,
+        preexistingRelevantProcessesWereUnavailable,
+        applicationLaunchBegan: value.applicationLaunchBegan,
+        ownershipEstablished: value.ownershipEstablished,
+        cleanupCompleted: value.cleanupCompleted,
+        screenshotCaptured: value.screenshot.captured,
+        actualOwnershipExitProof,
+      });
+    const contractValid =
+      commonContractValid &&
+      (passedContractValid || failedContractValid);
+    if (!contractValid) {
+      return invalidHarnessResult();
+    }
     return {
-      contractValid,
-      reportedStatus:
-        value?.status === "passed" || value?.status === "failed"
-          ? value.status
-          : null,
-      screenshotCaptured:
-        isPlainObject(value?.screenshot) &&
-        typeof value.screenshot.captured === "boolean"
-          ? value.screenshot.captured
-          : null,
+      contractValid: true,
+      reportedStatus: value.status,
+      screenshotCaptured: value.screenshot.captured,
       completedAt,
-      launches: launches ?? [],
-      ownershipExitProven,
+      launches,
+      ownershipExitProven: actualOwnershipExitProof,
+      failureStage: value.failureStage,
+      failureCode: value.failureCode,
+      applicationLaunchBegan: value.applicationLaunchBegan,
+      ownershipEstablished: value.ownershipEstablished,
+      cleanupCompleted: value.cleanupCompleted,
+      completedLaunches,
     };
   } catch {
-    return {
-      contractValid: false,
-      reportedStatus: null,
-      screenshotCaptured: null,
-      completedAt: null,
-      launches: [],
-      ownershipExitProven: false,
-    };
+    return invalidHarnessResult();
   }
+}
+
+function validFailureCodeForStage(stage, code) {
+  if (
+    (stage === "prelaunch_inventory_1" ||
+      stage === "prelaunch_inventory_2") &&
+    PACKAGED_INVENTORY_FAILURE_CODES.has(code)
+  ) {
+    return true;
+  }
+  if (
+    (stage === "root_ownership_1" ||
+      stage === "root_ownership_2" ||
+      stage === "service_ownership_1" ||
+      stage === "service_ownership_2" ||
+      stage === "shutdown_1" ||
+      stage === "shutdown_2") &&
+    PACKAGED_INVENTORY_FAILURE_CODES.has(code)
+  ) {
+    return true;
+  }
+  const expectedCode = {
+    isolation_setup: "ISOLATION_SETUP_FAILED",
+    launch_1: "APPLICATION_LAUNCH_FAILED",
+    root_ownership_1: "ROOT_OWNERSHIP_NOT_ESTABLISHED",
+    readiness_1: "APPLICATION_READINESS_FAILED",
+    service_ownership_1: "SERVICE_OWNERSHIP_NOT_ESTABLISHED",
+    workflow_1: "APPLICATION_WORKFLOW_FAILED",
+    shutdown_1: "SHUTDOWN_VERIFICATION_FAILED",
+    launch_2: "APPLICATION_LAUNCH_FAILED",
+    root_ownership_2: "ROOT_OWNERSHIP_NOT_ESTABLISHED",
+    readiness_2: "APPLICATION_READINESS_FAILED",
+    service_ownership_2: "SERVICE_OWNERSHIP_NOT_ESTABLISHED",
+    restore_2: "APPLICATION_WORKFLOW_FAILED",
+    screenshot: "SCREENSHOT_CAPTURE_FAILED",
+    shutdown_2: "SHUTDOWN_VERIFICATION_FAILED",
+    cleanup: "CLEANUP_FAILED",
+  }[stage];
+  return code === expectedCode;
+}
+
+function validFailedProgress({
+  stage,
+  launches,
+  preexistingRelevantProcesses,
+  preexistingRelevantProcessesWereUnavailable,
+  applicationLaunchBegan,
+  ownershipEstablished,
+  cleanupCompleted,
+  screenshotCaptured,
+  actualOwnershipExitProof,
+}) {
+  if (!Array.isArray(launches)) {
+    return false;
+  }
+  const launchCount = launches.length;
+  const firstLaunchExitProven =
+    launchCount > 0 && launchOwnershipExitProven(launches[0]);
+
+  switch (stage) {
+    case "prelaunch_inventory_1":
+      return (
+        preexistingRelevantProcessesWereUnavailable &&
+        preexistingRelevantProcesses === null &&
+        !applicationLaunchBegan &&
+        !ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 0
+      );
+    case "isolation_setup":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        !applicationLaunchBegan &&
+        !ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 0
+      );
+    case "launch_1":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        !ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 0
+      );
+    case "root_ownership_1":
+    case "readiness_1":
+    case "service_ownership_1":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        !ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 0
+      );
+    case "workflow_1":
+    case "shutdown_1":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 0
+      );
+    case "prelaunch_inventory_2":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 1 &&
+        firstLaunchExitProven
+      );
+    case "launch_2":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        !ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 1 &&
+        firstLaunchExitProven
+      );
+    case "root_ownership_2":
+    case "readiness_2":
+    case "service_ownership_2":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        !ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 1 &&
+        firstLaunchExitProven
+      );
+    case "restore_2":
+    case "screenshot":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        ownershipEstablished &&
+        !screenshotCaptured &&
+        launchCount === 1 &&
+        firstLaunchExitProven
+      );
+    case "shutdown_2":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        ownershipEstablished &&
+        screenshotCaptured &&
+        launchCount === 1 &&
+        firstLaunchExitProven
+      );
+    case "cleanup":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        ownershipEstablished &&
+        !cleanupCompleted &&
+        screenshotCaptured &&
+        launchCount === 2 &&
+        actualOwnershipExitProof
+      );
+    default:
+      return false;
+  }
+}
+
+function launchOwnershipExitProven(launch) {
+  return (
+    launch.ownership.processes.some(
+      (process) =>
+        process.pid === launch.ownership.rootPid &&
+        process.kind === "app",
+    ) &&
+    launch.ownership.processes.some(
+      (process) => process.kind === "service",
+    ) &&
+    launch.exitProof.ownedPids.length > 0 &&
+    launch.exitProof.ownedPids.includes(launch.ownership.rootPid) &&
+    launch.exitProof.graceful &&
+    launch.exitProof.forcedPids.length === 0 &&
+    launch.exitProof.remainingPids.length === 0
+  );
+}
+
+function invalidHarnessResult() {
+  return {
+    contractValid: false,
+    reportedStatus: null,
+    screenshotCaptured: null,
+    completedAt: null,
+    launches: [],
+    ownershipExitProven: false,
+    failureStage: null,
+    failureCode: null,
+    applicationLaunchBegan: null,
+    ownershipEstablished: null,
+    cleanupCompleted: null,
+    completedLaunches: [],
+  };
 }
 
 function sanitizeLaunchProof(value) {
@@ -416,16 +753,34 @@ function sanitizeLaunchProof(value) {
   for (const item of value) {
     if (
       !isPlainObject(item) ||
+      !hasExactKeys(item, [
+        "launch",
+        "preexistingRelevantProcesses",
+        "ownership",
+        "exitProof",
+      ]) ||
       (item.launch !== 1 && item.launch !== 2) ||
+      item.launch !== launches.length + 1 ||
       seenLaunches.has(item.launch) ||
       !Array.isArray(item.preexistingRelevantProcesses) ||
       !isPlainObject(item.ownership) ||
+      !hasExactKeys(item.ownership, [
+        "launcherPid",
+        "rootPid",
+        "processes",
+      ]) ||
       !isPositivePid(item.ownership.launcherPid) ||
       !isPositivePid(item.ownership.rootPid) ||
       !Array.isArray(item.ownership.processes) ||
       item.ownership.processes.length === 0 ||
       item.ownership.processes.length > 256 ||
       !isPlainObject(item.exitProof) ||
+      !hasExactKeys(item.exitProof, [
+        "ownedPids",
+        "graceful",
+        "forcedPids",
+        "remainingPids",
+      ]) ||
       typeof item.exitProof.graceful !== "boolean"
     ) {
       return null;
@@ -442,6 +797,13 @@ function sanitizeLaunchProof(value) {
     for (const process of item.ownership.processes) {
       if (
         !isPlainObject(process) ||
+        !hasExactKeys(process, [
+          "pid",
+          "parentPid",
+          "kind",
+          "executableName",
+          "creationDate",
+        ]) ||
         !isPositivePid(process.pid) ||
         seenProcessPids.has(process.pid) ||
         !Number.isSafeInteger(process.parentPid) ||
@@ -527,6 +889,7 @@ function sanitizePreexistingProcesses(value) {
   for (const item of value) {
     if (
       !isPlainObject(item) ||
+      !hasExactKeys(item, ["pid", "name", "creationDate"]) ||
       !isPositivePid(item.pid) ||
       seenPids.has(item.pid) ||
       (item.name !== APP_EXECUTABLE_NAME &&
@@ -543,6 +906,29 @@ function sanitizePreexistingProcesses(value) {
     });
   }
   return processes.sort((left, right) => left.pid - right.pid);
+}
+
+function sanitizeCompletedLaunchNumbers(value) {
+  if (
+    !Array.isArray(value) ||
+    value.length > 2 ||
+    !value.every((item, index) => item === index + 1)
+  ) {
+    return null;
+  }
+  return [...value];
+}
+
+function equalPreexistingProcesses(left, right) {
+  return (
+    left.length === right.length &&
+    left.every(
+      (value, index) =>
+        value.pid === right[index].pid &&
+        value.name === right[index].name &&
+        value.creationDate === right[index].creationDate,
+    )
+  );
 }
 
 function validRootedProcessTree(processes, launcherPid, rootPid) {
@@ -785,6 +1171,18 @@ function isPlainObject(value) {
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value)
+  );
+}
+
+function hasExactKeys(value, expected) {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
   );
 }
 

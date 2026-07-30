@@ -16,7 +16,7 @@ correction.
 
 | Gate | Evidence reviewed | Entry criteria | Unlocks | Automatic invalidation |
 |---|---|---|---|---|
-| Import review | File identity, type, size, digest, extraction warnings, preservation status | Import completed or failed with inspectable status | Story analysis | Source document bytes, digest, extraction configuration, or selected document changes |
+| Import review | File identity, declared/detected type, byte size, source/extracted digests, parser/version, evidence fingerprint binding the limits profile, bounded preview, structure/source mappings, warnings, preservation status | Immutable source and terminal extraction revisions exist; no blocking parser error | Story analysis for that extraction only | A new current source or extraction revision/evidence fingerprint |
 | Scene segmentation review | Ordered chapter/scene spans and low-confidence warnings | Import approved; all spans resolve to preserved source | Character/dialogue analysis | Chapter, scene, beat, or source-span revision changes |
 | Character review | Character names, aliases, merges/splits, evidence and corrections | Segmentation approved | Dialogue-attribution review and casting proposals | Character identity, alias, merge, or source evidence changes |
 | Dialogue-attribution review | Every verbatim line, effective speaker, confidence, evidence, warnings | Character review approved; unknown speakers are visible | Casting and performance proposals | Dialogue line, character identity, attribution, or human correction changes |
@@ -28,9 +28,9 @@ correction.
 | Final-master approval | Full master, manifest, chapter approvals, QC report and export profile | Every chapter approved; zero open blockers; output measured | User export | Any manifest input, chapter approval, export profile, or QC result changes |
 
 “Invalidation” is derived when current evidence no longer matches an approval's
-fingerprint. The historical decision remains intact. The system appends an
-invalidation event/state and opens a new pending decision; it never edits the
-old record.
+fingerprint. The historical decision remains intact. Import or re-extraction
+creates a separate pending review for the new current evidence; it never edits
+the old decision. No separate invalidation-event record is claimed in Phase 1.
 
 ## Decision workflow
 
@@ -42,9 +42,18 @@ old record.
    and downstream impact to the reviewer.
 5. Append the reviewer decision with actor, rationale, time, and fingerprint.
 6. Re-read the current revisions under the same transaction. If they changed,
-   reject the stale decision and create a new pending review.
+   reject the stale decision; the current extraction's review remains
+   authoritative.
 7. Advance only if the effective decision is approved and no blocking warning
    or unresolved prerequisite remains.
+
+For Import Review, the actor classification is `human` and the service-owned
+actor ID is `local_user`. The explicit decision endpoint appends an immutable
+human-classified record; background extraction and analysis jobs do not write
+that endpoint and cannot update or erase its history. A pending or rejected
+review cannot be bypassed by calling the analysis endpoint directly. Replaying
+an approval idempotency key returns the same decision; a stale source or
+extraction revision fails closed with a revision conflict.
 
 An approval is scoped: approving one scene or chapter does not approve siblings.
 Bulk approval is permitted only when each scope and fingerprint is enumerated

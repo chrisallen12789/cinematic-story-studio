@@ -8,9 +8,9 @@ The primary user is an author, producer, or audio director who wants one install
 
 ## Product principles
 
-1. Preserve imported source bytes and extracted story characters. Rewriting is a separate, explicit user action and is outside Phase 0.
+1. Preserve imported source bytes and extracted story characters. Rewriting is a separate, explicit user action and is outside Phase 1.
 2. A human correction is durable provenance. Automation may propose a later change but may not silently replace the correction.
-3. Local operation is the default. The application launches, opens projects, and performs the Phase 0 workflow without cloud credentials.
+3. Local operation is the default. The application launches, opens projects, and performs the Phase 1 workflow without cloud credentials.
 4. Every long operation is observable, cancellable, and recoverable.
 5. Production decisions, inputs, provider identities, versions, and outputs are inspectable.
 6. The installed application starts its dependencies; routine use never requires PowerShell, Docker, or a manually started service.
@@ -20,11 +20,14 @@ The primary user is an author, producer, or audio director who wants one install
 ### Projects and import
 
 - **PR-001** The user can create, list, open, rename, and delete a local project.
-- **PR-002** The target product imports TXT, Markdown, DOCX, EPUB, and PDF. Phase 0 must implement TXT and Markdown and reject unsupported or malformed files clearly.
-- **PR-003** The application stores the original file bytes, a SHA-256 digest, encoding/extraction metadata, and an exact extracted-text representation. Parsing never mutates that record.
-- **PR-004** Import validates type, size, archive members, and extraction limits before making content durable. A failed import leaves no visible partial story.
-- **PR-005** Reimport creates a new source/story revision; it never overwrites the prior source.
+- **PR-002** Phase 1 imports TXT, Markdown, DOCX, EPUB, and text-based PDF through format-specific adapters. Encrypted, malformed, image-only, or unsupported inputs fail with typed, redacted errors; OCR is not performed.
+- **PR-003** The application stores immutable original bytes, a SHA-256 digest, source revision, parser identity/version, exact extracted text, extraction digest, structure/source mappings, warnings, and a limits fingerprint. Re-extraction appends a new extraction revision.
+- **PR-004** Import enforces the separate 100 MiB source boundary and the fixed parser profile before extraction publication: 2,048 archive members, 512 Unicode code points per member name, 32 MiB per member, 200 MiB total expansion, 100:1 compression ratio, archive depth 20, 10,000,000 extracted Unicode characters, 10,000 sections, 2,000 PDF pages, a parent-enforced 30-second spawned-parser wall-clock deadline, and a Windows Job Object ceiling of 768 MiB per parser process.
+- **PR-005** An identical import reuses the current source/extraction; a changed-byte reimport creates a new source revision and, after successful extraction, a new story revision. It never overwrites the prior source.
 - **PR-006** Opening a project restores its last durable state after an application restart.
+- **PR-007** A completed extraction enters a durable Import Review gate. Story analysis remains blocked until a local human approves the exact source and extraction revisions.
+- **PR-008** Import Review shows at most 8,000 preview characters plus format, byte size, source/extracted hashes, adapter/version, structure summary, warnings, and any omitted-content notice.
+- **PR-009** The service accepts sources up to 100 MiB. The Phase 1 desktop native transfer boundary rejects a selected file above its separately enforced 8 MiB client cap before service upload; file bytes do not cross renderer IPC, and the UI must distinguish that client limit from the service parser limit.
 
 ### Story analysis and human review
 
@@ -84,6 +87,12 @@ The primary user is an author, producer, or audio director who wants one install
 Phase 0 includes repository safeguards, typed contracts, architecture, TXT/Markdown import, basic deterministic parsing, SQLite persistence, speaker correction, persisted analysis jobs, provider/capability health, synthetic fixtures, test coverage, and an unpackaged desktop build.
 
 Phase 0 does **not** claim production-quality speech, a complete audiobook render, bundled large models, DOCX/EPUB/PDF import, M4B output, automatic updating, a signed public installer, or final cinematic quality.
+
+## Phase 1 release boundary
+
+Phase 1 adds secure local DOCX, EPUB, and text-based PDF extraction; immutable source and extraction revisions; typed parser records; a mandatory Import Review approval before analysis; schema-v2 migration with a verified recovery backup; deterministic public fixtures; adversarial parser tests; and packaged persistence evidence for the DOCX review flow.
+
+Phase 1 does **not** add OCR, manuscript rewriting, cloud parsing, audio generation, bundled models, an installer/public release, or any Phase 2 production feature. Embedded media, executable content, scripts, macros, remote EPUB resources, and PDF attachments are not executed or fetched.
 
 ## Acceptance and traceability
 

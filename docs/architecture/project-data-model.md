@@ -25,6 +25,10 @@ None of these paths are committed. Exports are user-owned copies outside this tr
 - Timestamps are UTC RFC 3339 in contracts and integer UTC values in storage.
 - Enum values are closed and versioned.
 - Story source spans are half-open UTF-8 byte offsets into the exact `ImportedStory.text`; optional line/column values are derived and 1-based.
+- Phase 1 extraction sections use half-open Unicode-code-point offsets into
+  `DocumentExtraction.exact_text`; package-member and PDF-page source locations
+  supplement those offsets. When analysis runs for an approved extraction,
+  downstream story spans use the distinct Phase 0 UTF-8 byte-span contract.
 - Ordering fields are explicit integers. Queries include stable ID tie-breakers.
 - JSON columns contain schema-versioned typed values serialized canonically where identity matters. Arbitrary unvalidated blobs are not domain records.
 - Content-addressed files are named by an algorithm-prefixed digest and published by atomic rename after verification.
@@ -35,6 +39,9 @@ None of these paths are committed. Exports are user-owned copies outside this tr
 | --- | --- | --- |
 | `Project` | ID, name, schema version, revision, lifecycle status, created/updated time | Name is metadata, not a path; deletion is project-scoped. |
 | `SourceDocument` | ID, project, media format, original display name, byte size/hash, encoding/extractor/version, immutable file reference | Raw bytes and digest never change; no absolute import path. |
+| `DocumentExtraction` | ID, source/revision lineage, status, adapter/version, exact text/hash, limits/evidence fingerprint, sections/mappings/warnings | Terminal revisions are immutable; re-extraction appends; canonical text is bounded to 10,000,000 characters. |
+| `ParserExecutionRow` | ID, extraction/job attempt, parser/dependency versions, input/output hashes, limits fingerprint, outcome/timing, redacted error | Append-only durable attempt evidence associated with the typed adapter `ParserExecutionRecord`; no source excerpts, absolute paths, network or shell authority. |
+| `ImportReview` | Stable review ID plus decision revision, source/extraction IDs, evidence fingerprint, preview/warnings, state, actor/rationale | Append-only local-human gate; analysis requires the effective approval for the exact extraction. |
 | `ImportedStory` | ID, source ID, revision lineage, exact text/hash, extraction warnings, provenance | Text is immutable; rewriting creates another explicit artifact type/revision. |
 | `Chapter` | ID, story revision, ordinal, title span/value, content span, confidence/warnings/provenance, revision | Ordered, non-overlapping at the same hierarchy level unless explicitly warned. |
 | `Scene` | ID, chapter, ordinal, content span, heading/location/time/mood projections, confidence/warnings/provenance, revision | Contained within chapter; stable source order. |
@@ -89,7 +96,8 @@ Cost state is explicit: known-zero local/deterministic monetary cost is recorded
 
 SQLite uses foreign keys, uniqueness constraints, check constraints for revisions/ranges/progress, and indexes beginning with `project_id` for project-scoped access. Important tables include:
 
-- `projects`, `source_documents`, `imported_stories`;
+- `projects`, `source_documents`, `document_extractions`, `parser_executions`,
+  `import_reviews`, `imported_stories`;
 - `chapters`, `scenes`, `story_beats`, `characters`, `dialogue_lines`, `dialogue_attributions`;
 - `human_corrections`, `approval_decisions`, `provenance_records`;
 - `voice_profiles`, `casting_assignments`, direction/cue/timeline tables;

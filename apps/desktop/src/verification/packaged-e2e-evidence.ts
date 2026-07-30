@@ -8,14 +8,35 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import type {
+  AnalysisCorrectionCategory,
+  AnalysisGateId,
+  AnalysisJobStage
+} from "@cinematic-story-studio/contracts";
+
 import {
   ProcessInventoryError,
   type ProcessInventoryFailureCode
 } from "./packaged-process-inventory";
 
-export const packagedE2eSchemaVersion = "3.0.0";
+export const packagedE2eSchemaVersion = "4.0.0";
 export const packagedFixture =
   "fixtures/synthetic-story/sample-story.docx.base64";
+export const packagedPhase2GovernanceFlow = Object.freeze([
+  "start_whole_book_analysis",
+  "observe_analysis_stages",
+  "inspect_structure",
+  "inspect_character_registry",
+  "correct_character_identity",
+  "inspect_dialogue_and_narration",
+  "correct_dialogue_speaker",
+  "inspect_whole_book_intelligence",
+  "disposition_continuity",
+  "approve_story_structure_review",
+  "approve_character_registry_review",
+  "approve_dialogue_attribution_review",
+  "approve_whole_book_analysis_review"
+]);
 export const packagedFlow = Object.freeze([
   "create",
   "import_synthetic_docx",
@@ -24,18 +45,65 @@ export const packagedFlow = Object.freeze([
   "approve_import",
   "analyze",
   "correct_speaker",
+  "start_whole_book_analysis",
+  "observe_analysis_stages",
+  "inspect_structure",
+  "inspect_character_registry",
+  "correct_character_identity",
+  "inspect_dialogue_and_narration",
+  "correct_dialogue_speaker",
+  "inspect_whole_book_intelligence",
+  "disposition_continuity",
+  "approve_story_structure_review",
+  "approve_character_registry_review",
+  "approve_dialogue_attribution_review",
+  "approve_whole_book_analysis_review",
   "close",
   "restart",
   "restore",
   "verify_import_review_persistence",
+  "verify_story_analysis_persistence",
   "close"
 ]);
+
+export interface PackagedFlowRecorder {
+  record(step: string): void;
+  complete(): readonly string[];
+}
+
+export function createPackagedFlowRecorder(
+  expected: readonly string[]
+): PackagedFlowRecorder {
+  const observed: string[] = [];
+  return {
+    record(step: string): void {
+      if (expected[observed.length] !== step) {
+        throw new Error("The packaged workflow operation order is invalid.");
+      }
+      observed.push(step);
+    },
+    complete(): readonly string[] {
+      if (observed.length !== expected.length) {
+        throw new Error("The packaged workflow operation sequence is incomplete.");
+      }
+      return Object.freeze([...observed]);
+    }
+  };
+}
 export const isolatedEnvironmentNames = Object.freeze([
   "APPDATA",
   "LOCALAPPDATA",
   "TEMP",
   "TMP"
 ]);
+export const packagedCorrectionReasonFingerprints = Object.freeze({
+  characterIdentity:
+    "b42b6091d0bde37b4dd15f99a321e86dd965f2272a4ca68da6703b6f5ba2f0da",
+  dialogueSpeaker:
+    "6db94e679f663d3dfbed36c173eb8445d6a364beb114c7f8c070e30983247300",
+  continuityDisposition:
+    "d7497ae908f34096c6bbbfdcbf7ea8287967882880cd229af078eee2383c2554"
+});
 
 const maximumMachineResultBytes = 1024 * 1024;
 const maximumEncodedFixtureBytes = 2 * 1024 * 1024;
@@ -114,6 +182,152 @@ export interface PackagedImportReviewEvidence {
   readonly analysisPersistedAfterRestart: boolean;
 }
 
+export interface PackagedStoryAnalysisProfileEvidence {
+  readonly profileId: "whole-book-intelligence-v1";
+  readonly semanticVersion: "1.0.0";
+  readonly profileFingerprint: string;
+  readonly producerId: "whole-book-analysis-orchestrator";
+  readonly producerVersion: "1.0.0";
+}
+
+export interface PackagedAnalysisAgentEvidence {
+  readonly agentId: string;
+  readonly agentVersion: "1.0.0";
+  readonly executionId: string;
+  readonly status: "succeeded";
+  readonly outputFingerprint: string;
+}
+
+export interface PackagedApprovedAnalysisInputEvidence {
+  readonly sourceDocumentId: string;
+  readonly sourceRevision: number;
+  readonly sourceSha256: string;
+  readonly extractionId: string;
+  readonly extractionRevision: number;
+  readonly extractedTextSha256: string;
+  readonly importReviewId: string;
+  readonly importReviewRevision: number;
+  readonly importReviewDecisionId: string;
+  readonly approvedEvidenceFingerprint: string;
+  readonly storyId: string;
+  readonly storyRevision: number;
+  readonly storyFingerprint: string;
+}
+
+export interface PackagedAnalysisRunEvidence {
+  readonly runId: string;
+  readonly inputFingerprint: string;
+  readonly runFingerprint: string;
+  readonly jobId: string;
+  readonly status: "succeeded";
+  readonly snapshotId: string;
+  readonly snapshotRevision: number;
+  readonly snapshotFingerprint: string;
+  readonly correctionSetFingerprint: string;
+}
+
+export interface PackagedAnalysisCountsEvidence {
+  readonly agentExecutions: number;
+  readonly chapters: number;
+  readonly scenes: number;
+  readonly beats: number;
+  readonly characters: number;
+  readonly mentions: number;
+  readonly dialogueLines: number;
+  readonly narrationSpans: number;
+  readonly povSegments: number;
+  readonly locations: number;
+  readonly timelineEvents: number;
+  readonly temporalConstraints: number;
+  readonly relationships: number;
+  readonly emotionalStates: number;
+  readonly dramaticIntents: number;
+  readonly continuityFindings: number;
+  readonly corrections: number;
+}
+
+export interface PackagedAnalysisAssertionsEvidence {
+  readonly structureDetected: boolean;
+  readonly characterRegistryDetected: boolean;
+  readonly ambiguousIdentityPreserved: boolean;
+  readonly ambiguousDialoguePreserved: boolean;
+  readonly narrationDistinctionDetected: boolean;
+  readonly povShiftDetected: boolean;
+  readonly locationsDetected: boolean;
+  readonly timelineFlashbackDetected: boolean;
+  readonly relationshipChangeDetected: boolean;
+  readonly emotionalProgressionDetected: boolean;
+  readonly continuityAnomalyDetected: boolean;
+}
+
+export interface PackagedAnalysisCorrectionEvidence {
+  readonly correctionId: string;
+  readonly category: AnalysisCorrectionCategory;
+  readonly targetEntityId: string;
+  readonly reasonFingerprint: string;
+  readonly previousValueFingerprint: string;
+  readonly correctedValueFingerprint: string;
+  readonly effectiveValueFingerprintBeforeRestart: string;
+  readonly effectiveValueFingerprintAfterRestart: string;
+  readonly effectiveAuthorityBeforeRestart: "human";
+  readonly effectiveAuthorityAfterRestart: "human";
+  readonly immutable: true;
+  readonly lockedAgainstAutomation: true;
+  readonly persistedAfterRestart: boolean;
+}
+
+export interface PackagedAnalysisGateStateEvidence {
+  readonly reviewId: string;
+  readonly decisionId: string;
+  readonly state: "approved";
+  readonly profileFingerprint: string;
+  readonly runFingerprint: string;
+  readonly snapshotId: string;
+  readonly snapshotRevision: number;
+  readonly snapshotFingerprint: string;
+  readonly decisionRecordFingerprint: string;
+  readonly artifactFingerprint: string;
+  readonly evidenceFingerprint: string;
+}
+
+export interface PackagedAnalysisGateEvidence {
+  readonly gateId: AnalysisGateId;
+  readonly beforeRestart: PackagedAnalysisGateStateEvidence;
+  readonly afterRestart: PackagedAnalysisGateStateEvidence;
+  readonly immutable: true;
+}
+
+export interface PackagedAnalysisRestartEvidence {
+  readonly runPersisted: boolean;
+  readonly snapshotPersisted: boolean;
+  readonly correctionSetPersisted: boolean;
+  readonly gateDecisionsPersisted: boolean;
+  readonly agentExecutionsPersisted: boolean;
+}
+
+export interface PackagedStoryAnalysisEvidence {
+  readonly profile: PackagedStoryAnalysisProfileEvidence;
+  readonly agents: readonly PackagedAnalysisAgentEvidence[];
+  readonly approvedInput: PackagedApprovedAnalysisInputEvidence;
+  readonly run: PackagedAnalysisRunEvidence;
+  readonly observedStages: readonly AnalysisJobStage[];
+  readonly counts: PackagedAnalysisCountsEvidence;
+  readonly assertions: PackagedAnalysisAssertionsEvidence;
+  readonly corrections: {
+    readonly characterIdentity: PackagedAnalysisCorrectionEvidence & {
+      readonly category: "character_identity";
+    };
+    readonly dialogueSpeaker: PackagedAnalysisCorrectionEvidence & {
+      readonly category: "dialogue_speaker";
+    };
+    readonly continuityDisposition: PackagedAnalysisCorrectionEvidence & {
+      readonly category: "continuity_disposition";
+    };
+  };
+  readonly gates: readonly PackagedAnalysisGateEvidence[];
+  readonly restart: PackagedAnalysisRestartEvidence;
+}
+
 export interface PackagedE2eMachineResult {
   readonly schemaVersion: typeof packagedE2eSchemaVersion;
   readonly completedAt: string;
@@ -137,6 +351,7 @@ export interface PackagedE2eMachineResult {
     readonly captured: boolean;
   };
   readonly importReview: PackagedImportReviewEvidence | null;
+  readonly storyAnalysis: PackagedStoryAnalysisEvidence | null;
   readonly launches: readonly MachineLaunchEvidence[];
 }
 

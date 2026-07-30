@@ -14,6 +14,12 @@ import {
 } from "@playwright/test";
 
 import { materializeStrictBase64Docx } from "../../src/verification/packaged-e2e-evidence";
+import {
+  buildPackagedStoryAnalysisEvidence,
+  expectPhase2RestartPersistence,
+  readPhase2RuntimeSnapshot,
+  runPhase2GovernanceWorkflow
+} from "./phase2-story-analysis";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -208,6 +214,9 @@ test.describe("desktop persistence", () => {
       await expect(
         firstPage.getByText("Speaker correction saved as human provenance.")
       ).toBeVisible({ timeout: 15_000 });
+      await expect(
+        firstPage.getByText("Human correction").first()
+      ).toBeVisible({ timeout: 15_000 });
       const firstSnapshot = await readPersistedImportSnapshot(
         firstPage,
         correctionReason
@@ -233,6 +242,7 @@ test.describe("desktop persistence", () => {
         fieldPath: "/effectiveSpeakerId",
         targetEntityType: "DialogueLine"
       });
+      const phase2Workflow = await runPhase2GovernanceWorkflow(firstPage);
       await first.close();
       first = null;
 
@@ -280,6 +290,26 @@ test.describe("desktop persistence", () => {
       await expect(
         secondPage.getByText("Human correction").first()
       ).toBeVisible({ timeout: 15_000 });
+      const restoredPhase2 = await readPhase2RuntimeSnapshot(secondPage);
+      const phase2Evidence = buildPackagedStoryAnalysisEvidence(
+        phase2Workflow,
+        restoredPhase2
+      );
+      expectPhase2RestartPersistence(phase2Evidence);
+      await secondPage
+        .getByRole("button", { name: "Analysis", exact: true })
+        .click();
+      await expect(
+        secondPage.locator(".analysis-gate header strong", {
+          hasText: "Approved"
+        })
+      ).toHaveCount(4);
+      await secondPage
+        .getByRole("button", { name: "Corrections", exact: true })
+        .click();
+      await expect(
+        secondPage.locator(".correction-history article")
+      ).toHaveCount(4);
       await second.close();
       second = null;
     } finally {

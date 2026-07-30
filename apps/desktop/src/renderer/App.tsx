@@ -30,8 +30,9 @@ import {
   type DesktopError,
   type DesktopResult
 } from "../shared/desktop-api";
+import { AnalysisWorkspace } from "./AnalysisWorkspace";
 
-type WorkspaceView = "studio" | "casting" | "systems";
+type WorkspaceView = "studio" | "analysis" | "casting" | "systems";
 
 interface DialogueDraft {
   readonly characterId: string;
@@ -84,6 +85,21 @@ export function App({ api = window.cinematicStory }: AppProps) {
   const [ffmpeg, setFfmpeg] =
     useState<FfmpegCapabilityResponse | null>(null);
   const wasConnected = useRef(false);
+  const projectSelectionEpoch = useRef(0);
+  const activeProjectIdRef = useRef<string | null>(null);
+  const busyOperationToken = useRef(0);
+
+  const beginBusyAction = useCallback((action: string) => {
+    const token = ++busyOperationToken.current;
+    setBusyAction(action);
+    return token;
+  }, []);
+
+  const finishBusyAction = useCallback((token: number) => {
+    if (token === busyOperationToken.current) {
+      setBusyAction(null);
+    }
+  }, []);
 
   const connected =
     backend.state === "ready" || backend.state === "degraded";
@@ -95,6 +111,9 @@ export function App({ api = window.cinematicStory }: AppProps) {
     projectedImportReview?.revision ?? null;
 
   const applyProject = useCallback((detail: ProjectDetail) => {
+    const sameProject =
+      activeProjectIdRef.current === detail.project.projectId;
+    activeProjectIdRef.current = detail.project.projectId;
     setProject(detail);
     setImportReview(latestImportReview(detail.importReviews));
     const chapters = [...detail.chapters].sort(
@@ -102,6 +121,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
     );
     const firstChapter = chapters[0];
     setSelectedChapterId((current) =>
+      sameProject &&
       current !== null &&
       detail.chapters.some((chapter) => chapter.chapterId === current)
         ? current
@@ -114,13 +134,16 @@ export function App({ api = window.cinematicStory }: AppProps) {
             .filter((scene) => scene.chapterId === firstChapter.chapterId)
             .sort((left, right) => left.ordinal - right.ordinal)[0];
     setSelectedSceneId((current) =>
+      sameProject &&
       current !== null &&
       detail.scenes.some((scene) => scene.sceneId === current)
         ? current
         : (firstScene?.sceneId ?? null)
     );
     setDialogueDrafts((current) => {
-      const next: Record<string, DialogueDraft> = { ...current };
+      const next: Record<string, DialogueDraft> = sameProject
+        ? { ...current }
+        : {};
       for (const line of detail.dialogueLines) {
         if (next[line.lineId] === undefined) {
           const attribution = detail.dialogueAttributions.find(
@@ -136,27 +159,84 @@ export function App({ api = window.cinematicStory }: AppProps) {
     });
   }, []);
 
+  const beginProjectSelection = useCallback(() => {
+    const selection = ++projectSelectionEpoch.current;
+    busyOperationToken.current += 1;
+    activeProjectIdRef.current = null;
+    setProject(null);
+    setImportReview(null);
+    setSelectedChapterId(null);
+    setSelectedSceneId(null);
+    setDialogueDrafts({});
+    setConflictLineId(null);
+    setBusyAction(null);
+    return selection;
+  }, []);
+
+  const applyAnalysisRun = useCallback(
+    (
+      nextRun: NonNullable<ProjectDetail["currentAnalysisRun"]>,
+      job?: Job
+    ) => {
+      if (activeProjectIdRef.current !== nextRun.projectId) {
+        return;
+      }
+      setProject((current) => {
+        if (
+          current === null ||
+          current.project.projectId !== nextRun.projectId
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          currentAnalysisRun: nextRun,
+          jobs:
+            job === undefined
+              ? current.jobs
+              : [
+                  job,
+                  ...current.jobs.filter(
+                    (candidate) => candidate.jobId !== job.jobId
+                  )
+                ]
+        };
+      });
+    },
+    []
+  );
+
   const openProject = useCallback(
     async (projectId: string, showLoading = true) => {
+      const selection = beginProjectSelection();
       if (showLoading) {
         setProjectLoading(true);
       }
       setError(null);
       try {
         const detail = await unwrap(api.projects.open(projectId));
+        if (selection !== projectSelectionEpoch.current) {
+          return;
+        }
         applyProject(detail);
       } catch (caught) {
-        setError(asDesktopError(caught));
+        if (selection === projectSelectionEpoch.current) {
+          setError(asDesktopError(caught));
+        }
       } finally {
-        if (showLoading) {
+        if (
+          showLoading &&
+          selection === projectSelectionEpoch.current
+        ) {
           setProjectLoading(false);
         }
       }
     },
-    [api, applyProject]
+    [api, applyProject, beginProjectSelection]
   );
 
   const loadWorkspace = useCallback(async () => {
+    const selection = beginProjectSelection();
     setProjectLoading(true);
     setError(null);
     try {
@@ -165,15 +245,22 @@ export function App({ api = window.cinematicStory }: AppProps) {
         unwrap(api.projects.restoreRecent())
       ]);
       setProjects(page.items);
-      if (recent !== null) {
+      if (
+        recent !== null &&
+        selection === projectSelectionEpoch.current
+      ) {
         applyProject(recent);
       }
     } catch (caught) {
-      setError(asDesktopError(caught));
+      if (selection === projectSelectionEpoch.current) {
+        setError(asDesktopError(caught));
+      }
     } finally {
-      setProjectLoading(false);
+      if (selection === projectSelectionEpoch.current) {
+        setProjectLoading(false);
+      }
     }
-  }, [api, applyProject]);
+  }, [api, applyProject, beginProjectSelection]);
 
   const refreshSystemHealth = useCallback(async () => {
     if (!connected) {
@@ -262,6 +349,8 @@ export function App({ api = window.cinematicStory }: AppProps) {
     if (activeJobs.length === 0) {
       return;
     }
+    let current = true;
+    const pollingProjectId = project.project.projectId;
     const timer = window.setInterval(() => {
       void Promise.all(
         activeJobs.map(async (job) => {
@@ -272,12 +361,21 @@ export function App({ api = window.cinematicStory }: AppProps) {
           return result.value.job;
         })
       ).then((updates) => {
+        if (
+          !current ||
+          activeProjectIdRef.current !== pollingProjectId
+        ) {
+          return;
+        }
         const received = updates.filter((job): job is Job => job !== null);
         if (received.length === 0) {
           return;
         }
         setProject((current) => {
-          if (current === null) {
+          if (
+            current === null ||
+            current.project.projectId !== pollingProjectId
+          ) {
             return current;
           }
           const byId = new Map(received.map((job) => [job.jobId, job]));
@@ -287,11 +385,12 @@ export function App({ api = window.cinematicStory }: AppProps) {
           };
         });
         if (received.some((job) => !activeJobStates.has(job.state))) {
-          void openProject(project.project.projectId, false);
+          void openProject(pollingProjectId, false);
         }
       });
     }, 1_250);
     return () => {
+      current = false;
       window.clearInterval(timer);
     };
   }, [api, connected, openProject, project]);
@@ -336,7 +435,8 @@ export function App({ api = window.cinematicStory }: AppProps) {
     if (name.length === 0 || !connected) {
       return;
     }
-    setBusyAction("create-project");
+    const selectionEpoch = projectSelectionEpoch.current;
+    const operationToken = beginBusyAction("create-project");
     setError(null);
     try {
       const created = await unwrap(
@@ -347,13 +447,17 @@ export function App({ api = window.cinematicStory }: AppProps) {
       );
       setProjectName("");
       setNotice(`Created ${created.project.name}.`);
-      await openProject(created.project.projectId);
+      if (selectionEpoch === projectSelectionEpoch.current) {
+        await openProject(created.project.projectId);
+      }
       const page = await unwrap(api.projects.list());
       setProjects(page.items);
     } catch (caught) {
-      setError(asDesktopError(caught));
+      if (operationToken === busyOperationToken.current) {
+        setError(asDesktopError(caught));
+      }
     } finally {
-      setBusyAction(null);
+      finishBusyAction(operationToken);
     }
   };
 
@@ -361,18 +465,23 @@ export function App({ api = window.cinematicStory }: AppProps) {
     if (project === null || !connected) {
       return;
     }
-    setBusyAction("import-story");
+    const requestProjectId = project.project.projectId;
+    const operationToken = beginBusyAction("import-story");
     setError(null);
     setNotice(null);
     try {
       const imported = await unwrap(
-        api.projects.importSelectedFile(project.project.projectId)
+        api.projects.importSelectedFile(requestProjectId)
       );
+      if (activeProjectIdRef.current !== requestProjectId) {
+        return;
+      }
       if (imported !== null) {
         setImportReview(null);
         setReviewRationale(defaultImportReviewRationale);
         setProject((current) =>
-          current === null
+          current === null ||
+          current.project.projectId !== requestProjectId
             ? current
             : {
                 ...current,
@@ -406,9 +515,11 @@ export function App({ api = window.cinematicStory }: AppProps) {
         );
       }
     } catch (caught) {
-      setError(asDesktopError(caught));
+      if (activeProjectIdRef.current === requestProjectId) {
+        setError(asDesktopError(caught));
+      }
     } finally {
-      setBusyAction(null);
+      finishBusyAction(operationToken);
     }
   };
 
@@ -421,12 +532,13 @@ export function App({ api = window.cinematicStory }: AppProps) {
     ) {
       return;
     }
-    setBusyAction(`review-${decision}`);
+    const requestProjectId = project.project.projectId;
+    const operationToken = beginBusyAction(`review-${decision}`);
     setError(null);
     try {
       const response = await unwrap(
         api.projects.decideImportReview({
-          projectId: project.project.projectId,
+          projectId: requestProjectId,
           reviewId: importReview.reviewId,
           sourceDocumentId: importReview.sourceDocumentId,
           extractionId: importReview.extractionId,
@@ -441,6 +553,9 @@ export function App({ api = window.cinematicStory }: AppProps) {
           idempotencyKey: crypto.randomUUID()
         })
       );
+      if (activeProjectIdRef.current !== requestProjectId) {
+        return;
+      }
       setImportReview(response.review);
       setNotice(
         decision === "approved"
@@ -450,18 +565,21 @@ export function App({ api = window.cinematicStory }: AppProps) {
             : "Import rejected."
       );
       setReviewRationale(defaultImportReviewRationale);
-      await openProject(project.project.projectId, false);
+      await openProject(requestProjectId, false);
     } catch (caught) {
+      if (activeProjectIdRef.current !== requestProjectId) {
+        return;
+      }
       const desktopError = asDesktopError(caught);
       setError(desktopError);
       if (
         desktopError.code === "REVISION_CONFLICT" ||
         desktopError.code === "SERVICE_HTTP_409"
       ) {
-        await openProject(project.project.projectId, false);
+        await openProject(requestProjectId, false);
       }
     } finally {
-      setBusyAction(null);
+      finishBusyAction(operationToken);
     }
   };
 
@@ -474,19 +592,24 @@ export function App({ api = window.cinematicStory }: AppProps) {
     ) {
       return;
     }
-    setBusyAction("create-job");
+    const requestProjectId = project.project.projectId;
+    const operationToken = beginBusyAction("create-job");
     setError(null);
     try {
       const response = await unwrap(
         api.jobs.create({
-          projectId: project.project.projectId,
+          projectId: requestProjectId,
           type: "analyze_story",
           inputRevision: project.story.revision,
           idempotencyKey: crypto.randomUUID()
         })
       );
+      if (activeProjectIdRef.current !== requestProjectId) {
+        return;
+      }
       setProject((current) =>
-        current === null
+        current === null ||
+        current.project.projectId !== requestProjectId
           ? current
           : {
               ...current,
@@ -500,9 +623,11 @@ export function App({ api = window.cinematicStory }: AppProps) {
       );
       setNotice("Story analysis queued.");
     } catch (caught) {
-      setError(asDesktopError(caught));
+      if (activeProjectIdRef.current === requestProjectId) {
+        setError(asDesktopError(caught));
+      }
     } finally {
-      setBusyAction(null);
+      finishBusyAction(operationToken);
     }
   };
 
@@ -534,13 +659,14 @@ export function App({ api = window.cinematicStory }: AppProps) {
       });
       return;
     }
-    setBusyAction(`speaker-${line.lineId}`);
+    const requestProjectId = project.project.projectId;
+    const operationToken = beginBusyAction(`speaker-${line.lineId}`);
     setError(null);
     setConflictLineId(null);
     try {
       await unwrap(
         api.dialogue.correctSpeaker({
-          projectId: project.project.projectId,
+          projectId: requestProjectId,
           lineId: line.lineId,
           characterId:
             draft.characterId.length === 0 ? null : draft.characterId,
@@ -548,6 +674,9 @@ export function App({ api = window.cinematicStory }: AppProps) {
           expectedRevision: line.revision
         })
       );
+      if (activeProjectIdRef.current !== requestProjectId) {
+        return;
+      }
       setDialogueDrafts((current) => ({
         ...current,
         [line.lineId]: {
@@ -556,8 +685,11 @@ export function App({ api = window.cinematicStory }: AppProps) {
         }
       }));
       setNotice("Speaker correction saved as human provenance.");
-      await openProject(project.project.projectId, false);
+      await openProject(requestProjectId, false);
     } catch (caught) {
+      if (activeProjectIdRef.current !== requestProjectId) {
+        return;
+      }
       const desktopError = asDesktopError(caught);
       setError(desktopError);
       if (
@@ -567,7 +699,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
         setConflictLineId(line.lineId);
       }
     } finally {
-      setBusyAction(null);
+      finishBusyAction(operationToken);
     }
   };
 
@@ -575,15 +707,20 @@ export function App({ api = window.cinematicStory }: AppProps) {
     jobId: string,
     action: "cancel" | "retry" | "resume"
   ) => {
-    if (!connected) {
+    const requestProjectId = activeProjectIdRef.current;
+    if (!connected || requestProjectId === null) {
       return;
     }
-    setBusyAction(`${action}-${jobId}`);
+    const operationToken = beginBusyAction(`${action}-${jobId}`);
     setError(null);
     try {
       const result = await unwrap(api.jobs[action](jobId));
+      if (activeProjectIdRef.current !== requestProjectId) {
+        return;
+      }
       setProject((current) =>
-        current === null
+        current === null ||
+        current.project.projectId !== requestProjectId
           ? current
           : {
               ...current,
@@ -593,22 +730,27 @@ export function App({ api = window.cinematicStory }: AppProps) {
             }
       );
     } catch (caught) {
-      setError(asDesktopError(caught));
+      if (activeProjectIdRef.current === requestProjectId) {
+        setError(asDesktopError(caught));
+      }
     } finally {
-      setBusyAction(null);
+      finishBusyAction(operationToken);
     }
   };
 
   const reconnect = async () => {
-    setBusyAction("reconnect");
+    const operationToken = beginBusyAction("reconnect");
     setError(null);
-    const result = await api.backend.reconnect();
-    if (result.ok) {
-      setBackend(result.value);
-    } else {
-      setError(result.error);
+    try {
+      const result = await api.backend.reconnect();
+      if (result.ok) {
+        setBackend(result.value);
+      } else {
+        setError(result.error);
+      }
+    } finally {
+      finishBusyAction(operationToken);
     }
-    setBusyAction(null);
   };
 
   return (
@@ -698,6 +840,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
             {(
               [
                 ["studio", "Story"],
+                ["analysis", "Analysis"],
                 ["casting", "Casting"],
                 ["systems", "Systems"]
               ] as const
@@ -810,6 +953,16 @@ export function App({ api = window.cinematicStory }: AppProps) {
             onControlJob={(jobId, action) =>
               void controlJob(jobId, action)
             }
+          />
+        ) : view === "analysis" ? (
+          <AnalysisWorkspace
+            key={project.project.projectId}
+            project={project}
+            api={api}
+            connected={connected}
+            onNotice={setNotice}
+            onError={setError}
+            onRunChange={applyAnalysisRun}
           />
         ) : view === "casting" ? (
           <CastingWorkspace project={project} />

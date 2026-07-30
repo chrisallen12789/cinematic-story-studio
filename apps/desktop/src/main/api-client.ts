@@ -14,6 +14,7 @@ import type {
   FfmpegCapabilityResponse,
   ImportReviewResponse,
   ImportStoryResponse,
+  Job,
   JobEventsResponse,
   JobResponse,
   ProjectDetail,
@@ -22,12 +23,41 @@ import type {
 } from "@cinematic-story-studio/contracts/api";
 
 import type {
+  AnalysisCorrectionsResponse,
+  AnalysisEntityPageResponse,
+  AnalysisReviewsResponse,
+  AnalysisRunResponse,
+  AnalysisRunsResponse,
+  AppendAnalysisCorrectionInput,
+  AppendAnalysisCorrectionResponse,
+  CreateAnalysisRunInput,
+  CreateAnalysisRunResponse,
+  DecideAnalysisReviewInput,
+  DecideAnalysisReviewResponse,
+  ListAnalysisCorrectionsInput,
+  ListAnalysisEntitiesInput,
+  ListAnalysisReviewsInput,
+  ListAnalysisRunsInput
+} from "../shared/analysis-api.js";
+import type {
+  AnalysisRunInput,
   CorrectSpeakerInput,
   CreateJobInput,
   CreateProjectInput,
   DecideImportReviewInput,
   ImportReviewIdInput
 } from "../shared/desktop-api.js";
+import {
+  validateAnalysisCorrectionsResponse,
+  validateAnalysisEntityPageResponse,
+  validateAnalysisReviewsResponse,
+  validateAnalysisRunResponse,
+  validateAnalysisRunsResponse,
+  validateAppendAnalysisCorrectionResponse,
+  validateCreateAnalysisRunResponse,
+  validateDecideAnalysisReviewResponse,
+  validateProjectAnalysisProjection
+} from "./analysis-validation.js";
 import { BackendUnavailableError, DesktopMainError } from "./errors.js";
 import type { ServiceManager } from "./service-manager.js";
 import {
@@ -61,6 +91,14 @@ interface MultipartImportResult {
   readonly snapshot: ImportFileSnapshot;
 }
 
+export interface JobResponseExpectation {
+  readonly jobId?: string;
+  readonly projectId?: string;
+  readonly type?: Job["type"];
+  readonly inputRevision?: number;
+  readonly inputFingerprint?: string;
+}
+
 export class BackendApiClient {
   readonly #service: ServiceManager;
 
@@ -88,7 +126,7 @@ export class BackendApiClient {
   }
 
   async openProject(projectId: string): Promise<ProjectDetail> {
-    return validateProjectDetail(
+    const detail = validateProjectDetail(
       await this.#jsonRequest(
         "GET",
         `/api/v1/projects/${encodeURIComponent(projectId)}`,
@@ -98,6 +136,8 @@ export class BackendApiClient {
       ),
       projectId
     );
+    validateProjectAnalysisProjection(detail, projectId);
+    return detail;
   }
 
   async importSelectedFile(
@@ -160,20 +200,184 @@ export class BackendApiClient {
   async correctSpeaker(
     input: CorrectSpeakerInput
   ): Promise<CorrectDialogueSpeakerResponse> {
-    const response = await this.#jsonRequest(
-      "PUT",
-      `/api/v1/projects/${encodeURIComponent(
-        input.projectId
-      )}/dialogue-lines/${encodeURIComponent(input.lineId)}/speaker`,
-      {
-        characterId: input.characterId,
-        reason: input.reason,
-        expectedRevision: input.expectedRevision
-      },
-      randomUUID()
+    return validateCorrectionResponse(
+      await this.#jsonRequest(
+        "PUT",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/dialogue-lines/${encodeURIComponent(input.lineId)}/speaker`,
+        {
+          characterId: input.characterId,
+          reason: input.reason,
+          expectedRevision: input.expectedRevision
+        },
+        randomUUID()
+      ),
+      input
     );
-    validateCorrectionResponse(response);
-    return response as CorrectDialogueSpeakerResponse;
+  }
+
+  async createAnalysisRun(
+    input: CreateAnalysisRunInput
+  ): Promise<CreateAnalysisRunResponse> {
+    return validateCreateAnalysisRunResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/analysis-runs`,
+        {
+          expectedExtractionId: input.expectedExtractionId,
+          expectedExtractionRevision: input.expectedExtractionRevision,
+          expectedReviewId: input.expectedReviewId,
+          expectedReviewRevision: input.expectedReviewRevision,
+          expectedEvidenceFingerprint: input.expectedEvidenceFingerprint,
+          expectedProfileFingerprint: input.expectedProfileFingerprint,
+          profile: input.profile,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async listAnalysisRuns(
+    input: ListAnalysisRunsInput
+  ): Promise<AnalysisRunsResponse> {
+    const query = cursorPageQuery(input);
+    return validateAnalysisRunsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/analysis-runs?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async getAnalysisRun(
+    input: AnalysisRunInput
+  ): Promise<AnalysisRunResponse> {
+    return validateAnalysisRunResponse(
+      await this.#jsonRequest(
+        "GET",
+        analysisRunRoute(input.projectId, input.runId)
+      ),
+      input
+    );
+  }
+
+  async listAnalysisEntities(
+    input: ListAnalysisEntitiesInput
+  ): Promise<AnalysisEntityPageResponse> {
+    const query = new URLSearchParams();
+    if (input.cursor !== undefined) {
+      query.set("cursor", input.cursor);
+    }
+    query.set("limit", String(input.limit ?? 50));
+    if (input.confidenceMax !== undefined) {
+      query.set("confidenceMax", String(input.confidenceMax));
+    }
+    if (input.requiresReview !== undefined) {
+      query.set("requiresReview", String(input.requiresReview));
+    }
+    if (input.speakerState !== undefined) {
+      query.set("speakerState", input.speakerState);
+    }
+    return validateAnalysisEntityPageResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${analysisRunRoute(
+          input.projectId,
+          input.runId
+        )}/entities/${encodeURIComponent(input.collection)}?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async listAnalysisCorrections(
+    input: ListAnalysisCorrectionsInput
+  ): Promise<AnalysisCorrectionsResponse> {
+    const query = cursorPageQuery(input);
+    return validateAnalysisCorrectionsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${analysisRunRoute(
+          input.projectId,
+          input.runId
+        )}/corrections?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async appendAnalysisCorrection(
+    input: AppendAnalysisCorrectionInput
+  ): Promise<AppendAnalysisCorrectionResponse> {
+    return validateAppendAnalysisCorrectionResponse(
+      await this.#jsonRequest(
+        "POST",
+        `${analysisRunRoute(input.projectId, input.runId)}/corrections`,
+        {
+          category: input.category,
+          targetCollection: input.targetCollection,
+          targetEntityId: input.targetEntityId,
+          expectedTargetRevision: input.expectedTargetRevision,
+          expectedRunFingerprint: input.expectedRunFingerprint,
+          previousValueFingerprint: input.previousValueFingerprint,
+          patch: input.patch,
+          reason: input.reason,
+          ...(input.supersedesCorrectionId === undefined
+            ? {}
+            : { supersedesCorrectionId: input.supersedesCorrectionId }),
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async listAnalysisReviews(
+    input: ListAnalysisReviewsInput
+  ): Promise<AnalysisReviewsResponse> {
+    return validateAnalysisReviewsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${analysisRunRoute(input.projectId, input.runId)}/reviews`
+      ),
+      input
+    );
+  }
+
+  async decideAnalysisReview(
+    input: DecideAnalysisReviewInput
+  ): Promise<DecideAnalysisReviewResponse> {
+    return validateDecideAnalysisReviewResponse(
+      await this.#jsonRequest(
+        "POST",
+        `${analysisRunRoute(
+          input.projectId,
+          input.runId
+        )}/reviews/${encodeURIComponent(input.gateId)}/decisions`,
+        {
+          decision: input.decision,
+          ...(input.rationale === undefined
+            ? {}
+            : { rationale: input.rationale }),
+          expectedRevision: input.expectedRevision,
+          expectedArtifactFingerprint: input.expectedArtifactFingerprint,
+          expectedEvidenceFingerprint: input.expectedEvidenceFingerprint,
+          acknowledgedWarningIds: input.acknowledgedWarningIds,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
   }
 
   async createJob(input: CreateJobInput): Promise<JobResponse> {
@@ -187,16 +391,23 @@ export class BackendApiClient {
       },
       input.idempotencyKey
     );
-    validateJobResponse(response);
+    validateJobResponse(response, {
+      projectId: input.projectId,
+      type: input.type,
+      inputRevision: input.inputRevision
+    });
     return response as JobResponse;
   }
 
-  async getJob(jobId: string): Promise<JobResponse> {
+  async getJob(
+    jobId: string,
+    expected: JobResponseExpectation = {}
+  ): Promise<JobResponse> {
     const response = await this.#jsonRequest(
       "GET",
       `/api/v1/jobs/${encodeURIComponent(jobId)}`
     );
-    validateJobResponse(response);
+    validateJobResponse(response, { ...expected, jobId });
     return response as JobResponse;
   }
 
@@ -210,20 +421,29 @@ export class BackendApiClient {
       "GET",
       `/api/v1/jobs/${encodeURIComponent(jobId)}/events${suffix}`
     );
-    validateJobEventsResponse(response);
+    validateJobEventsResponse(response, { jobId, afterSequence });
     return response as JobEventsResponse;
   }
 
-  async cancelJob(jobId: string): Promise<JobResponse> {
-    return this.#jobAction(jobId, "cancel");
+  async cancelJob(
+    jobId: string,
+    expected: JobResponseExpectation = {}
+  ): Promise<JobResponse> {
+    return this.#jobAction(jobId, "cancel", expected);
   }
 
-  async retryJob(jobId: string): Promise<JobResponse> {
-    return this.#jobAction(jobId, "retry");
+  async retryJob(
+    jobId: string,
+    expected: JobResponseExpectation = {}
+  ): Promise<JobResponse> {
+    return this.#jobAction(jobId, "retry", expected);
   }
 
-  async resumeJob(jobId: string): Promise<JobResponse> {
-    return this.#jobAction(jobId, "resume");
+  async resumeJob(
+    jobId: string,
+    expected: JobResponseExpectation = {}
+  ): Promise<JobResponse> {
+    return this.#jobAction(jobId, "resume", expected);
   }
 
   async providerHealth(): Promise<ProviderHealthResponse> {
@@ -240,7 +460,8 @@ export class BackendApiClient {
 
   async #jobAction(
     jobId: string,
-    action: "cancel" | "retry" | "resume"
+    action: "cancel" | "retry" | "resume",
+    expected: JobResponseExpectation
   ): Promise<JobResponse> {
     const response = await this.#jsonRequest(
       "POST",
@@ -248,7 +469,7 @@ export class BackendApiClient {
       undefined,
       randomUUID()
     );
-    validateJobResponse(response);
+    validateJobResponse(response, { ...expected, jobId });
     return response as JobResponse;
   }
 
@@ -484,6 +705,24 @@ export class BackendApiClient {
       await fileHandle.close().catch(() => undefined);
     }
   }
+}
+
+function analysisRunRoute(projectId: string, runId: string): string {
+  return `/api/v1/projects/${encodeURIComponent(
+    projectId
+  )}/analysis-runs/${encodeURIComponent(runId)}`;
+}
+
+function cursorPageQuery(input: {
+  readonly cursor?: string;
+  readonly limit?: number;
+}): URLSearchParams {
+  const query = new URLSearchParams();
+  if (input.cursor !== undefined) {
+    query.set("cursor", input.cursor);
+  }
+  query.set("limit", String(input.limit ?? 50));
+  return query;
 }
 
 async function parseFetchResponse(
@@ -728,25 +967,526 @@ function validateCreateProjectResponse(value: unknown): void {
   requireInteger(project.revision, "revision");
 }
 
-function validateCorrectionResponse(value: unknown): void {
+function validateCorrectionResponse(
+  value: unknown,
+  expected: CorrectSpeakerInput
+): CorrectDialogueSpeakerResponse {
   const record = requireRecord(value, "speaker correction response");
+  rejectUnknownResponseFields(
+    record,
+    [
+      "correlationId",
+      "attribution",
+      "appendedCorrection",
+      "projectRevision",
+      "lineRevision"
+    ],
+    "speaker correction response"
+  );
   requireIdentifier(record.correlationId, "correlationId");
   const attribution = requireRecord(record.attribution, "attribution");
+  rejectUnknownResponseFields(
+    attribution,
+    [
+      "schemaVersion",
+      "revision",
+      "provenance",
+      "attributionId",
+      "projectId",
+      "lineId",
+      "proposedSpeakerId",
+      "effectiveSpeakerId",
+      "effectiveAuthority",
+      "evidence",
+      "confidence",
+      "warnings",
+      "humanCorrections",
+      "updatedAt"
+    ],
+    "dialogue attribution"
+  );
+  if (attribution.schemaVersion !== "1.0.0") {
+    throw new ValidationError(
+      "The saved attribution schema version is invalid."
+    );
+  }
+  const lineRevision = requireInteger(
+    record.lineRevision,
+    "lineRevision"
+  );
+  const attributionRevision = requireInteger(
+    attribution.revision,
+    "attribution revision"
+  );
+  const attributionId = requireIdentifier(
+    attribution.attributionId,
+    "attributionId"
+  );
+  const projectId = requireIdentifier(
+    attribution.projectId,
+    "attribution projectId"
+  );
+  const lineId = requireIdentifier(attribution.lineId, "attribution lineId");
+  requireNullableIdentifier(
+    attribution.proposedSpeakerId,
+    "proposedSpeakerId"
+  );
+  const effectiveSpeakerId = requireNullableIdentifier(
+    attribution.effectiveSpeakerId,
+    "effectiveSpeakerId"
+  );
   if (attribution.effectiveAuthority !== "human") {
     throw new ValidationError("The saved correction authority is invalid.");
   }
-  requireInteger(record.projectRevision, "projectRevision");
-  requireInteger(record.lineRevision, "lineRevision");
-  requireRecord(record.appendedCorrection, "appendedCorrection");
+  const attributionProvenance = validateSpeakerCorrectionProvenance(
+    attribution.provenance,
+    expected.lineId,
+    lineRevision
+  );
+  validateLegacyEvidence(attribution.evidence);
+  validateLegacyConfidence(attribution.confidence);
+  validateJobWarnings(attribution.warnings, "attribution warnings");
+  const attributionUpdatedAt = requireIsoDate(
+    attribution.updatedAt,
+    "attribution updatedAt"
+  );
+  const projectRevision = requireInteger(
+    record.projectRevision,
+    "projectRevision"
+  );
+  if (projectRevision < 1) {
+    throw new ValidationError("projectRevision is invalid.");
+  }
+  const expectedLineRevision = expected.expectedRevision + 1;
+  if (
+    projectId !== expected.projectId ||
+    lineId !== expected.lineId ||
+    effectiveSpeakerId !== expected.characterId ||
+    lineRevision !== expectedLineRevision ||
+    attributionRevision !== expectedLineRevision
+  ) {
+    throw new ValidationError(
+      "The saved speaker correction did not bind the exact request."
+    );
+  }
+  const expectedReason =
+    expected.reason ?? "Speaker corrected by the local user.";
+  const appended = validateLegacySpeakerCorrection(
+    record.appendedCorrection,
+    expected,
+    attributionId,
+    expectedLineRevision,
+    expectedReason
+  );
+  if (
+    !Array.isArray(attribution.humanCorrections) ||
+    attribution.humanCorrections.length !== 1
+  ) {
+    throw new ValidationError(
+      "The saved attribution correction history is invalid."
+    );
+  }
+  const projected = validateLegacySpeakerCorrection(
+    attribution.humanCorrections[0],
+    expected,
+    attributionId,
+    expectedLineRevision,
+    expectedReason
+  );
+  if (
+    !jsonValuesExactlyEqual(projected.record, appended.record) ||
+    attributionProvenance.actorId !== appended.actorId ||
+    attributionProvenance.recordedAt !== appended.recordedAt ||
+    attributionUpdatedAt !== appended.recordedAt
+  ) {
+    throw new ValidationError(
+      "The saved attribution correction projection is inconsistent."
+    );
+  }
+  return value as CorrectDialogueSpeakerResponse;
 }
 
-function validateJobResponse(value: unknown): void {
+function validateLegacySpeakerCorrection(
+  value: unknown,
+  expected: CorrectSpeakerInput,
+  attributionId: string,
+  lineRevision: number,
+  expectedReason: string
+): {
+  readonly record: Record<string, unknown>;
+  readonly actorId: string;
+  readonly recordedAt: string;
+} {
+  const correction = requireRecord(value, "speaker correction");
+  rejectUnknownResponseFields(
+    correction,
+    [
+      "correctionId",
+      "target",
+      "fieldPath",
+      "previousValueFingerprint",
+      "previousCharacterId",
+      "correctedValue",
+      "correctedCharacterId",
+      "reason",
+      "authority",
+      "recordedAt",
+      "immutable",
+      "lockedAgainstAutomation",
+      "supersedesCorrectionId"
+    ],
+    "speaker correction"
+  );
+  const correctionId = requireIdentifier(
+    correction.correctionId,
+    "correctionId"
+  );
+  const target = requireRecord(correction.target, "correction target");
+  rejectUnknownResponseFields(
+    target,
+    ["entityType", "entityId", "revision"],
+    "correction target"
+  );
+  const targetEntityId = requireIdentifier(
+    target.entityId,
+    "correction target entityId"
+  );
+  const targetRevision = requireInteger(
+    target.revision,
+    "correction target revision"
+  );
+  if (
+    target.entityType !== "DialogueLine" ||
+    targetEntityId !== expected.lineId ||
+    targetRevision !== lineRevision ||
+    correction.fieldPath !== "/effectiveSpeakerId"
+  ) {
+    throw new ValidationError(
+      "The saved speaker correction target is inconsistent."
+    );
+  }
+  requireSha256(
+    correction.previousValueFingerprint,
+    "previousValueFingerprint"
+  );
+  requireNullableIdentifier(
+    correction.previousCharacterId,
+    "previousCharacterId"
+  );
+  const correctedValue = requireNullableIdentifier(
+    correction.correctedValue,
+    "correctedValue"
+  );
+  const correctedCharacterId = requireNullableIdentifier(
+    correction.correctedCharacterId,
+    "correctedCharacterId"
+  );
+  const reason = requireText(correction.reason, "correction reason", 500);
+  const authority = requireRecord(
+    correction.authority,
+    "correction authority"
+  );
+  rejectUnknownResponseFields(
+    authority,
+    ["source", "actorId"],
+    "correction authority"
+  );
+  if (authority.source !== "human") {
+    throw new ValidationError(
+      "The saved correction authority is invalid."
+    );
+  }
+  const actorId = requireIdentifier(
+    authority.actorId,
+    "correction actorId"
+  );
+  const recordedAt = requireIsoDate(
+    correction.recordedAt,
+    "correction recordedAt"
+  );
+  if (
+    correctedValue !== expected.characterId ||
+    correctedCharacterId !== expected.characterId ||
+    reason !== expectedReason ||
+    correction.immutable !== true ||
+    correction.lockedAgainstAutomation !== true
+  ) {
+    throw new ValidationError(
+      "The saved speaker correction value is inconsistent."
+    );
+  }
+  if (correction.supersedesCorrectionId !== undefined) {
+    const supersedes = requireIdentifier(
+      correction.supersedesCorrectionId,
+      "supersedesCorrectionId"
+    );
+    if (supersedes === correctionId) {
+      throw new ValidationError(
+        "A speaker correction cannot supersede itself."
+      );
+    }
+  }
+  // The attribution id is deliberately not accepted as the correction target:
+  // the legacy contract protects the dialogue line revision itself.
+  requireIdentifier(attributionId, "attributionId");
+  return { record: correction, actorId, recordedAt };
+}
+
+function validateSpeakerCorrectionProvenance(
+  value: unknown,
+  lineId: string,
+  lineRevision: number
+): { readonly actorId: string; readonly recordedAt: string } {
+  const provenance = requireRecord(value, "attribution provenance");
+  rejectUnknownResponseFields(
+    provenance,
+    [
+      "origin",
+      "recordedAt",
+      "actorId",
+      "agentExecutionId",
+      "sourceReferences",
+      "inputFingerprint",
+      "notes"
+    ],
+    "attribution provenance"
+  );
+  if (provenance.origin !== "human") {
+    throw new ValidationError(
+      "The saved attribution provenance is invalid."
+    );
+  }
+  const recordedAt = requireIsoDate(
+    provenance.recordedAt,
+    "provenance recordedAt"
+  );
+  const actorId = requireIdentifier(
+    provenance.actorId,
+    "provenance actorId"
+  );
+  if (provenance.agentExecutionId !== undefined) {
+    requireIdentifier(
+      provenance.agentExecutionId,
+      "provenance agentExecutionId"
+    );
+  }
+  if (provenance.inputFingerprint !== undefined) {
+    requireSha256(
+      provenance.inputFingerprint,
+      "provenance inputFingerprint"
+    );
+  }
+  if (provenance.notes !== undefined) {
+    requireText(provenance.notes, "provenance notes", 4_000);
+  }
+  if (
+    !Array.isArray(provenance.sourceReferences) ||
+    provenance.sourceReferences.length === 0 ||
+    provenance.sourceReferences.length > 32
+  ) {
+    throw new ValidationError(
+      "The saved attribution provenance source is invalid."
+    );
+  }
+  let boundSource = false;
+  for (const item of provenance.sourceReferences) {
+    const reference = requireRecord(item, "provenance source reference");
+    rejectUnknownResponseFields(
+      reference,
+      ["entityType", "entityId", "revision"],
+      "provenance source reference"
+    );
+    const entityId = requireIdentifier(
+      reference.entityId,
+      "provenance source entityId"
+    );
+    const revision = requireInteger(
+      reference.revision,
+      "provenance source revision"
+    );
+    requireText(
+      reference.entityType,
+      "provenance source entityType",
+      128
+    );
+    if (
+      reference.entityType === "DialogueLine" &&
+      entityId === lineId &&
+      revision === lineRevision
+    ) {
+      boundSource = true;
+    }
+  }
+  if (!boundSource) {
+    throw new ValidationError(
+      "The saved attribution provenance did not bind the dialogue line."
+    );
+  }
+  return { actorId, recordedAt };
+}
+
+function validateLegacyEvidence(value: unknown): void {
+  if (!Array.isArray(value) || value.length > 128) {
+    throw new ValidationError("Attribution evidence is invalid.");
+  }
+  for (const item of value) {
+    const span = requireRecord(item, "attribution evidence");
+    rejectUnknownResponseFields(
+      span,
+      [
+        "sourceDocumentId",
+        "offsetUnit",
+        "startOffset",
+        "endOffset",
+        "startUtf8Byte",
+        "endUtf8Byte",
+        "line",
+        "column",
+        "textSha256"
+      ],
+      "attribution evidence"
+    );
+    requireIdentifier(span.sourceDocumentId, "evidence sourceDocumentId");
+    if (span.offsetUnit !== "unicode-code-point") {
+      throw new ValidationError("Attribution evidence offset unit is invalid.");
+    }
+    const start = requireInteger(span.startOffset, "evidence startOffset");
+    const end = requireInteger(span.endOffset, "evidence endOffset");
+    if (end <= start) {
+      throw new ValidationError("Attribution evidence range is invalid.");
+    }
+    for (const field of [
+      "startUtf8Byte",
+      "endUtf8Byte",
+      "line",
+      "column"
+    ] as const) {
+      if (span[field] !== undefined) {
+        requireInteger(span[field], `evidence ${field}`);
+      }
+    }
+    requireSha256(span.textSha256, "evidence textSha256");
+  }
+}
+
+function validateLegacyConfidence(value: unknown): void {
+  const confidence = requireRecord(value, "attribution confidence");
+  rejectUnknownResponseFields(
+    confidence,
+    ["score", "basis", "calibrationId", "fieldScores"],
+    "attribution confidence"
+  );
+  requireUnitInterval(confidence.score, "attribution confidence score");
+  requireText(confidence.basis, "attribution confidence basis", 1_000);
+  if (confidence.calibrationId !== undefined) {
+    requireText(
+      confidence.calibrationId,
+      "attribution confidence calibrationId",
+      128
+    );
+  }
+  if (confidence.fieldScores !== undefined) {
+    const fieldScores = requireRecord(
+      confidence.fieldScores,
+      "attribution confidence fieldScores"
+    );
+    if (Object.keys(fieldScores).length > 64) {
+      throw new ValidationError(
+        "Attribution confidence fieldScores is invalid."
+      );
+    }
+    for (const [field, score] of Object.entries(fieldScores)) {
+      requireText(field, "attribution confidence field", 128);
+      requireUnitInterval(
+        score,
+        `attribution confidence ${field}`
+      );
+    }
+  }
+}
+
+function validateJobResponse(
+  value: unknown,
+  expected: JobResponseExpectation
+): void {
   const record = requireRecord(value, "job response");
+  rejectUnknownResponseFields(
+    record,
+    ["correlationId", "job"],
+    "job response"
+  );
   requireIdentifier(record.correlationId, "correlationId");
   const job = requireRecord(record.job, "job");
-  requireIdentifier(job.jobId, "jobId");
-  requireIdentifier(job.projectId, "projectId");
-  requireInteger(job.attempt, "attempt");
+  rejectUnknownResponseFields(
+    job,
+    [
+      "jobId",
+      "projectId",
+      "type",
+      "state",
+      "target",
+      "inputRevision",
+      "inputFingerprint",
+      "attempt",
+      "stage",
+      "progress",
+      "checkpointAvailable",
+      "cancellationRequested",
+      "warnings",
+      "error",
+      "createdAt",
+      "updatedAt",
+      "terminalAt"
+    ],
+    "job"
+  );
+  const jobId = requireIdentifier(job.jobId, "jobId");
+  const projectId = requireIdentifier(job.projectId, "projectId");
+  const type = requireOneOf(
+    job.type,
+    ["extract_document", "analyze_story", "analyze_whole_book"],
+    "job type"
+  );
+  requireOneOf(
+    job.state,
+    [
+      "queued",
+      "running",
+      "cancel_requested",
+      "cancelled",
+      "failed",
+      "interrupted",
+      "paused",
+      "succeeded"
+    ],
+    "job state"
+  );
+  const target = requireRecord(job.target, "job target");
+  rejectUnknownResponseFields(target, ["type", "id"], "job target");
+  const targetType = requireOneOf(
+    target.type,
+    ["document_extraction", "story", "analysis_run"],
+    "job target type"
+  );
+  requireIdentifier(target.id, "job target id");
+  const expectedTargetType = {
+    extract_document: "document_extraction",
+    analyze_story: "story",
+    analyze_whole_book: "analysis_run"
+  }[type];
+  if (targetType !== expectedTargetType) {
+    throw new ValidationError("The job target type is inconsistent.");
+  }
+  const inputRevision = requireInteger(job.inputRevision, "inputRevision");
+  const inputFingerprint = requireSha256(
+    job.inputFingerprint,
+    "inputFingerprint"
+  );
+  const attempt = requireInteger(job.attempt, "attempt");
+  if (attempt < 1) {
+    throw new ValidationError("Job attempt is invalid.");
+  }
+  requireText(job.stage, "stage", 160);
   if (
     typeof job.progress !== "number" ||
     !Number.isFinite(job.progress) ||
@@ -755,24 +1495,160 @@ function validateJobResponse(value: unknown): void {
   ) {
     throw new ValidationError("Job progress is invalid.");
   }
+  requireBoolean(job.checkpointAvailable, "checkpointAvailable");
+  requireBoolean(job.cancellationRequested, "cancellationRequested");
+  validateJobWarnings(job.warnings, "job warnings");
+  if (job.error !== undefined) {
+    validateJobError(job.error, "job error");
+  }
+  requireIsoDate(job.createdAt, "createdAt");
+  requireIsoDate(job.updatedAt, "updatedAt");
+  if (job.terminalAt !== undefined) {
+    requireIsoDate(job.terminalAt, "terminalAt");
+  }
+  if (
+    (expected.jobId !== undefined && jobId !== expected.jobId) ||
+    (expected.projectId !== undefined &&
+      projectId !== expected.projectId) ||
+    (expected.type !== undefined && type !== expected.type) ||
+    (expected.inputRevision !== undefined &&
+      inputRevision !== expected.inputRevision) ||
+    (expected.inputFingerprint !== undefined &&
+      inputFingerprint !== expected.inputFingerprint)
+  ) {
+    throw new ValidationError(
+      "The returned job did not bind the exact requested work."
+    );
+  }
 }
 
-function validateJobEventsResponse(value: unknown): void {
+function validateJobEventsResponse(
+  value: unknown,
+  expected: {
+    readonly jobId: string;
+    readonly afterSequence?: number;
+  }
+): void {
   const record = requireRecord(value, "job events response");
+  rejectUnknownResponseFields(
+    record,
+    ["correlationId", "events", "lastSequence"],
+    "job events response"
+  );
   requireIdentifier(record.correlationId, "correlationId");
   if (!Array.isArray(record.events) || record.events.length > 10_000) {
     throw new ValidationError("Job events are invalid.");
   }
-  let previous = -1;
+  let previous = expected.afterSequence ?? 0;
   for (const item of record.events) {
     const event = requireRecord(item, "job event");
+    rejectUnknownResponseFields(
+      event,
+      [
+        "jobId",
+        "attempt",
+        "sequence",
+        "type",
+        "state",
+        "stage",
+        "progress",
+        "completedUnits",
+        "totalUnits",
+        "warning",
+        "error",
+        "createdAt"
+      ],
+      "job event"
+    );
+    if (
+      requireIdentifier(event.jobId, "event jobId") !== expected.jobId
+    ) {
+      throw new ValidationError(
+        "The job event did not bind the requested job."
+      );
+    }
+    const attempt = requireInteger(event.attempt, "event attempt");
+    if (attempt < 1) {
+      throw new ValidationError("Job event attempt is invalid.");
+    }
     const sequence = requireInteger(event.sequence, "sequence");
     if (sequence <= previous) {
       throw new ValidationError("Job event ordering is invalid.");
     }
     previous = sequence;
+    const eventType = requireOneOf(
+      event.type,
+      [
+        "created",
+        "state_changed",
+        "progress",
+        "checkpoint",
+        "warning",
+        "failed",
+        "completed"
+      ],
+      "job event type"
+    );
+    if (event.state !== undefined) {
+      requireOneOf(
+        event.state,
+        [
+          "queued",
+          "running",
+          "cancel_requested",
+          "cancelled",
+          "failed",
+          "interrupted",
+          "paused",
+          "succeeded"
+        ],
+        "job event state"
+      );
+    }
+    if (event.stage !== undefined) {
+      requireText(event.stage, "event stage", 160);
+    }
+    if (event.progress !== undefined) {
+      requireUnitInterval(event.progress, "event progress");
+    }
+    const completedUnits =
+      event.completedUnits === undefined
+        ? undefined
+        : requireInteger(event.completedUnits, "completedUnits");
+    const totalUnits =
+      event.totalUnits === undefined
+        ? undefined
+        : requireInteger(event.totalUnits, "totalUnits");
+    if (
+      completedUnits !== undefined &&
+      totalUnits !== undefined &&
+      completedUnits > totalUnits
+    ) {
+      throw new ValidationError("Job event units are inconsistent.");
+    }
+    if (event.warning !== undefined) {
+      validateContractWarning(event.warning, "event warning");
+    }
+    if (event.error !== undefined) {
+      validateJobError(event.error, "event error");
+    }
+    if (
+      (eventType === "warning") !== (event.warning !== undefined) ||
+      (eventType === "failed") !== (event.error !== undefined)
+    ) {
+      throw new ValidationError(
+        "The job event payload is inconsistent with its type."
+      );
+    }
+    requireIsoDate(event.createdAt, "event createdAt");
   }
-  requireInteger(record.lastSequence, "lastSequence");
+  const lastSequence = requireInteger(
+    record.lastSequence,
+    "lastSequence"
+  );
+  if (record.events.length > 0 && lastSequence < previous) {
+    throw new ValidationError("Job event lastSequence is inconsistent.");
+  }
 }
 
 function requireRecord(
@@ -785,6 +1661,42 @@ function requireRecord(
   return value as Record<string, unknown>;
 }
 
+function jsonValuesExactlyEqual(left: unknown, right: unknown): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) =>
+        jsonValuesExactlyEqual(item, right[index])
+      )
+    );
+  }
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  ) {
+    return false;
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).sort();
+  const rightKeys = Object.keys(rightRecord).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] &&
+        jsonValuesExactlyEqual(leftRecord[key], rightRecord[key])
+    )
+  );
+}
+
 function requireIdentifier(value: unknown, field: string): string {
   if (
     typeof value !== "string" ||
@@ -793,6 +1705,13 @@ function requireIdentifier(value: unknown, field: string): string {
     throw new ValidationError(`${field} is invalid.`);
   }
   return value;
+}
+
+function requireNullableIdentifier(
+  value: unknown,
+  field: string
+): string | null {
+  return value === null ? null : requireIdentifier(value, field);
 }
 
 function requireText(
@@ -815,4 +1734,148 @@ function requireInteger(value: unknown, field: string): number {
     throw new ValidationError(`${field} is invalid.`);
   }
   return value as number;
+}
+
+function rejectUnknownResponseFields(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  field: string
+): void {
+  const allowedFields = new Set(allowed);
+  if (Object.keys(value).some((key) => !allowedFields.has(key))) {
+    throw new ValidationError(`${field} contains unsupported fields.`);
+  }
+}
+
+function requireOneOf<const TValue extends string>(
+  value: unknown,
+  allowed: readonly TValue[],
+  field: string
+): TValue {
+  if (
+    typeof value !== "string" ||
+    !allowed.includes(value as TValue)
+  ) {
+    throw new ValidationError(`${field} is invalid.`);
+  }
+  return value as TValue;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new ValidationError(`${field} is invalid.`);
+  }
+  return value;
+}
+
+function requireSha256(value: unknown, field: string): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw new ValidationError(`${field} is invalid.`);
+  }
+  return value;
+}
+
+function requireIsoDate(value: unknown, field: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length > 64 ||
+    !/^\d{4}-\d{2}-\d{2}T/u.test(value) ||
+    !Number.isFinite(Date.parse(value))
+  ) {
+    throw new ValidationError(`${field} is invalid.`);
+  }
+  return value;
+}
+
+function requireUnitInterval(value: unknown, field: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > 1
+  ) {
+    throw new ValidationError(`${field} is invalid.`);
+  }
+  return value;
+}
+
+function validateJobWarnings(value: unknown, field: string): void {
+  if (!Array.isArray(value) || value.length > 128) {
+    throw new ValidationError(`${field} is invalid.`);
+  }
+  for (const warning of value) {
+    validateContractWarning(warning, field);
+  }
+}
+
+function validateContractWarning(value: unknown, field: string): void {
+  const warning = requireRecord(value, field);
+  rejectUnknownResponseFields(
+    warning,
+    [
+      "code",
+      "severity",
+      "message",
+      "requiresHumanReview",
+      "relatedEntities"
+    ],
+    field
+  );
+  requireText(warning.code, `${field} code`, 128);
+  requireOneOf(
+    warning.severity,
+    ["info", "warning", "error"],
+    `${field} severity`
+  );
+  requireText(warning.message, `${field} message`, 2_000);
+  requireBoolean(
+    warning.requiresHumanReview,
+    `${field} requiresHumanReview`
+  );
+  if (warning.relatedEntities !== undefined) {
+    if (
+      !Array.isArray(warning.relatedEntities) ||
+      warning.relatedEntities.length > 64
+    ) {
+      throw new ValidationError(`${field} relatedEntities is invalid.`);
+    }
+    for (const relatedValue of warning.relatedEntities) {
+      const related = requireRecord(
+        relatedValue,
+        `${field} related entity`
+      );
+      rejectUnknownResponseFields(
+        related,
+        ["entityType", "entityId", "revision"],
+        `${field} related entity`
+      );
+      requireText(
+        related.entityType,
+        `${field} related entityType`,
+        128
+      );
+      requireIdentifier(
+        related.entityId,
+        `${field} related entityId`
+      );
+      if (related.revision !== undefined) {
+        requireInteger(
+          related.revision,
+          `${field} related revision`
+        );
+      }
+    }
+  }
+}
+
+function validateJobError(value: unknown, field: string): void {
+  const error = requireRecord(value, field);
+  rejectUnknownResponseFields(
+    error,
+    ["code", "message", "retryable"],
+    field
+  );
+  requireText(error.code, `${field} code`, 128);
+  requireText(error.message, `${field} message`, 2_000);
+  requireBoolean(error.retryable, `${field} retryable`);
 }

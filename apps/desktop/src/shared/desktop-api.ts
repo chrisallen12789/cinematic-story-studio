@@ -15,6 +15,30 @@ import type {
   ProviderHealthResponse
 } from "@cinematic-story-studio/contracts/api";
 
+import type {
+  AnalysisCorrectionsResponse,
+  AnalysisEntityPageResponse,
+  AnalysisRunIdInput,
+  AnalysisReviewsResponse,
+  AnalysisRunResponse,
+  AnalysisRunsResponse,
+  AppendAnalysisCorrectionInput,
+  AppendAnalysisCorrectionResponse,
+  CreateAnalysisRunResponse,
+  CreateAnalysisRunInput,
+  DecideAnalysisReviewInput,
+  DecideAnalysisReviewResponse,
+  ListAnalysisCorrectionsInput,
+  ListAnalysisEntitiesInput,
+  ListAnalysisReviewsInput,
+  ListAnalysisRunsInput
+} from "./analysis-api.js";
+
+export type {
+  AnalysisProjectInput,
+  AnalysisRunIdInput as AnalysisRunInput
+} from "./analysis-api.js";
+
 export const DESKTOP_CONTRACT_VERSION = "1.0.0" as const;
 
 export const IPC_CHANNELS = {
@@ -28,6 +52,14 @@ export const IPC_CHANNELS = {
   projectsImportSelectedFile: "css:projects:import-selected-file",
   projectsGetImportReview: "css:projects:get-import-review",
   projectsDecideImportReview: "css:projects:decide-import-review",
+  analysisCreateRun: "css:analysis:create-run",
+  analysisListRuns: "css:analysis:list-runs",
+  analysisGetRun: "css:analysis:get-run",
+  analysisListEntities: "css:analysis:list-entities",
+  analysisListCorrections: "css:analysis:list-corrections",
+  analysisAppendCorrection: "css:analysis:append-correction",
+  analysisListReviews: "css:analysis:list-reviews",
+  analysisDecideReview: "css:analysis:decide-review",
   dialogueCorrectSpeaker: "css:dialogue:correct-speaker",
   jobsCreate: "css:jobs:create",
   jobsGet: "css:jobs:get",
@@ -153,6 +185,32 @@ export interface CinematicStoryDesktopApi {
     readonly correctSpeaker: (
       input: CorrectSpeakerInput
     ) => Promise<DesktopResult<CorrectDialogueSpeakerResponse>>;
+  };
+  readonly analysis: {
+    readonly createRun: (
+      input: CreateAnalysisRunInput
+    ) => Promise<DesktopResult<CreateAnalysisRunResponse>>;
+    readonly listRuns: (
+      input: ListAnalysisRunsInput
+    ) => Promise<DesktopResult<AnalysisRunsResponse>>;
+    readonly getRun: (
+      input: AnalysisRunIdInput
+    ) => Promise<DesktopResult<AnalysisRunResponse>>;
+    readonly listEntities: (
+      input: ListAnalysisEntitiesInput
+    ) => Promise<DesktopResult<AnalysisEntityPageResponse>>;
+    readonly listCorrections: (
+      input: ListAnalysisCorrectionsInput
+    ) => Promise<DesktopResult<AnalysisCorrectionsResponse>>;
+    readonly appendCorrection: (
+      input: AppendAnalysisCorrectionInput
+    ) => Promise<DesktopResult<AppendAnalysisCorrectionResponse>>;
+    readonly listReviews: (
+      input: ListAnalysisReviewsInput
+    ) => Promise<DesktopResult<AnalysisReviewsResponse>>;
+    readonly decideReview: (
+      input: DecideAnalysisReviewInput
+    ) => Promise<DesktopResult<DecideAnalysisReviewResponse>>;
   };
   readonly jobs: {
     readonly create: (

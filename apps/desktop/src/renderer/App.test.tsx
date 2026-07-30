@@ -2,8 +2,16 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  PHASE_2_RUNTIME_AGENTS,
+  WHOLE_BOOK_ANALYSIS_PRODUCER_ID,
+  WHOLE_BOOK_ANALYSIS_PRODUCER_VERSION,
+  type AnalysisGateReview,
+  type StoryAnalysisRun
+} from "@cinematic-story-studio/contracts";
 import type {
   CorrectDialogueSpeakerResponse,
+  CreateProjectResponse,
   DecideImportReviewResponse,
   DocumentExtractionSummary,
   FfmpegCapabilityResponse,
@@ -23,7 +31,14 @@ import type {
   DesktopResult,
   ImportReviewIdInput
 } from "../shared/desktop-api";
+import {
+  WHOLE_BOOK_ANALYSIS_PROFILE_FINGERPRINT,
+  WHOLE_BOOK_ANALYSIS_PROFILE_ID,
+  WHOLE_BOOK_ANALYSIS_PROFILE_VERSION
+} from "../shared/analysis-api";
 import { App } from "./App";
+
+const sha = (character: string) => character.repeat(64);
 
 const readyBackend: BackendSnapshot = {
   state: "ready",
@@ -85,6 +100,282 @@ describe("Phase 0 desktop workspace", () => {
     await user.click(screen.getByRole("button", { name: /The Vault/u }));
     expect(screen.getByRole("heading", { name: "The Vault" })).toBeVisible();
     expect(screen.getByText("The lock answered with a click.")).toBeVisible();
+  });
+
+  it("does not let a deferred project A response replace active project B", async () => {
+    const projectA = createProjectDetail();
+    const projectB: ProjectDetail = {
+      ...createProjectDetail(),
+      correlationId: "correlation-project-b",
+      project: {
+        ...createProjectDetail().project,
+        projectId: "project-2",
+        name: "Project B"
+      }
+    };
+    let resolveProjectA:
+      | ((result: DesktopResult<ProjectDetail>) => void)
+      | undefined;
+    const deferredProjectA = new Promise<DesktopResult<ProjectDetail>>(
+      (resolve) => {
+        resolveProjectA = resolve;
+      }
+    );
+    const api = createApi({ project: projectA });
+    vi.mocked(api.projects.list).mockResolvedValue(
+      ok({
+        correlationId: "correlation-project-list",
+        items: [projectA, projectB].map((detail) => ({
+          projectId: detail.project.projectId,
+          name: detail.project.name,
+          status: detail.project.status,
+          revision: detail.project.revision,
+          createdAt: detail.project.createdAt,
+          updatedAt: detail.project.updatedAt
+        }))
+      })
+    );
+    vi.mocked(api.projects.open).mockImplementation((projectId) =>
+      projectId === "project-1"
+        ? deferredProjectA
+        : Promise.resolve(ok(projectB))
+    );
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    await screen.findByText('"We should go."');
+    await user.click(
+      screen.getByRole("button", { name: /Synthetic Demo/u })
+    );
+    await user.click(screen.getByRole("button", { name: /Project B/u }));
+    expect(
+      await screen.findByRole("heading", { name: "Project B" })
+    ).toBeVisible();
+
+    resolveProjectA?.(ok(projectA));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Project B" })
+      ).toBeVisible();
+    });
+  });
+
+  it("does not auto-open a created project after a newer selection is accepted", async () => {
+    const projectA = createProjectDetail();
+    const projectB: ProjectDetail = {
+      ...createProjectDetail(),
+      project: {
+        ...createProjectDetail().project,
+        projectId: "project-2",
+        name: "Project B"
+      }
+    };
+    const projectC: ProjectDetail = {
+      ...createProjectDetail(),
+      project: {
+        ...createProjectDetail().project,
+        projectId: "project-3",
+        name: "Project C"
+      }
+    };
+    let resolveCreate:
+      | ((result: DesktopResult<CreateProjectResponse>) => void)
+      | undefined;
+    const deferredCreate = new Promise<
+      DesktopResult<CreateProjectResponse>
+    >((resolve) => {
+      resolveCreate = resolve;
+    });
+    const api = createApi({ project: projectA });
+    vi.mocked(api.projects.create).mockReturnValue(deferredCreate);
+    vi.mocked(api.projects.list).mockResolvedValue(
+      ok({
+        correlationId: "correlation-project-list",
+        items: [projectA, projectB, projectC].map((detail) => ({
+          projectId: detail.project.projectId,
+          name: detail.project.name,
+          status: detail.project.status,
+          revision: detail.project.revision,
+          createdAt: detail.project.createdAt,
+          updatedAt: detail.project.updatedAt
+        }))
+      })
+    );
+    vi.mocked(api.projects.open).mockImplementation((projectId) =>
+      Promise.resolve(
+        ok(
+          projectId === projectB.project.projectId
+            ? projectB
+            : projectC
+        )
+      )
+    );
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    await screen.findByText('"We should go."');
+    await user.type(
+      screen.getByLabelText("New production"),
+      "Project C"
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Create project" })
+    );
+    await user.click(screen.getByRole("button", { name: /Project B/u }));
+    expect(
+      await screen.findByRole("heading", { name: "Project B" })
+    ).toBeVisible();
+
+    resolveCreate?.(
+      ok({
+        correlationId: "correlation-create-project-c",
+        project: projectC.project
+      })
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Project B" })
+      ).toBeVisible();
+    });
+    expect(api.projects.open).not.toHaveBeenCalledWith("project-3");
+  });
+
+  it("does not let a stale project operation clear a newer busy action", async () => {
+    const projectA = createProjectDetail();
+    const projectB: ProjectDetail = {
+      ...createProjectDetail(),
+      project: {
+        ...createProjectDetail().project,
+        projectId: "project-2",
+        name: "Project B"
+      }
+    };
+    let resolveImportA:
+      | ((result: DesktopResult<ImportStoryResponse | null>) => void)
+      | undefined;
+    let resolveImportB:
+      | ((result: DesktopResult<ImportStoryResponse | null>) => void)
+      | undefined;
+    const importA = new Promise<
+      DesktopResult<ImportStoryResponse | null>
+    >((resolve) => {
+      resolveImportA = resolve;
+    });
+    const importB = new Promise<
+      DesktopResult<ImportStoryResponse | null>
+    >((resolve) => {
+      resolveImportB = resolve;
+    });
+    const api = createApi({ project: projectA });
+    vi.mocked(api.projects.list).mockResolvedValue(
+      ok({
+        correlationId: "correlation-project-list",
+        items: [projectA, projectB].map((detail) => ({
+          projectId: detail.project.projectId,
+          name: detail.project.name,
+          status: detail.project.status,
+          revision: detail.project.revision,
+          createdAt: detail.project.createdAt,
+          updatedAt: detail.project.updatedAt
+        }))
+      })
+    );
+    vi.mocked(api.projects.open).mockImplementation((projectId) =>
+      Promise.resolve(
+        ok(
+          projectId === projectB.project.projectId
+            ? projectB
+            : projectA
+        )
+      )
+    );
+    vi.mocked(api.projects.importSelectedFile).mockImplementation(
+      (projectId) =>
+        projectId === projectA.project.projectId ? importA : importB
+    );
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    await screen.findByText('"We should go."');
+    await user.click(
+      screen.getByRole("button", { name: "Import document" })
+    );
+    expect(
+      screen.getByRole("button", { name: "Selecting..." })
+    ).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /Project B/u }));
+    expect(
+      await screen.findByRole("heading", { name: "Project B" })
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "Import document" })
+    );
+
+    resolveImportA?.(ok(null));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Selecting..." })
+      ).toBeDisabled();
+    });
+    resolveImportB?.(ok(null));
+    expect(
+      await screen.findByRole("button", { name: "Import document" })
+    ).toBeEnabled();
+  });
+
+  it("atomically clears rendered ownership while a project selection is pending or fails", async () => {
+    const projectA = createProjectDetail();
+    const projectB: ProjectDetail = {
+      ...createProjectDetail(),
+      project: {
+        ...createProjectDetail().project,
+        projectId: "project-2",
+        name: "Project B"
+      }
+    };
+    let resolveProjectB:
+      | ((result: DesktopResult<ProjectDetail>) => void)
+      | undefined;
+    const deferredProjectB = new Promise<DesktopResult<ProjectDetail>>(
+      (resolve) => {
+        resolveProjectB = resolve;
+      }
+    );
+    const api = createApi({ project: projectA });
+    vi.mocked(api.projects.list).mockResolvedValue(
+      ok({
+        correlationId: "correlation-project-list",
+        items: [projectA, projectB].map((detail) => ({
+          projectId: detail.project.projectId,
+          name: detail.project.name,
+          status: detail.project.status,
+          revision: detail.project.revision,
+          createdAt: detail.project.createdAt,
+          updatedAt: detail.project.updatedAt
+        }))
+      })
+    );
+    vi.mocked(api.projects.open).mockImplementation((projectId) =>
+      projectId === projectB.project.projectId
+        ? deferredProjectB
+        : Promise.resolve(ok(projectA))
+    );
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    await screen.findByText('"We should go."');
+    await user.click(screen.getByRole("button", { name: /Project B/u }));
+    expect(await screen.findByText("Opening project...")).toBeVisible();
+    expect(screen.queryByText('"We should go."')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save correction" })
+    ).not.toBeInTheDocument();
+
+    resolveProjectB?.(fail("PROJECT_OPEN_FAILED"));
+    await waitFor(() => {
+      expect(screen.queryByText('"We should go."')).not.toBeInTheDocument();
+    });
+    expect(api.dialogue.correctSpeaker).not.toHaveBeenCalled();
   });
 
   it("saves a speaker correction with reason and revision", async () => {
@@ -347,6 +638,115 @@ describe("Phase 0 desktop workspace", () => {
     expect(api.jobs.cancel).toHaveBeenCalledWith("job-1");
   });
 
+  it("retains a newly created Phase 2 run and job after leaving Analysis", async () => {
+    const runA = createPhase2Run("a", "2026-07-30T12:00:00Z");
+    const runB = createPhase2Run("b", "2026-07-30T13:00:00Z");
+    const jobA = createPhase2Job(runA);
+    const jobB = createPhase2Job(runB);
+    const importReview = createApprovedImportReview();
+    const base = createProjectDetail({
+      jobs: [jobA],
+      sourceDocuments: [createSourceDocument()],
+      extractions: [
+        createExtraction({
+          status: "complete",
+          extractedTextSha256: "b".repeat(64),
+          extractedCharacterCount: 72,
+          sectionCount: 4,
+          quality: {
+            classification: "structured_extraction",
+            confidence: 0.98
+          },
+          completedAt: "2026-07-30T11:55:00Z"
+        })
+      ],
+      importReviews: [importReview],
+      analysisAllowed: true
+    });
+    const detail: ProjectDetail = {
+      ...base,
+      currentAnalysisRun: runA,
+      analysisGateReviews: createPhase2GateReviews(runA)
+    };
+    const api = createApi({ project: detail });
+    vi.mocked(api.analysis.listRuns).mockResolvedValue(
+      ok({
+        correlationId: "correlation-phase2-runs",
+        pageSize: 2,
+        total: 2,
+        runs: [runB, runA]
+      })
+    );
+    vi.mocked(api.analysis.listReviews).mockImplementation(async (input) => {
+      const selected = input.runId === runB.runId ? runB : runA;
+      return ok({
+        correlationId: `correlation-reviews-${selected.runId}`,
+        runId: selected.runId,
+        items: createPhase2GateReviews(selected)
+      });
+    });
+    vi.mocked(api.analysis.listCorrections).mockImplementation(
+      async (input) =>
+        ok({
+          correlationId: `correlation-corrections-${input.runId}`,
+          runId: input.runId,
+          pageSize: 0,
+          total: 0,
+          items: []
+        })
+    );
+    vi.mocked(api.analysis.listEntities).mockImplementation(
+      async (input) => {
+        const selected = input.runId === runB.runId ? runB : runA;
+        const snapshot = selected.currentSnapshot;
+        if (snapshot === null) {
+          return fail("SNAPSHOT_NOT_AVAILABLE");
+        }
+        return ok({
+          correlationId: `correlation-entities-${selected.runId}`,
+          runId: selected.runId,
+          snapshotId: snapshot.snapshotId,
+          collection: input.collection,
+          pageSize: 0,
+          total: 0,
+          items: []
+        });
+      }
+    );
+    vi.mocked(api.analysis.createRun).mockResolvedValue(
+      ok({
+        correlationId: "correlation-create-run-b",
+        run: runB,
+        job: jobB
+      })
+    );
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    await screen.findByText('"We should go."');
+    await user.click(screen.getByRole("button", { name: "Analysis" }));
+    expect(await screen.findByLabelText("Analysis run")).toHaveValue(
+      runA.runId
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Rerun analysis" })
+    );
+    await waitFor(() => {
+      expect(screen.getByLabelText("Analysis run")).toHaveValue(runB.runId);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Story" }));
+    expect(
+      screen.getAllByRole("progressbar", {
+        name: "Analyze whole book progress"
+      })
+    ).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Analysis" }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Analysis run")).toHaveValue(runB.runId);
+    });
+  });
+
   it("renders one typed unassigned casting row per detected character", async () => {
     const api = createApi({ project: createProjectDetail() });
     const user = userEvent.setup();
@@ -541,6 +941,32 @@ function createApi(options?: {
         })
       )
     },
+    analysis: {
+      createRun: vi.fn(async () =>
+        fail<never>("ANALYSIS_NOT_CONFIGURED")
+      ),
+      listRuns: vi.fn(async () =>
+        fail<never>("ANALYSIS_NOT_CONFIGURED")
+      ),
+      getRun: vi.fn(async () =>
+        fail<never>("ANALYSIS_NOT_CONFIGURED")
+      ),
+      listEntities: vi.fn(async () =>
+        fail<never>("ANALYSIS_NOT_CONFIGURED")
+      ),
+      listCorrections: vi.fn(async () =>
+        fail<never>("ANALYSIS_NOT_CONFIGURED")
+      ),
+      appendCorrection: vi.fn(async () =>
+        fail<never>("ANALYSIS_NOT_CONFIGURED")
+      ),
+      listReviews: vi.fn(async () =>
+        fail<never>("ANALYSIS_NOT_CONFIGURED")
+      ),
+      decideReview: vi.fn(async () =>
+        fail<never>("ANALYSIS_NOT_CONFIGURED")
+      )
+    },
     jobs: {
       create: vi.fn(async () => ok({ correlationId: "job-correlation", job: createJob() })),
       get: vi.fn(async () => ok({ correlationId: "job-correlation", job: createJob() })),
@@ -615,6 +1041,8 @@ function createProjectDetail(options?: {
     extractions: options?.extractions ?? [],
     importReviews: options?.importReviews ?? [],
     analysisAllowed: options?.analysisAllowed ?? true,
+    currentAnalysisRun: null,
+    analysisGateReviews: [],
     story: {
       schemaVersion: "1.0.0",
       revision: 1,
@@ -931,6 +1359,194 @@ function createImportReview(
     updatedAt: "2026-07-29T12:01:00Z",
     ...overrides
   };
+}
+
+function createApprovedImportReview(): ImportReview {
+  const decidedAt = "2026-07-30T11:58:00Z";
+  return createImportReview({
+    revision: 2,
+    state: "approved",
+    latestDecision: {
+      schemaVersion: "1.0.0",
+      revision: 1,
+      provenance: {
+        origin: "human",
+        recordedAt: decidedAt,
+        actorId: "desktop-user"
+      },
+      decisionId: "import-decision-1",
+      projectId: "project-1",
+      gateId: "import_review",
+      scope: {
+        entityType: "imported_story",
+        entityId: "story-1",
+        revision: 1
+      },
+      decision: "approved",
+      actor: {
+        type: "human",
+        actorId: "desktop-user"
+      },
+      rationale: "Synthetic import evidence reviewed.",
+      evidenceFingerprint: sha("c"),
+      decidedAt,
+      immutable: true
+    },
+    updatedAt: decidedAt
+  });
+}
+
+function createPhase2Run(
+  suffix: "a" | "b",
+  completedAt: string
+): StoryAnalysisRun {
+  const runId = `run-${suffix}`;
+  const inputFingerprint = sha("d");
+  const runFingerprint = suffix === "a" ? sha("e") : sha("f");
+  const snapshotFingerprint = suffix === "a" ? sha("0") : sha("1");
+  const correctionSetFingerprint =
+    suffix === "a" ? sha("2") : sha("3");
+  const summary = {
+    agentExecutions: 11,
+    chapters: 2,
+    scenes: 2,
+    beats: 3,
+    characters: 2,
+    mentions: 2,
+    dialogueLines: 1,
+    narrationSpans: 2,
+    povSegments: 1,
+    locations: 2,
+    timelineEvents: 1,
+    temporalConstraints: 1,
+    relationships: 1,
+    emotionalStates: 1,
+    dramaticIntents: 1,
+    continuityFindings: 0,
+    corrections: 0
+  };
+  return {
+    contractVersion: "2.0.0",
+    runId,
+    projectId: "project-1",
+    storyId: "story-1",
+    storyRevision: 1,
+    storyFingerprint: sha("b"),
+    sourceDocumentId: "document-1",
+    sourceRevision: 1,
+    sourceSha256: sha("a"),
+    extractionId: "extraction-1",
+    extractionRevision: 1,
+    extractedTextSha256: sha("b"),
+    importReviewId: "review-1",
+    importReviewRevision: 2,
+    importReviewDecisionId: "import-decision-1",
+    approvedEvidenceFingerprint: sha("c"),
+    inputFingerprint,
+    runFingerprint,
+    profile: {
+      profileId: WHOLE_BOOK_ANALYSIS_PROFILE_ID,
+      semanticVersion: WHOLE_BOOK_ANALYSIS_PROFILE_VERSION,
+      fingerprint: WHOLE_BOOK_ANALYSIS_PROFILE_FINGERPRINT
+    },
+    producer: {
+      producerId: WHOLE_BOOK_ANALYSIS_PRODUCER_ID,
+      producerVersion: WHOLE_BOOK_ANALYSIS_PRODUCER_VERSION
+    },
+    agentVersions: PHASE_2_RUNTIME_AGENTS,
+    jobId: `job-${suffix}`,
+    status: "succeeded",
+    currentStage: "complete",
+    progress: 1,
+    warnings: [],
+    snapshotCount: 1,
+    currentSnapshot: {
+      contractVersion: "2.0.0",
+      snapshotId: `snapshot-${suffix}`,
+      runId,
+      revision: 1,
+      inputFingerprint,
+      snapshotFingerprint,
+      correctionSetFingerprint,
+      counts: summary,
+      collections: [],
+      createdAt: completedAt,
+      immutable: true
+    },
+    summary,
+    reviewEligibility: "ready",
+    createdAt: completedAt,
+    updatedAt: completedAt,
+    completedAt
+  };
+}
+
+function createPhase2GateReviews(
+  run: StoryAnalysisRun
+): readonly AnalysisGateReview[] {
+  const snapshot = run.currentSnapshot;
+  if (snapshot === null) {
+    throw new Error("The Phase 2 run fixture requires a snapshot.");
+  }
+  return [
+    "story_structure_review",
+    "character_registry_review",
+    "dialogue_attribution_review",
+    "whole_book_analysis_review"
+  ].map((gateId, index) => ({
+    contractVersion: "2.0.0" as const,
+    reviewId: `gate-${run.runId}-${index + 1}`,
+    projectId: run.projectId,
+    gateId: gateId as AnalysisGateReview["gateId"],
+    runId: run.runId,
+    snapshotId: snapshot.snapshotId,
+    state: "pending" as const,
+    revision: 1,
+    artifactFingerprint: sha("4"),
+    evidenceFingerprint: sha("5"),
+    evidence: {
+      projectId: run.projectId,
+      sourceDocumentId: run.sourceDocumentId,
+      extractionId: run.extractionId,
+      extractionRevision: run.extractionRevision,
+      storyId: run.storyId,
+      profileId: run.profile.profileId,
+      profileFingerprint: run.profile.fingerprint,
+      runId: run.runId,
+      runFingerprint: run.runFingerprint,
+      snapshotId: snapshot.snapshotId,
+      snapshotRevision: snapshot.revision,
+      snapshotFingerprint: snapshot.snapshotFingerprint,
+      artifactFingerprint: sha("4"),
+      evidenceFingerprint: sha("5")
+    },
+    openWarningIds: [],
+    acknowledgedWarningIds: [],
+    latestDecision: null,
+    provenance: {
+      origin: "human_review" as const,
+      recordedAt: run.updatedAt,
+      inputFingerprint: run.inputFingerprint,
+      producerId: WHOLE_BOOK_ANALYSIS_PRODUCER_ID,
+      producerVersion: WHOLE_BOOK_ANALYSIS_PRODUCER_VERSION,
+      deterministic: true
+    },
+    updatedAt: run.updatedAt
+  }));
+}
+
+function createPhase2Job(run: StoryAnalysisRun): Job {
+  return createJob({
+    jobId: run.jobId,
+    type: "analyze_whole_book",
+    state: "succeeded",
+    inputRevision: run.storyRevision,
+    inputFingerprint: run.inputFingerprint,
+    stage: "complete",
+    progress: 1,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt
+  });
 }
 
 function ok<T>(value: T): DesktopResult<T> {

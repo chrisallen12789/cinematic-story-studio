@@ -420,6 +420,424 @@ describe("BackendApiClient project responses", () => {
   });
 });
 
+describe("BackendApiClient legacy speaker correction boundary", () => {
+  it.each(["character-bob", null] as const)(
+    "binds an exact human speaker correction for %s",
+    async (characterId) => {
+      await withJsonResponse(
+        validSpeakerCorrectionWire(characterId),
+        async (client) => {
+          const response = await client.correctSpeaker({
+            projectId: "project-1",
+            lineId: "line-1",
+            characterId,
+            reason: "Fixture correction.",
+            expectedRevision: 2
+          });
+          expect(response.attribution.effectiveSpeakerId).toBe(characterId);
+          expect(response.lineRevision).toBe(3);
+          expect(response.appendedCorrection.correctedValue).toBe(
+            characterId
+          );
+        }
+      );
+    }
+  );
+
+  it("binds the service's canonical reason when the request omits one", async () => {
+    const defaultReason = "Speaker corrected by the local user.";
+    await withJsonResponse(
+      validSpeakerCorrectionWire("character-bob", defaultReason),
+      async (client) => {
+        const response = await client.correctSpeaker({
+          projectId: "project-1",
+          lineId: "line-1",
+          characterId: "character-bob",
+          expectedRevision: 2
+        });
+        expect(response.appendedCorrection.reason).toBe(defaultReason);
+      }
+    );
+  });
+
+  it.each([
+    {
+      label: "foreign project",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          projectId: "project-foreign"
+        }
+      })
+    },
+    {
+      label: "foreign line",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          lineId: "line-foreign"
+        }
+      })
+    },
+    {
+      label: "different requested speaker",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          effectiveSpeakerId: "character-foreign"
+        }
+      })
+    },
+    {
+      label: "nonincrementing line revision",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        lineRevision: 2
+      })
+    },
+    {
+      label: "nonincrementing attribution revision",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          revision: 2
+        }
+      })
+    },
+    {
+      label: "foreign correction target",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        appendedCorrection: {
+          ...wire.appendedCorrection,
+          target: {
+            ...wire.appendedCorrection.target,
+            entityId: "line-foreign"
+          }
+        }
+      })
+    },
+    {
+      label: "nonincrementing correction target revision",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        appendedCorrection: {
+          ...wire.appendedCorrection,
+          target: {
+            ...wire.appendedCorrection.target,
+            revision: 2
+          }
+        }
+      })
+    },
+    {
+      label: "different corrected value",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        appendedCorrection: {
+          ...wire.appendedCorrection,
+          correctedValue: "character-foreign"
+        }
+      })
+    },
+    {
+      label: "different reason",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        appendedCorrection: {
+          ...wire.appendedCorrection,
+          reason: "A response-controlled reason."
+        }
+      })
+    },
+    {
+      label: "nonhuman authority",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        appendedCorrection: {
+          ...wire.appendedCorrection,
+          authority: {
+            ...wire.appendedCorrection.authority,
+            source: "system"
+          }
+        }
+      })
+    },
+    {
+      label: "mutable correction",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        appendedCorrection: {
+          ...wire.appendedCorrection,
+          immutable: false
+        }
+      })
+    },
+    {
+      label: "automation-unlocked correction",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        appendedCorrection: {
+          ...wire.appendedCorrection,
+          lockedAgainstAutomation: false
+        }
+      })
+    },
+    {
+      label: "different projected prior speaker",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          humanCorrections: [
+            {
+              ...wire.appendedCorrection,
+              previousCharacterId: "character-foreign"
+            }
+          ]
+        }
+      })
+    },
+    {
+      label: "different projected human actor",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          humanCorrections: [
+            {
+              ...wire.appendedCorrection,
+              authority: {
+                ...wire.appendedCorrection.authority,
+                actorId: "other_local_user"
+              }
+            }
+          ]
+        }
+      })
+    },
+    {
+      label: "provenance actor different from correction actor",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          provenance: {
+            ...wire.attribution.provenance,
+            actorId: "other_local_user"
+          }
+        }
+      })
+    },
+    {
+      label: "provenance time different from correction time",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          provenance: {
+            ...wire.attribution.provenance,
+            recordedAt: "2026-07-30T12:00:01Z"
+          }
+        }
+      })
+    },
+    {
+      label: "attribution update time different from correction time",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        attribution: {
+          ...wire.attribution,
+          updatedAt: "2026-07-30T12:00:01Z"
+        }
+      })
+    },
+    {
+      label: "unsupported response payload",
+      mutate: (wire: ReturnType<typeof validSpeakerCorrectionWire>) => ({
+        ...wire,
+        manuscriptText: "private story text"
+      })
+    }
+  ])("rejects $label", async ({ mutate }) => {
+    await withJsonResponse(
+      mutate(validSpeakerCorrectionWire("character-bob")),
+      async (client) => {
+        await expect(
+          client.correctSpeaker({
+            projectId: "project-1",
+            lineId: "line-1",
+            characterId: "character-bob",
+            reason: "Fixture correction.",
+            expectedRevision: 2
+          })
+        ).rejects.toThrow();
+      }
+    );
+  });
+});
+
+describe("BackendApiClient job response boundary", () => {
+  it("binds Phase 0 and Phase 2 job responses to exact requested work", async () => {
+    await withJsonResponse(validJobWire("analyze_story"), async (client) => {
+      const response = await client.createJob({
+        projectId: "project-1",
+        type: "analyze_story",
+        inputRevision: 4,
+        idempotencyKey: "phase0-job-create"
+      });
+      expect(response.job.jobId).toBe("job-1");
+    });
+
+    await withJsonResponse(
+      validJobWire("analyze_whole_book"),
+      async (client) => {
+        const response = await client.getJob("job-1", {
+          projectId: "project-1",
+          type: "analyze_whole_book",
+          inputRevision: 4,
+          inputFingerprint: "a".repeat(64)
+        });
+        expect(response.job.type).toBe("analyze_whole_book");
+      }
+    );
+  });
+
+  it.each([
+    ["jobId", "job-foreign"],
+    ["projectId", "project-foreign"],
+    ["type", "analyze_story"],
+    ["inputRevision", 5],
+    ["inputFingerprint", "f".repeat(64)]
+  ] as const)(
+    "rejects a job with tampered %s",
+    async (field, value) => {
+      const response = validJobWire("analyze_whole_book");
+      const job = response.job as Record<string, unknown>;
+      await withJsonResponse(
+        {
+          ...response,
+          job: {
+            ...job,
+            [field]: value,
+            ...(field === "type"
+              ? { target: { type: "story", id: "story-1" } }
+              : {})
+          }
+        },
+        async (client) => {
+          await expect(
+            client.getJob("job-1", {
+              projectId: "project-1",
+              type: "analyze_whole_book",
+              inputRevision: 4,
+              inputFingerprint: "a".repeat(64)
+            })
+          ).rejects.toThrow();
+        }
+      );
+    }
+  );
+
+  it("validates ordered, redacted job events after the requested sequence", async () => {
+    const response = {
+      correlationId: "correlation-events",
+      events: [
+        {
+          jobId: "job-1",
+          attempt: 1,
+          sequence: 5,
+          type: "warning",
+          state: "running",
+          stage: "analyze_structure",
+          progress: 0.5,
+          warning: {
+            code: "LOW_CONFIDENCE",
+            severity: "warning",
+            message: "A redacted bounded warning.",
+            requiresHumanReview: true,
+            relatedEntities: [
+              {
+                entityType: "analysis_run",
+                entityId: "run-1",
+                revision: 1
+              }
+            ]
+          },
+          createdAt: "2026-07-30T12:00:00Z"
+        }
+      ],
+      lastSequence: 5
+    };
+    await withJsonResponse(response, async (client) => {
+      const events = await client.getJobEvents("job-1", 4);
+      expect(events.events).toHaveLength(1);
+    });
+  });
+
+  it.each([
+    {
+      label: "foreign job",
+      mutate: (event: Record<string, unknown>) => ({
+        ...event,
+        jobId: "job-foreign"
+      })
+    },
+    {
+      label: "sequence at the afterSequence boundary",
+      mutate: (event: Record<string, unknown>) => ({
+        ...event,
+        sequence: 4
+      })
+    },
+    {
+      label: "unredacted extra payload",
+      mutate: (event: Record<string, unknown>) => ({
+        ...event,
+        manuscriptText: "private story text"
+      })
+    },
+    {
+      label: "warning with extra payload",
+      mutate: (event: Record<string, unknown>) => ({
+        ...event,
+        warning: {
+          ...(event.warning as Record<string, unknown>),
+          providerPayload: "private"
+        }
+      })
+    }
+  ])("rejects $label in a job event", async ({ mutate }) => {
+    const validEvent = {
+      jobId: "job-1",
+      attempt: 1,
+      sequence: 5,
+      type: "warning",
+      warning: {
+        code: "LOW_CONFIDENCE",
+        severity: "warning",
+        message: "A redacted bounded warning.",
+        requiresHumanReview: true
+      },
+      createdAt: "2026-07-30T12:00:00Z"
+    };
+    await withJsonResponse(
+      {
+        correlationId: "correlation-events",
+        events: [mutate(validEvent)],
+        lastSequence: 5
+      },
+      async (client) => {
+        await expect(client.getJobEvents("job-1", 4)).rejects.toThrow();
+      }
+    );
+  });
+});
+
 function minimalProjectDetail() {
   return {
     correlationId: "correlation-1",
@@ -432,6 +850,8 @@ function minimalProjectDetail() {
     extractions: [],
     importReviews: [],
     analysisAllowed: false,
+    currentAnalysisRun: null,
+    analysisGateReviews: [],
     story: null,
     chapters: [],
     scenes: [],
@@ -603,6 +1023,123 @@ function minimalApprovalDecision() {
 
 function sha256(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function validJobWire(
+  type: "analyze_story" | "analyze_whole_book"
+): Record<string, unknown> {
+  return {
+    correlationId: "correlation-job",
+    job: {
+      jobId: "job-1",
+      projectId: "project-1",
+      type,
+      state: "running",
+      target: {
+        type: type === "analyze_story" ? "story" : "analysis_run",
+        id: type === "analyze_story" ? "story-1" : "run-1"
+      },
+      inputRevision: 4,
+      inputFingerprint: "a".repeat(64),
+      attempt: 1,
+      stage:
+        type === "analyze_story"
+          ? "analyze_story"
+          : "analyze_structure",
+      progress: 0.5,
+      checkpointAvailable: false,
+      cancellationRequested: false,
+      warnings: [],
+      createdAt: "2026-07-30T12:00:00Z",
+      updatedAt: "2026-07-30T12:00:01Z"
+    }
+  };
+}
+
+function validSpeakerCorrectionWire(
+  characterId: string | null,
+  reason = "Fixture correction."
+) {
+  const recordedAt = "2026-07-30T12:00:00Z";
+  const correction = {
+    correctionId: "correction-1",
+    target: {
+      entityType: "DialogueLine",
+      entityId: "line-1",
+      revision: 3
+    },
+    fieldPath: "/effectiveSpeakerId",
+    previousValueFingerprint: "a".repeat(64),
+    previousCharacterId: "character-alice",
+    correctedValue: characterId,
+    correctedCharacterId: characterId,
+    reason,
+    authority: {
+      source: "human",
+      actorId: "local_user"
+    },
+    recordedAt,
+    immutable: true,
+    lockedAgainstAutomation: true
+  };
+  return {
+    correlationId: "correlation-correction",
+    attribution: {
+      schemaVersion: "1.0.0",
+      revision: 3,
+      provenance: {
+        origin: "human",
+        recordedAt,
+        actorId: "local_user",
+        sourceReferences: [
+          {
+            entityType: "DialogueLine",
+            entityId: "line-1",
+            revision: 3
+          }
+        ],
+        notes: "Protected human speaker correction."
+      },
+      attributionId: "attribution-1",
+      projectId: "project-1",
+      lineId: "line-1",
+      proposedSpeakerId: "character-alice",
+      effectiveSpeakerId: characterId,
+      effectiveAuthority: "human",
+      evidence: [],
+      confidence: {
+        score: 1,
+        basis: "durable_human_correction",
+        calibrationId: "human-authority"
+      },
+      warnings: [],
+      humanCorrections: [correction],
+      updatedAt: recordedAt
+    },
+    appendedCorrection: correction,
+    projectRevision: 4,
+    lineRevision: 3
+  };
+}
+
+async function withJsonResponse(
+  value: unknown,
+  operation: (client: BackendApiClient) => Promise<void>
+): Promise<void> {
+  const server = createServer((request, response) => {
+    request.resume();
+    request.once("end", () => {
+      sendJson(response, value);
+    });
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    await operation(new BackendApiClient(serviceForServer(server)));
+  } finally {
+    await closeServer(server);
+  }
 }
 
 function serviceForServer(server: Server): ServiceManager {

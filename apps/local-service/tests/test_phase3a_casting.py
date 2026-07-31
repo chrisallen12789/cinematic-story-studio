@@ -1567,7 +1567,7 @@ def test_casting_freezes_current_approved_phase2_correction_overlays(
     imported, created = create_phase2_run(
         client,
         auth_headers,
-        idempotency_key="phase3a-corrected-phase2",
+        idempotency_key="phase2-overlay",
     )
     project_id = imported["project"]["projectId"]
     analysis_run, _decisions = _approve_phase2(
@@ -1582,7 +1582,7 @@ def test_casting_freezes_current_approved_phase2_correction_overlays(
         auth_headers,
         project_id=project_id,
         analysis_run_id=analysis_run["runId"],
-        idempotency_key="phase3a-corrected-phase2-label",
+        idempotency_key="phase2-label",
     )
     corrected_run, corrected_decisions = _approve_phase2(
         client,
@@ -1600,7 +1600,7 @@ def test_casting_freezes_current_approved_phase2_correction_overlays(
         project_id=project_id,
         analysis_run=corrected_run,
         decisions=corrected_decisions,
-        idempotency_key="phase3a-corrected-phase2-casting",
+        idempotency_key="cast-overlay",
     )
 
     assert casting_run["prerequisites"]["analysisCorrectionSetFingerprint"] == corrected_fingerprint

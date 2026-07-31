@@ -289,7 +289,7 @@ def _prepare_approved_cast(
     imported, created = create_phase2_run(
         client,
         auth_headers,
-        idempotency_key="phase3a-assignment-invalidation",
+        idempotency_key="assign-drift",
     )
     project_id = imported["project"]["projectId"]
     analysis_run, phase2_decisions = _approve_phase2(
@@ -305,7 +305,7 @@ def _prepare_approved_cast(
         project_id=project_id,
         analysis_run=analysis_run,
         decisions=phase2_decisions,
-        idempotency_key="phase3a-assignment-invalidation-cast",
+        idempotency_key="assign-drift-cast",
     )
     roles = _roles(client, auth_headers, run=run)
     narrator = next(value for value in roles if value["roleType"] == "primary_narrator")
@@ -436,7 +436,7 @@ def _prepare_approved_cast(
         client,
         auth_headers,
         run=run,
-        key_prefix="phase3a-invalidation-initial-approval",
+        key_prefix="gate-initial",
     )
     assert {
         value["gateId"]: value["state"] for value in _list_reviews(client, auth_headers, run=run)
@@ -712,7 +712,7 @@ def test_selected_catalog_and_rights_drift_are_durably_invalidated(
             client,
             auth_headers,
             run=run,
-            key_prefix="phase3a-invalidation-narrator-reapproval",
+            key_prefix="gate-narrator",
         )
         assert {
             value["gateId"]: value["state"]
@@ -840,7 +840,7 @@ def test_selected_catalog_and_rights_drift_are_durably_invalidated(
             client,
             auth_headers,
             run=run,
-            key_prefix="phase3a-invalidation-character-reapproval",
+            key_prefix="gate-character",
         )
         assert {
             value["gateId"]: value["state"]

@@ -105,6 +105,17 @@ SQLite uses foreign keys, uniqueness constraints, check constraints for revision
 - `render_manifests`, `artifacts`, `qc_findings`;
 - `idempotency_records`, `schema_migrations`, and transactional `outbox_events`.
 
+Schema v3 adds `analysis_runs`, `analysis_executions`, `analysis_snapshots`,
+`analysis_stage_checkpoints`, `analysis_agent_executions`,
+`analysis_entities`, `analysis_evidence_spans`, `analysis_corrections`, and
+`analysis_review_decisions`, as described in
+[story-analysis-data-model.md](story-analysis-data-model.md). Profile JSON is
+frozen on the run; confidence and warnings are entity/execution columns or
+bounded JSON; gate state is projected from append-only decision rows. Existing
+Phase 0/1 chapter, scene, character, dialogue, and correction rows are
+preserved as legacy baseline evidence; migration does not claim that they are
+an approved Phase 2 snapshot.
+
 Large source/audio bytes are files, not SQLite BLOBs; SQLite stores verified relative references and hashes. Any resolved path must remain beneath its typed root. Secret values are never columns: provider settings contain an opaque OS credential reference and non-secret configuration only.
 
 ## Transactions, migrations, and integrity

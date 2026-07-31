@@ -592,3 +592,531 @@ class ParserExecutionRow(Base):
             "id",
         ),
     )
+
+
+class AnalysisRunRow(Base):
+    """Immutable governed input/configuration record for one whole-book analysis."""
+
+    __tablename__ = "analysis_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    story_id: Mapped[str] = mapped_column(
+        ForeignKey("imported_stories.id", ondelete="RESTRICT"), index=True
+    )
+    source_document_id: Mapped[str] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT"), index=True
+    )
+    source_revision: Mapped[int] = mapped_column(Integer)
+    extraction_id: Mapped[str] = mapped_column(
+        ForeignKey("document_extractions.id", ondelete="RESTRICT"), index=True
+    )
+    import_review_record_id: Mapped[str] = mapped_column(
+        ForeignKey("import_reviews.id", ondelete="RESTRICT"), index=True
+    )
+    review_id: Mapped[str] = mapped_column(String(36))
+    review_revision: Mapped[int] = mapped_column(Integer)
+    review_decision_id: Mapped[str] = mapped_column(String(36))
+    approval_evidence_fingerprint: Mapped[str] = mapped_column(String(64))
+    story_revision: Mapped[int] = mapped_column(Integer)
+    extraction_revision: Mapped[int] = mapped_column(Integer)
+    extracted_text_sha256: Mapped[str] = mapped_column(String(64))
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    correction_set_fingerprint: Mapped[str] = mapped_column(String(64))
+    profile_json: Mapped[str] = mapped_column(Text)
+    profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    producer_id: Mapped[str] = mapped_column(String(80))
+    producer_version: Mapped[str] = mapped_column(String(40))
+    run_fingerprint: Mapped[str] = mapped_column(String(64))
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.id", ondelete="RESTRICT"), unique=True, index=True
+    )
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        CheckConstraint("review_revision >= 1", name="ck_analysis_run_review_revision"),
+        CheckConstraint("source_revision >= 1", name="ck_analysis_run_source_revision"),
+        CheckConstraint("story_revision >= 1", name="ck_analysis_run_story_revision"),
+        CheckConstraint(
+            "extraction_revision >= 1",
+            name="ck_analysis_run_extraction_revision",
+        ),
+        Index(
+            "ix_analysis_run_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_analysis_run_project_extraction",
+            "project_id",
+            "extraction_id",
+            "extraction_revision",
+            "id",
+        ),
+    )
+
+
+class AnalysisExecutionRow(Base):
+    """Append-only terminal evidence for one persisted analysis job attempt."""
+
+    __tablename__ = "analysis_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True
+    )
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.id", ondelete="RESTRICT"), index=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer)
+    outcome: Mapped[str] = mapped_column(String(24))
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    agent_registry_fingerprint: Mapped[str] = mapped_column(String(64))
+    output_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    error_retryable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    started_at: Mapped[str] = mapped_column(String(32))
+    finished_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "attempt", name="uq_analysis_execution_run_attempt"),
+        UniqueConstraint("job_id", "attempt", name="uq_analysis_execution_job_attempt"),
+        CheckConstraint("attempt >= 1", name="ck_analysis_execution_attempt"),
+        CheckConstraint(
+            "outcome IN ('succeeded', 'failed', 'cancelled', 'interrupted')",
+            name="ck_analysis_execution_outcome",
+        ),
+        Index(
+            "ix_analysis_execution_project_run_attempt",
+            "project_id",
+            "run_id",
+            "attempt",
+            "id",
+        ),
+    )
+
+
+class AnalysisSnapshotRow(Base):
+    """Immutable stage or final manifest produced by an analysis execution."""
+
+    __tablename__ = "analysis_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True
+    )
+    execution_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_executions.id", ondelete="CASCADE"), index=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    stage: Mapped[str] = mapped_column(String(40))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    entity_count: Mapped[int] = mapped_column(Integer)
+    manifest_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "execution_id",
+            "ordinal",
+            name="uq_analysis_snapshot_execution_ordinal",
+        ),
+        UniqueConstraint(
+            "execution_id",
+            "stage",
+            name="uq_analysis_snapshot_execution_stage",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_analysis_snapshot_ordinal"),
+        CheckConstraint("entity_count >= 0", name="ck_analysis_snapshot_entity_count"),
+        Index(
+            "ix_analysis_snapshot_project_run_order",
+            "project_id",
+            "run_id",
+            "ordinal",
+            "id",
+        ),
+    )
+
+
+class AnalysisStageCheckpointRow(Base):
+    """Append-only compatible checkpoint evidence for each governed job stage."""
+
+    __tablename__ = "analysis_stage_checkpoints"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True
+    )
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), index=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    stage: Mapped[str] = mapped_column(String(48))
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    payload_fingerprint: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "attempt",
+            "ordinal",
+            name="uq_analysis_stage_checkpoint_ordinal",
+        ),
+        UniqueConstraint(
+            "job_id",
+            "attempt",
+            "stage",
+            name="uq_analysis_stage_checkpoint_stage",
+        ),
+        CheckConstraint("attempt >= 1", name="ck_analysis_stage_checkpoint_attempt"),
+        CheckConstraint("ordinal >= 0", name="ck_analysis_stage_checkpoint_ordinal"),
+        Index(
+            "ix_analysis_stage_checkpoint_project_run_attempt",
+            "project_id",
+            "run_id",
+            "attempt",
+            "ordinal",
+            "id",
+        ),
+    )
+
+
+class AnalysisAgentExecutionRow(Base):
+    """Bounded immutable runtime-agent envelope; agents have no storage authority."""
+
+    __tablename__ = "analysis_agent_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True
+    )
+    execution_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_executions.id", ondelete="CASCADE"), index=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(40))
+    agent_id: Mapped[str] = mapped_column(String(80))
+    agent_version: Mapped[str] = mapped_column(String(40))
+    outcome: Mapped[str] = mapped_column(String(24))
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    output_fingerprint: Mapped[str] = mapped_column(String(64))
+    confidence_json: Mapped[str] = mapped_column(Text)
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    envelope_json: Mapped[str] = mapped_column(Text)
+    started_at: Mapped[str] = mapped_column(String(32))
+    finished_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "execution_id",
+            "ordinal",
+            name="uq_analysis_agent_execution_ordinal",
+        ),
+        UniqueConstraint(
+            "execution_id",
+            "role",
+            name="uq_analysis_agent_execution_role",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_analysis_agent_ordinal"),
+        CheckConstraint(
+            "outcome IN ('succeeded', 'failed', 'skipped', 'cancelled', 'interrupted')",
+            name="ck_analysis_agent_outcome",
+        ),
+        Index(
+            "ix_analysis_agent_project_run_order",
+            "project_id",
+            "run_id",
+            "ordinal",
+            "id",
+        ),
+    )
+
+
+class AnalysisEntityRow(Base):
+    """One immutable, independently pageable story-intelligence claim."""
+
+    __tablename__ = "analysis_entities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_snapshots.id", ondelete="CASCADE"), index=True
+    )
+    collection: Mapped[str] = mapped_column(String(40))
+    ordinal: Mapped[int] = mapped_column(Integer)
+    parent_entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    identity_key: Mapped[str] = mapped_column(String(160))
+    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    payload_json: Mapped[str] = mapped_column(Text)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    confidence_score: Mapped[int] = mapped_column(Integer)
+    confidence_class: Mapped[str] = mapped_column(String(12))
+    confidence_basis: Mapped[str] = mapped_column(String(160))
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "collection",
+            "ordinal",
+            name="uq_analysis_entity_run_collection_ordinal",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_analysis_entity_ordinal"),
+        CheckConstraint("revision >= 1", name="ck_analysis_entity_revision"),
+        CheckConstraint(
+            "(start_offset IS NULL AND end_offset IS NULL) OR "
+            "(start_offset >= 0 AND end_offset >= start_offset)",
+            name="ck_analysis_entity_span",
+        ),
+        CheckConstraint(
+            "confidence_score >= 0 AND confidence_score <= 1000000",
+            name="ck_analysis_entity_confidence",
+        ),
+        CheckConstraint(
+            "confidence_class IN ('unknown', 'low', 'medium', 'high')",
+            name="ck_analysis_entity_confidence_class",
+        ),
+        Index(
+            "ix_analysis_entity_project_run_collection_order",
+            "project_id",
+            "run_id",
+            "collection",
+            "ordinal",
+            "id",
+        ),
+        Index(
+            "ix_analysis_entity_project_run_identity",
+            "project_id",
+            "run_id",
+            "collection",
+            "identity_key",
+            "id",
+        ),
+    )
+
+
+class AnalysisEvidenceSpanRow(Base):
+    """Bounded source-grounding metadata; excerpts are derived only at response time."""
+
+    __tablename__ = "analysis_evidence_spans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True
+    )
+    entity_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_entities.id", ondelete="CASCADE"), index=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    start_offset: Mapped[int] = mapped_column(Integer)
+    end_offset: Mapped[int] = mapped_column(Integer)
+    text_sha256: Mapped[str] = mapped_column(String(64))
+    basis: Mapped[str] = mapped_column(String(160))
+    confidence_score: Mapped[int] = mapped_column(Integer)
+    provenance_json: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_id",
+            "ordinal",
+            name="uq_analysis_evidence_entity_ordinal",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_analysis_evidence_ordinal"),
+        CheckConstraint(
+            "start_offset >= 0 AND end_offset >= start_offset",
+            name="ck_analysis_evidence_span",
+        ),
+        CheckConstraint(
+            "confidence_score >= 0 AND confidence_score <= 1000000",
+            name="ck_analysis_evidence_confidence",
+        ),
+        Index(
+            "ix_analysis_evidence_project_run_entity_order",
+            "project_id",
+            "run_id",
+            "entity_id",
+            "ordinal",
+            "id",
+        ),
+    )
+
+
+class AnalysisCorrectionRow(Base):
+    """Append-only human correction overlay, including migrated speaker corrections."""
+
+    __tablename__ = "analysis_corrections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    category: Mapped[str] = mapped_column(String(40))
+    target_entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    target_key: Mapped[str] = mapped_column(String(120))
+    revision: Mapped[int] = mapped_column(Integer)
+    expected_target_revision: Mapped[int] = mapped_column(Integer)
+    expected_run_fingerprint: Mapped[str] = mapped_column(String(64))
+    previous_value_fingerprint: Mapped[str] = mapped_column(String(64))
+    patch_json: Mapped[str] = mapped_column(Text)
+    correction_fingerprint: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(80))
+    supersedes_correction_id: Mapped[str | None] = mapped_column(
+        ForeignKey("analysis_corrections.id", ondelete="RESTRICT"), nullable=True
+    )
+    legacy_correction_id: Mapped[str | None] = mapped_column(String(36), nullable=True, unique=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    recorded_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "category",
+            "target_key",
+            "revision",
+            name="uq_analysis_correction_target_revision",
+        ),
+        UniqueConstraint(
+            "run_id",
+            "idempotency_key",
+            name="uq_analysis_correction_idempotency",
+        ),
+        CheckConstraint("revision >= 1", name="ck_analysis_correction_revision"),
+        CheckConstraint(
+            "expected_target_revision >= 1",
+            name="ck_analysis_correction_expected_revision",
+        ),
+        CheckConstraint(
+            "length(trim(reason)) >= 1 AND length(reason) <= 1000",
+            name="ck_analysis_correction_reason",
+        ),
+        Index(
+            "ix_analysis_correction_project_run_recorded",
+            "project_id",
+            "run_id",
+            "recorded_at",
+            "id",
+        ),
+        Index(
+            "ix_analysis_correction_project_target",
+            "project_id",
+            "category",
+            "target_key",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class AnalysisReviewDecisionRow(Base):
+    """Append-only state history for one of the four governed review gates."""
+
+    __tablename__ = "analysis_review_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_snapshots.id", ondelete="RESTRICT"), index=True
+    )
+    gate_id: Mapped[str] = mapped_column(String(48))
+    revision: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(24))
+    artifact_fingerprint: Mapped[str] = mapped_column(String(64))
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64))
+    eligible: Mapped[bool] = mapped_column(Boolean)
+    rationale: Mapped[str] = mapped_column(String(4000), nullable=False)
+    warning_acknowledgements_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    actor_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    supersedes_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("analysis_review_decisions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    decided_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "gate_id",
+            "revision",
+            name="uq_analysis_review_gate_revision",
+        ),
+        UniqueConstraint(
+            "run_id",
+            "gate_id",
+            "idempotency_key",
+            name="uq_analysis_review_gate_idempotency",
+        ),
+        CheckConstraint("revision >= 1", name="ck_analysis_review_revision"),
+        CheckConstraint(
+            "gate_id IN ("
+            "'story_structure_review', "
+            "'character_registry_review', "
+            "'dialogue_attribution_review', "
+            "'whole_book_analysis_review'"
+            ")",
+            name="ck_analysis_review_gate",
+        ),
+        CheckConstraint(
+            "state IN ("
+            "'pending', 'approved', 'rejected', 'changes_requested', 'invalidated'"
+            ")",
+            name="ck_analysis_review_state",
+        ),
+        CheckConstraint(
+            "length(trim(rationale)) >= 1 AND length(rationale) <= 4000",
+            name="ck_analysis_review_rationale",
+        ),
+        Index(
+            "ix_analysis_review_project_run_gate_revision",
+            "project_id",
+            "run_id",
+            "gate_id",
+            "revision",
+            "id",
+        ),
+    )

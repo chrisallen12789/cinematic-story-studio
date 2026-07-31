@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,11 +24,15 @@ from .jobs import JobRepository, JobWorker
 from .projects import ProjectRepository, StoryImportService
 from .providers import ProviderRegistry
 from .schemas import (
+    AppendAnalysisCorrectionRequest,
     CorrectDialogueSpeakerRequest,
+    CreateAnalysisRunRequest,
     CreateJobRequest,
     CreateProjectRequest,
+    DecideAnalysisReviewRequest,
     DecideImportReviewRequest,
 )
+from .story_intelligence import StoryIntelligenceRepository
 from .tools import FfmpegCapabilityChecker
 from .util import (
     PROTOCOL_VERSION,
@@ -36,10 +41,19 @@ from .util import (
     new_id,
     utc_now,
 )
+from .whole_book_analysis import (
+    DEFAULT_ANALYSIS_PAGE_SIZE,
+    MAX_ANALYSIS_PAGE_SIZE,
+)
 
 _LOGGER = logging.getLogger("cinematic_story_service")
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "testserver"}
 _MULTIPART_OVERHEAD_ALLOWANCE = 64 * 1024
+_PHASE_2_MUTATION_BODY_LIMIT = 64 * 1024
+_PHASE_2_MUTATION_PATH = re.compile(
+    r"^/api/v1/projects/[^/]+/analysis-runs"
+    r"(?:$|/[^/]+/(?:corrections|reviews/[^/]+/decisions)$)"
+)
 
 
 class _BodyLimitExceeded(MultiPartException):
@@ -139,6 +153,67 @@ async def _bounded_import_form(
         request._receive = original_receive
 
 
+async def _bounded_phase_2_json_call(
+    request: Request,
+    call_next: Any,
+) -> Any:
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
+    applies = (
+        request.method in {"POST", "PUT", "PATCH"}
+        and content_type == "application/json"
+        and _PHASE_2_MUTATION_PATH.fullmatch(request.url.path) is not None
+    )
+    if not applies:
+        return await call_next(request)
+    raw_content_length = request.headers.get("content-length")
+    if raw_content_length is not None:
+        try:
+            content_length = int(raw_content_length)
+        except ValueError:
+            return _error_response(
+                request,
+                ServiceError(
+                    400,
+                    "INVALID_CONTENT_LENGTH",
+                    "The request content length is invalid.",
+                ),
+            )
+        if content_length < 0:
+            return _error_response(
+                request,
+                ServiceError(
+                    400,
+                    "INVALID_CONTENT_LENGTH",
+                    "The request content length is invalid.",
+                ),
+            )
+        if content_length > _PHASE_2_MUTATION_BODY_LIMIT:
+            return _error_response(
+                request,
+                ServiceError(
+                    413,
+                    "REQUEST_BODY_TOO_LARGE",
+                    "The Phase 2 mutation body exceeds 64 KiB.",
+                ),
+            )
+    chunks: list[bytes] = []
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > _PHASE_2_MUTATION_BODY_LIMIT:
+            return _error_response(
+                request,
+                ServiceError(
+                    413,
+                    "REQUEST_BODY_TOO_LARGE",
+                    "The Phase 2 mutation body exceeds 64 KiB.",
+                ),
+            )
+        chunks.append(chunk)
+    request._body = b"".join(chunks)
+    return await call_next(request)
+
+
 def _correlation_id(request: Request) -> str:
     return getattr(request.state, "correlation_id", new_id())
 
@@ -167,6 +242,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
     database = Database(settings.database_path)
     multipart_spool_directory = ensure_private_directory(settings.data_dir / "multipart-staging")
     projects = ProjectRepository(database)
+    story_intelligence = StoryIntelligenceRepository(database, projects)
     imports = StoryImportService(settings, projects)
     reconciled_staging = imports.reconcile_staging()
     if reconciled_staging:
@@ -179,6 +255,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
         projects,
         settings.instance_id,
         settings.parser_deadline_seconds,
+        story_intelligence=story_intelligence,
     )
     jobs.reconcile_interrupted()
     jobs.reconcile_orphaned_extractions()
@@ -208,6 +285,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
     app.state.settings = settings
     app.state.database = database
     app.state.projects = projects
+    app.state.story_intelligence = story_intelligence
     app.state.imports = imports
     app.state.jobs = jobs
     app.state.worker = worker
@@ -248,7 +326,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
                 )
                 response.headers["WWW-Authenticate"] = "Bearer"
             else:
-                response = await call_next(request)
+                response = await _bounded_phase_2_json_call(request, call_next)
         else:
             response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
@@ -366,9 +444,22 @@ def create_app(settings: ServiceSettings) -> FastAPI:
 
     @app.get("/api/v1/projects/{project_id}")
     def project_detail(request: Request, project_id: str) -> dict[str, Any]:
+        detail = projects.get_project_detail(project_id)
+        summary = story_intelligence.project_summary(project_id)
+        current_run = summary["currentRun"]
         return {
             "correlationId": _correlation_id(request),
-            **projects.get_project_detail(project_id),
+            **detail,
+            "currentAnalysisRun": current_run,
+            "analysisGateReviews": (
+                story_intelligence.list_reviews(
+                    project_id=project_id,
+                    run_id=current_run["runId"],
+                )
+                if isinstance(current_run, dict)
+                else []
+            ),
+            "wholeBookAnalysis": summary,
         }
 
     @app.post("/api/v1/projects/{project_id}/imports", status_code=202)
@@ -512,6 +603,245 @@ def create_app(settings: ServiceSettings) -> FastAPI:
             "correlationId": _correlation_id(request),
             "extraction": extraction,
             "job": job,
+        }
+
+    @app.post("/api/v1/projects/{project_id}/analysis-runs", status_code=202)
+    def create_analysis_run(
+        request: Request,
+        project_id: str,
+        body: CreateAnalysisRunRequest,
+    ) -> dict[str, Any]:
+        run, job = jobs.create_whole_book_run(
+            project_id=project_id,
+            expected_extraction_id=body.expected_extraction_id,
+            expected_extraction_revision=body.expected_extraction_revision,
+            expected_review_id=body.expected_review_id,
+            expected_review_revision=body.expected_review_revision,
+            expected_evidence_fingerprint=body.expected_evidence_fingerprint,
+            expected_profile_fingerprint=body.expected_profile_fingerprint,
+            idempotency_key=body.idempotency_key,
+        )
+        worker.wake()
+        return {
+            "correlationId": _correlation_id(request),
+            "run": run,
+            "job": job,
+        }
+
+    @app.get("/api/v1/projects/{project_id}/analysis-runs")
+    def list_analysis_runs(
+        request: Request,
+        project_id: str,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_ANALYSIS_PAGE_SIZE),
+        ] = DEFAULT_ANALYSIS_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        runs, next_cursor, total = story_intelligence.list_runs(
+            project_id=project_id,
+            cursor=cursor,
+            limit=limit,
+        )
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "pageSize": len(runs),
+            "total": total,
+            "runs": runs,
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    @app.get("/api/v1/projects/{project_id}/analysis-runs/{run_id}")
+    def get_analysis_run(
+        request: Request,
+        project_id: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            "run": story_intelligence.get_run(
+                project_id=project_id,
+                run_id=run_id,
+            ),
+        }
+
+    @app.get(
+        "/api/v1/projects/{project_id}/analysis-runs/{run_id}/entities/{collection}"
+    )
+    def list_analysis_entities(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        collection: str,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_ANALYSIS_PAGE_SIZE),
+        ] = DEFAULT_ANALYSIS_PAGE_SIZE,
+        confidence_max: Annotated[
+            float | None,
+            Query(alias="confidenceMax", ge=0, le=1),
+        ] = None,
+        requires_review: Annotated[
+            bool | None,
+            Query(alias="requiresReview"),
+        ] = None,
+        speaker_state: Annotated[
+            str | None,
+            Query(alias="speakerState", max_length=24),
+        ] = None,
+    ) -> dict[str, Any]:
+        if speaker_state not in {None, "unknown", "ambiguous", "proposed", "corrected"}:
+            raise ServiceError(
+                422,
+                "INVALID_SPEAKER_STATE",
+                "The dialogue speaker-state filter is invalid.",
+            )
+        items, next_cursor, total = story_intelligence.list_entities(
+            project_id=project_id,
+            run_id=run_id,
+            collection=collection,
+            cursor=cursor,
+            limit=limit,
+            confidence_max=confidence_max,
+            requires_review=requires_review,
+            speaker_state=speaker_state,
+        )
+        run = story_intelligence.get_run(project_id=project_id, run_id=run_id)
+        snapshot = run.get("currentSnapshot")
+        if not isinstance(snapshot, dict) or not isinstance(
+            snapshot.get("snapshotId"),
+            str,
+        ):
+            raise ServiceError(
+                409,
+                "ANALYSIS_SNAPSHOT_REQUIRED",
+                "The requested analysis collection is not published yet.",
+            )
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "pageSize": len(items),
+            "total": total,
+            "collection": collection,
+            "runId": run_id,
+            "snapshotId": snapshot["snapshotId"],
+            "items": items,
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    @app.get("/api/v1/projects/{project_id}/analysis-runs/{run_id}/corrections")
+    def list_analysis_corrections(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_ANALYSIS_PAGE_SIZE),
+        ] = DEFAULT_ANALYSIS_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        items, next_cursor, total = story_intelligence.list_corrections(
+            project_id=project_id,
+            run_id=run_id,
+            cursor=cursor,
+            limit=limit,
+        )
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "pageSize": len(items),
+            "total": total,
+            "runId": run_id,
+            "items": items,
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    @app.post("/api/v1/projects/{project_id}/analysis-runs/{run_id}/corrections")
+    def append_analysis_correction(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        body: AppendAnalysisCorrectionRequest,
+    ) -> dict[str, Any]:
+        correction, invalidated_gate_ids = story_intelligence.append_correction(
+            project_id=project_id,
+            run_id=run_id,
+            category=body.category,
+            target_collection=body.target_collection,
+            target_entity_id=body.target_entity_id,
+            expected_target_revision=body.expected_target_revision,
+            expected_run_fingerprint=body.expected_run_fingerprint,
+            previous_value_fingerprint=body.previous_value_fingerprint,
+            patch=dict(body.patch),
+            reason=body.reason,
+            supersedes_correction_id=body.supersedes_correction_id,
+            idempotency_key=body.idempotency_key,
+        )
+        return {
+            "correlationId": _correlation_id(request),
+            "correction": correction,
+            "invalidatedGateIds": invalidated_gate_ids,
+            "run": story_intelligence.get_run(
+                project_id=project_id,
+                run_id=run_id,
+            ),
+            "reviews": story_intelligence.list_reviews(
+                project_id=project_id,
+                run_id=run_id,
+            ),
+        }
+
+    @app.get("/api/v1/projects/{project_id}/analysis-runs/{run_id}/reviews")
+    def list_analysis_reviews(
+        request: Request,
+        project_id: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            "runId": run_id,
+            "items": story_intelligence.list_reviews(
+                project_id=project_id,
+                run_id=run_id,
+            ),
+        }
+
+    @app.post(
+        "/api/v1/projects/{project_id}/analysis-runs/{run_id}"
+        "/reviews/{gate_id}/decisions"
+    )
+    def decide_analysis_review(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        gate_id: str,
+        body: DecideAnalysisReviewRequest,
+    ) -> dict[str, Any]:
+        review, decision = story_intelligence.decide_review(
+            project_id=project_id,
+            run_id=run_id,
+            gate_id=gate_id,
+            decision=body.decision,
+            expected_revision=body.expected_revision,
+            expected_artifact_fingerprint=body.expected_artifact_fingerprint,
+            expected_evidence_fingerprint=body.expected_evidence_fingerprint,
+            acknowledged_warning_ids=body.acknowledged_warning_ids,
+            rationale=body.rationale,
+            idempotency_key=body.idempotency_key,
+        )
+        return {
+            "correlationId": _correlation_id(request),
+            "review": review,
+            "decision": decision,
+            "run": story_intelligence.get_run(
+                project_id=project_id,
+                run_id=run_id,
+            ),
         }
 
     @app.put("/api/v1/projects/{project_id}/dialogue-lines/{line_id}/speaker")

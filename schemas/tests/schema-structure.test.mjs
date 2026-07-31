@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +8,11 @@ import { fileURLToPath } from "node:url";
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const versionDirectory = path.resolve(testDirectory, "..", "v1");
 const definitionsPath = path.join(versionDirectory, "definitions.schema.json");
+const phase2Directory = path.resolve(testDirectory, "..", "v2");
+const phase2DefinitionsPath = path.join(
+  phase2Directory,
+  "definitions.schema.json",
+);
 
 const entityEntries = {
   Project: "project.schema.json",
@@ -42,6 +48,47 @@ const entityEntries = {
   ApprovalDecision: "approval-decision.schema.json"
 };
 
+const phase2Entries = {
+  AnalysisProfile: "analysis-profile.schema.json",
+  StoryAnalysisRun: "story-analysis-run.schema.json",
+  AnalysisAgentExecution: "analysis-agent-execution.schema.json",
+  AnalysisSnapshot: "analysis-snapshot.schema.json",
+  StoryStructure: "story-structure.schema.json",
+  AnalysisChapter: "analysis-chapter.schema.json",
+  AnalysisScene: "analysis-scene.schema.json",
+  AnalysisBeat: "analysis-beat.schema.json",
+  CharacterIdentity: "character-identity.schema.json",
+  CharacterAlias: "character-alias.schema.json",
+  CharacterMention: "character-mention.schema.json",
+  AnalysisDialogueLine: "analysis-dialogue-line.schema.json",
+  DialogueAttributionCandidate:
+    "dialogue-attribution-candidate.schema.json",
+  EffectiveDialogueAttribution:
+    "effective-dialogue-attribution.schema.json",
+  NarrationSpan: "narration-span.schema.json",
+  PovSegment: "pov-segment.schema.json",
+  StoryLocation: "story-location.schema.json",
+  TimelineEvent: "timeline-event.schema.json",
+  TemporalConstraint: "temporal-constraint.schema.json",
+  CharacterRelationship: "character-relationship.schema.json",
+  EmotionalState: "emotional-state.schema.json",
+  DramaticIntent: "dramatic-intent.schema.json",
+  ContinuityFinding: "continuity-finding.schema.json",
+  AnalysisEvidenceSpan: "analysis-evidence-span.schema.json",
+  AnalysisConfidence: "analysis-confidence.schema.json",
+  AnalysisWarning: "analysis-warning.schema.json",
+  AnalysisProvenance: "analysis-provenance.schema.json",
+  CreateAnalysisCorrectionRequest:
+    "create-analysis-correction-request.schema.json",
+  AnalysisCorrection: "analysis-correction.schema.json",
+  AnalysisGateReview: "analysis-gate-review.schema.json",
+  AnalysisGateDecision: "analysis-gate-decision.schema.json",
+  Phase2BuildEvidenceManifest:
+    "phase-2-build-evidence-manifest.schema.json",
+  Phase2PackagedE2eResult:
+    "phase-2-packaged-e2e-result.schema.json",
+};
+
 async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
@@ -63,6 +110,69 @@ function collectReferences(value, references = []) {
     }
   }
   return references;
+}
+
+function collectRequiredDeclarationGaps(
+  value,
+  location = "#",
+  gaps = []
+) {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      collectRequiredDeclarationGaps(
+        entry,
+        `${location}/${index}`,
+        gaps
+      );
+    });
+    return gaps;
+  }
+
+  if (!value || typeof value !== "object") {
+    return gaps;
+  }
+
+  if (Array.isArray(value.required)) {
+    const declared = new Set(Object.keys(value.properties ?? {}));
+    const missing = value.required.filter((name) => !declared.has(name));
+    if (missing.length > 0) {
+      gaps.push({ location, missing });
+    }
+  }
+
+  for (const [name, entry] of Object.entries(value)) {
+    collectRequiredDeclarationGaps(
+      entry,
+      `${location}/${name}`,
+      gaps
+    );
+  }
+  return gaps;
+}
+
+function collectReachableDefinitions(definitions, rootNames) {
+  const pending = [...rootNames];
+  const reachable = {};
+
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (
+      name === undefined ||
+      Object.hasOwn(reachable, name)
+    ) {
+      continue;
+    }
+    const definition = definitions.$defs[name];
+    assert.ok(definition, `missing reachable $defs/${name}`);
+    reachable[name] = definition;
+    for (const reference of collectReferences(definition)) {
+      if (reference.startsWith("#/$defs/")) {
+        pending.push(reference.slice("#/$defs/".length).split("/")[0]);
+      }
+    }
+  }
+
+  return reachable;
 }
 
 test("all schema documents are valid JSON Schema 2020-12 documents", async () => {
@@ -442,4 +552,943 @@ test("source locations cannot contain absolute or parent-traversal paths", async
   assert.doesNotMatch("OEBPS/line\nbreak.xhtml", memberPattern);
   assert.doesNotMatch("/absolute.xml", memberPattern);
   assert.doesNotMatch("C:\\private\\story.xml", memberPattern);
+});
+
+test("Phase 2 contracts have stable JSON Schema 2020-12 entry points", async () => {
+  const fileNames = (await readdir(phase2Directory)).filter((name) =>
+    name.endsWith(".schema.json"),
+  );
+  assert.ok(fileNames.length >= Object.keys(phase2Entries).length + 1);
+  const definitions = await readJson(phase2DefinitionsPath);
+
+  for (const fileName of fileNames) {
+    const schema = await readJson(path.join(phase2Directory, fileName));
+    assert.equal(
+      schema.$schema,
+      "https://json-schema.org/draft/2020-12/schema",
+    );
+    assert.match(
+      schema.$id,
+      /^https:\/\/schemas\.cinematic-story-studio\.dev\/v2\//u,
+    );
+  }
+
+  for (const [definitionName, fileName] of Object.entries(
+    phase2Entries,
+  )) {
+    assert.ok(
+      definitions.$defs[definitionName],
+      `missing Phase 2 $defs/${definitionName}`,
+    );
+    const entry = await readJson(path.join(phase2Directory, fileName));
+    assert.equal(entry.title, definitionName);
+    assert.equal(
+      entry.$ref,
+      `definitions.schema.json#/$defs/${definitionName}`,
+    );
+  }
+});
+
+test("all Phase 2 internal definition references resolve", async () => {
+  const definitions = await readJson(phase2DefinitionsPath);
+  const references = collectReferences(definitions);
+
+  for (const reference of references.filter((entry) =>
+    entry.startsWith("#/$defs/"),
+  )) {
+    const definitionName = reference
+      .slice("#/$defs/".length)
+      .split("/", 1)[0];
+    assert.ok(
+      Object.hasOwn(definitions.$defs, definitionName),
+      `unresolved Phase 2 reference ${reference}`,
+    );
+  }
+});
+
+test("Phase 2 required fields are locally declared for strict validators", async () => {
+  const definitions = await readJson(phase2DefinitionsPath);
+  assert.deepEqual(collectRequiredDeclarationGaps(definitions), []);
+});
+
+test("Phase 2 profile canonical JSON, fingerprint, limits, producer, and agents are exact", async () => {
+  const definitions = await readJson(phase2DefinitionsPath);
+  const profile = definitions.$defs.AnalysisProfile;
+  const values = definitions.$defs.AnalysisProfileValues;
+  const canonicalJson = profile.properties.canonicalJson.const;
+  const fingerprint = createHash("sha256")
+    .update(canonicalJson, "utf8")
+    .digest("hex");
+  const canonicalProfile = JSON.parse(canonicalJson);
+
+  assert.equal(
+    profile.properties.fingerprint.const,
+    "6ae73e83e89fbcfc0261ff339950407913cd990093fa13cdcc83ce3b1da810ec",
+  );
+  assert.equal(fingerprint, profile.properties.fingerprint.const);
+  assert.deepEqual(canonicalProfile, {
+    agentVersions: [
+      { agentId: "story-structure", version: "1.0.0" },
+      { agentId: "story-beats", version: "1.0.0" },
+      { agentId: "character-identity", version: "1.0.0" },
+      { agentId: "dialogue-attribution", version: "1.0.0" },
+      { agentId: "point-of-view", version: "1.0.0" },
+      { agentId: "story-setting", version: "1.0.0" },
+      { agentId: "story-timeline", version: "1.0.0" },
+      { agentId: "character-relationships", version: "1.0.0" },
+      { agentId: "emotion-dramatic-intent", version: "1.0.0" },
+      { agentId: "story-continuity", version: "1.0.0" },
+      { agentId: "analysis-synthesis", version: "1.0.0" },
+    ],
+    analysisContractVersion: "2.0.0",
+    confidenceClassification: {
+      high: { maximumInclusive: 1, minimumInclusive: 0.85 },
+      low: { maximumExclusive: 0.75, minimumExclusive: 0 },
+      medium: { maximumExclusive: 0.85, minimumInclusive: 0.75 },
+      unknown: { score: 0 },
+    },
+    deterministic: true,
+    limits: {
+      defaultPageSize: 50,
+      maximumAgentEnvelopeBytes: 32_768,
+      maximumAnalysisEntities: 250_000,
+      maximumAnalysisWords: 150_000,
+      maximumAttributionCandidatesPerLine: 8,
+      maximumCheckpointBytes: 67_108_864,
+      maximumEvidenceExcerptCodePoints: 512,
+      maximumEvidenceSpansPerClaim: 16,
+      maximumExactTextCodePoints: 16_384,
+      maximumPageSize: 200,
+      maximumSnapshotStages: 5,
+      maximumWarningsPerEntity: 32,
+    },
+    offsetUnit: "unicode-code-point",
+    producer: {
+      producerId: "whole-book-analysis-orchestrator",
+      producerVersion: "1.0.0",
+    },
+    profileId: "whole-book-intelligence-v1",
+    semanticVersion: "1.0.0",
+  });
+  assert.deepEqual(values.required, [
+    "agentVersions",
+    "analysisContractVersion",
+    "confidenceClassification",
+    "deterministic",
+    "limits",
+    "offsetUnit",
+    "producer",
+    "profileId",
+    "semanticVersion",
+  ]);
+  const limits = definitions.$defs.AnalysisProfileLimits;
+  assert.deepEqual(limits.required, Object.keys(canonicalProfile.limits));
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(limits.properties).map(([key, property]) => [
+        key,
+        property.const,
+      ]),
+    ),
+    canonicalProfile.limits,
+  );
+  assert.equal(
+    values.properties.agentVersions.prefixItems.length,
+    11,
+  );
+  assert.equal(values.properties.agentVersions.items, false);
+});
+
+test("Phase 2 confidence classes and evidence/text bounds are exact", async () => {
+  const definitions = await readJson(phase2DefinitionsPath);
+  const confidence = definitions.$defs.AnalysisConfidence.oneOf;
+  const byClass = Object.fromEntries(
+    confidence.map((branch) => [
+      branch.properties.classification.const,
+      branch.properties.score,
+    ]),
+  );
+
+  assert.deepEqual(byClass.unknown, { const: 0 });
+  assert.equal(byClass.low.exclusiveMinimum, 0);
+  assert.equal(byClass.low.exclusiveMaximum, 0.75);
+  assert.equal(byClass.medium.minimum, 0.75);
+  assert.equal(byClass.medium.exclusiveMaximum, 0.85);
+  assert.equal(byClass.high.minimum, 0.85);
+  assert.equal(byClass.high.maximum, 1);
+
+  const exactTextExtension =
+    definitions.$defs.ExactAnalysisText.allOf[1];
+  assert.deepEqual(exactTextExtension.required, [
+    "exactText",
+    "exactTextSha256",
+    "originalCodePointCount",
+    "exactTextTruncated",
+    "originalTextPreserved",
+  ]);
+  assert.equal(
+    exactTextExtension.properties.exactText.maxLength,
+    16_384,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisEvidenceSpan.allOf[1].properties
+      .excerptText.maxLength,
+    512,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisEntityHeader.properties.evidence.maxItems,
+    16,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisEntityHeader.properties.warnings.maxItems,
+    32,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisDialogueLine.allOf[1].properties
+      .candidates.maxItems,
+    8,
+  );
+  assert.ok(
+    definitions.$defs.AnalysisEntityCollection.enum.includes(
+      "narration-spans",
+    ),
+  );
+  assert.deepEqual(
+    definitions.$defs.NarrationSpan.properties.classification.enum,
+    [
+      "direct_narration",
+      "internal_thought",
+      "quoted_material",
+      "epigraph_or_document",
+      "unresolved",
+    ],
+  );
+});
+
+test("Phase 2 runs freeze every approved input, producer, agent, and snapshot precondition", async () => {
+  const definitions = await readJson(phase2DefinitionsPath);
+  const run = definitions.$defs.StoryAnalysisRun;
+  for (const field of [
+    "projectId",
+    "storyId",
+    "storyRevision",
+    "storyFingerprint",
+    "sourceDocumentId",
+    "sourceRevision",
+    "sourceSha256",
+    "extractionId",
+    "extractionRevision",
+    "extractedTextSha256",
+    "importReviewId",
+    "importReviewRevision",
+    "importReviewDecisionId",
+    "approvedEvidenceFingerprint",
+    "profile",
+    "producer",
+    "agentVersions",
+    "inputFingerprint",
+    "runFingerprint",
+    "jobId",
+    "status",
+    "currentStage",
+    "progress",
+    "warnings",
+    "snapshotCount",
+    "currentSnapshot",
+  ]) {
+    assert.ok(run.required.includes(field), `run must require ${field}`);
+  }
+  const header = definitions.$defs.AnalysisEntityHeader;
+  for (const field of [
+    "entityId",
+    "stableSemanticId",
+    "machineEntityFingerprint",
+    "effectiveValueFingerprint",
+    "effectiveAuthority",
+    "effectiveRevision",
+  ]) {
+    assert.ok(
+      header.required.includes(field),
+      `entity header must require ${field}`,
+    );
+  }
+  assert.equal(
+    definitions.$defs.AnalysisSnapshot.properties.collections.minItems,
+    16,
+  );
+  assert.deepEqual(
+    definitions.$defs.AnalysisSnapshot.properties.collections
+      .prefixItems.map(
+        (item) => item.allOf[1].properties.collection.const,
+      ),
+    [
+      "agent-executions",
+      "chapters",
+      "scenes",
+      "beats",
+      "characters",
+      "mentions",
+      "dialogue-lines",
+      "narration-spans",
+      "pov-segments",
+      "locations",
+      "timeline-events",
+      "temporal-constraints",
+      "relationships",
+      "emotional-states",
+      "dramatic-intents",
+      "continuity-findings",
+    ],
+  );
+  assert.equal(
+    definitions.$defs.AnalysisSnapshot.properties.immutable.const,
+    true,
+  );
+});
+
+test("Phase 2 corrections, continuity findings, and four review gates stay governed", async () => {
+  const definitions = await readJson(phase2DefinitionsPath);
+  const createCorrection =
+    definitions.$defs.CreateAnalysisCorrectionRequest;
+  const correction = definitions.$defs.AnalysisCorrection;
+  assert.ok(createCorrection.required.includes("reason"));
+  assert.equal(createCorrection.properties.reason.minLength, 1);
+  assert.equal(createCorrection.properties.reason.maxLength, 1_000);
+  assert.equal(createCorrection.properties.reason.pattern, ".*\\S.*");
+  assert.ok(correction.required.includes("reason"));
+  assert.equal(correction.properties.reason.minLength, 1);
+  assert.equal(correction.properties.reason.maxLength, 1_000);
+  assert.equal(correction.properties.reason.pattern, ".*\\S.*");
+  assert.equal(correction.properties.immutable.const, true);
+  assert.equal(
+    correction.properties.lockedAgainstAutomation.const,
+    true,
+  );
+  assert.deepEqual(correction.properties.category.enum, [
+    "structure_boundary",
+    "structure_label",
+    "character_identity",
+    "character_alias",
+    "character_merge",
+    "character_split",
+    "mention_resolution",
+    "dialogue_speaker",
+    "point_of_view",
+    "location_identity",
+    "location_alias",
+    "temporal_order",
+    "relationship",
+    "emotional_state",
+    "dramatic_intent",
+    "continuity_disposition",
+  ]);
+  assert.equal(
+    definitions.$defs.AnalysisCorrectionPatch.oneOf.length,
+    18,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisCorrectionSelection.oneOf.length,
+    18,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisCorrectionRequestPatch.oneOf.length,
+    18,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisCorrectionRequestSelection.oneOf.length,
+    3,
+  );
+  assert.deepEqual(
+    [
+      ...new Set(
+        definitions.$defs.AnalysisCorrectionSelection.oneOf.map(
+          (branch) => branch.properties.category.const,
+        ),
+      ),
+    ],
+    correction.properties.category.enum,
+  );
+  assert.ok(
+    correction.allOf.some(
+      (branch) =>
+        branch.$ref === "#/$defs/AnalysisCorrectionSelection",
+    ),
+  );
+  assert.equal(
+    createCorrection.properties.patch.$ref,
+    "#/$defs/AnalysisCorrectionRequestPatch",
+  );
+  assert.ok(
+    createCorrection.allOf.some(
+      (branch) =>
+        branch.$ref ===
+        "#/$defs/AnalysisCorrectionRequestSelection",
+    ),
+  );
+  const selectedSourceSpan =
+    definitions.$defs.AnalysisSourceSpanSelection;
+  assert.equal(
+    Object.hasOwn(selectedSourceSpan.properties, "textSha256"),
+    false,
+  );
+  assert.equal(
+    selectedSourceSpan.required.includes("textSha256"),
+    false,
+  );
+  assert.equal(
+    definitions.$defs.StructureBoundaryCorrectionRequestPatch
+      .properties.sourceSpan.$ref,
+    "#/$defs/AnalysisSourceSpanSelection",
+  );
+  assert.equal(
+    definitions.$defs.StructureBoundaryCorrectionPatch
+      .additionalProperties,
+    false,
+  );
+  assert.deepEqual(
+    definitions.$defs.StructureBoundaryCorrectionPatch.oneOf.map(
+      (branch) => branch.properties.operation.const,
+    ),
+    ["add", "remove", "move"],
+  );
+  const effectiveBoundary =
+    definitions.$defs.HumanEffectiveBoundary;
+  assert.deepEqual(effectiveBoundary.required, [
+    "operation",
+    "included",
+    "parentEntityId",
+    "ordinal",
+    "sourceSpan",
+    "authority",
+    "correctionId",
+  ]);
+  assert.equal(effectiveBoundary.properties.authority.const, "human");
+  assert.deepEqual(
+    effectiveBoundary.oneOf.map((branch) => ({
+      operation:
+        branch.properties.operation.const ??
+        branch.properties.operation.enum,
+      included: branch.properties.included.const,
+    })),
+    [
+      { operation: ["add", "move"], included: true },
+      { operation: "remove", included: false },
+    ],
+  );
+  for (const definitionName of ["AnalysisChapter", "AnalysisScene"]) {
+    const entity = definitions.$defs[definitionName].allOf[1];
+    assert.equal(
+      entity.properties.effectiveBoundary.$ref,
+      "#/$defs/HumanEffectiveBoundary",
+    );
+    assert.equal(
+      entity.required.includes("effectiveBoundary"),
+      false,
+    );
+  }
+
+  const effectiveRegistry =
+    definitions.$defs.HumanEffectiveRegistry;
+  assert.deepEqual(
+    effectiveRegistry.oneOf.map(
+      (branch) => branch.properties.operation.const,
+    ),
+    ["merge", "split"],
+  );
+  for (const branch of effectiveRegistry.oneOf) {
+    assert.equal(branch.properties.authority.const, "human");
+    assert.ok(branch.required.includes("correctionId"));
+  }
+  assert.ok(
+    effectiveRegistry.oneOf[0].required.includes(
+      "mergeIntoCharacterId",
+    ),
+  );
+  assert.ok(
+    effectiveRegistry.oneOf[1].required.includes("splitIdentity"),
+  );
+  const splitIdentity =
+    definitions.$defs.HumanSplitCharacterIdentity;
+  assert.deepEqual(splitIdentity.required, [
+    "registryCharacterId",
+    "canonicalName",
+    "normalizedCanonicalName",
+    "mentionIds",
+  ]);
+  assert.equal(splitIdentity.properties.mentionIds.minItems, 1);
+  assert.equal(splitIdentity.properties.mentionIds.uniqueItems, true);
+  const characterIdentity =
+    definitions.$defs.CharacterIdentity.allOf[1];
+  assert.equal(
+    characterIdentity.properties.effectiveRegistry.$ref,
+    "#/$defs/HumanEffectiveRegistry",
+  );
+  assert.equal(
+    characterIdentity.required.includes("effectiveRegistry"),
+    false,
+  );
+  assert.deepEqual(definitions.$defs.AnalysisGateId.enum, [
+    "story_structure_review",
+    "character_registry_review",
+    "dialogue_attribution_review",
+    "whole_book_analysis_review",
+  ]);
+  assert.deepEqual(
+    definitions.$defs.AnalysisGateReview.properties.state.enum,
+    [
+      "pending",
+      "approved",
+      "changes_requested",
+      "rejected",
+      "invalidated",
+    ],
+  );
+  assert.ok(
+    definitions.$defs.AnalysisGateReview.required.includes(
+      "latestDecision",
+    ),
+  );
+  assert.equal(
+    definitions.$defs.AnalysisGateReview.properties.latestDecision
+      .oneOf[0].$ref,
+    "#/$defs/AnalysisGateDecision",
+  );
+  assert.equal(
+    definitions.$defs.AnalysisGateDecision.properties.immutable.const,
+    true,
+  );
+  assert.ok(
+    definitions.$defs.AnalysisGateDecision.required.includes(
+      "acknowledgedWarningIds",
+    ),
+  );
+  assert.ok(
+    definitions.$defs.AnalysisGateDecision.required.includes(
+      "rationale",
+    ),
+  );
+  assert.equal(
+    definitions.$defs.AnalysisGateDecision.properties.rationale
+      .minLength,
+    1,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisGateDecision.properties.rationale
+      .maxLength,
+    4_000,
+  );
+  assert.equal(
+    definitions.$defs.AnalysisGateDecision.properties.rationale
+      .pattern,
+    ".*\\S.*",
+  );
+  assert.ok(
+    definitions.$defs.AnalysisGateEvidence.required.includes(
+      "evidenceFingerprint",
+    ),
+  );
+  const dialogueLine =
+    definitions.$defs.AnalysisDialogueLine.allOf[1];
+  assert.ok(dialogueLine.required.includes("speakerState"));
+  assert.deepEqual(dialogueLine.properties.speakerState.enum, [
+    "unknown",
+    "ambiguous",
+    "proposed",
+    "corrected",
+  ]);
+
+  const continuity = definitions.$defs.ContinuityFinding.allOf[1];
+  assert.deepEqual(continuity.properties.category.enum, [
+    "possible_duplicate_character",
+    "identity_contradiction",
+    "alias_conflict",
+    "dialogue_speaker_conflict",
+    "chronology_conflict",
+    "location_conflict",
+    "attribute_conflict",
+    "unexplained_object_state_change",
+    "unexplained_character_state_change",
+    "pov_discontinuity",
+    "scene_boundary_uncertainty",
+    "unresolved_reference",
+    "extraction_uncertainty",
+    "other",
+  ]);
+  assert.deepEqual(
+    definitions.$defs.HumanContinuityDisposition.properties.disposition
+      .enum,
+    [
+      "confirmed_issue",
+      "intentional",
+      "false_positive",
+      "deferred",
+      "corrected",
+      "unresolved",
+    ],
+  );
+});
+
+test("Phase 2 semantic vocabularies, ranges, assignments, and durable executions are explicit", async () => {
+  const definitions = await readJson(phase2DefinitionsPath);
+
+  assert.deepEqual(
+    definitions.$defs.PovSegment.allOf[1].properties.mode.enum,
+    [
+      "first_person",
+      "second_person",
+      "third_person_limited",
+      "third_person_omniscient",
+      "mixed",
+      "experimental",
+      "unknown",
+    ],
+  );
+  assert.ok(
+    definitions.$defs.NarrationDialogueDistinction.enum.includes(
+      "epigraph_or_document",
+    ),
+  );
+  assert.ok(
+    definitions.$defs.NarrationDialogueDistinction.enum.includes(
+      "unresolved_speech",
+    ),
+  );
+
+  const identity = definitions.$defs.CharacterIdentity.allOf[1];
+  for (const field of [
+    "registryCharacterId",
+    "projectId",
+    "storyId",
+    "registryScope",
+    "stableAcrossCompatibleRuns",
+    "honorifics",
+    "pronounEvidence",
+    "namedMentionIds",
+    "ambiguousMentionIds",
+    "firstEvidence",
+    "lastEvidence",
+  ]) {
+    assert.ok(
+      identity.required.includes(field),
+      `character identity must require ${field}`,
+    );
+  }
+  assert.equal(
+    identity.properties.registryScope.const,
+    "project_story",
+  );
+  assert.equal(
+    identity.properties.stableAcrossCompatibleRuns.const,
+    true,
+  );
+  assert.deepEqual(
+    identity.properties.firstMentionId.oneOf[1],
+    { type: "null" },
+  );
+  assert.deepEqual(
+    identity.properties.lastMentionId.oneOf[1],
+    { type: "null" },
+  );
+  const mentionBounds = definitions.$defs.CharacterIdentity.allOf[2];
+  assert.equal(
+    mentionBounds.if.properties.mentionCount.const,
+    0,
+  );
+  assert.equal(
+    mentionBounds.then.properties.firstMentionId.type,
+    "null",
+  );
+  assert.equal(
+    mentionBounds.then.properties.firstEvidence.maxItems,
+    0,
+  );
+  assert.equal(
+    mentionBounds.else.properties.firstEvidence.minItems,
+    1,
+  );
+  assert.equal(
+    identity.properties.namedMentionIds.maxItems,
+    100_000,
+  );
+  assert.equal(
+    identity.properties.ambiguousMentionIds.maxItems,
+    100_000,
+  );
+  assert.equal(
+    definitions.$defs.CharacterSplitCorrectionPatch.properties
+      .mentionIds.maxItems,
+    256,
+  );
+  const alias = definitions.$defs.CharacterAlias;
+  assert.ok(alias.required.includes("effectiveRange"));
+  assert.ok(alias.required.includes("change"));
+
+  const location = definitions.$defs.StoryLocation.allOf[1];
+  assert.ok(location.required.includes("sceneIds"));
+  assert.ok(location.required.includes("sceneAssignments"));
+  assert.equal(location.properties.sceneAssignments.minItems, 1);
+  assert.equal(location.properties.sceneIds.maxItems, 10_000);
+  assert.equal(location.properties.sceneAssignments.maxItems, 10_000);
+
+  const temporal =
+    definitions.$defs.TemporalConstraint.allOf[1];
+  assert.ok(temporal.required.includes("approximate"));
+  assert.equal(
+    temporal.properties.approximate.type,
+    "boolean",
+  );
+
+  const relationship =
+    definitions.$defs.CharacterRelationship.allOf[1];
+  assert.deepEqual(relationship.properties.kind.enum, [
+    "family",
+    "friendship",
+    "romantic",
+    "professional",
+    "adversarial",
+    "authority",
+    "dependency",
+    "alliance",
+    "unknown",
+    "custom",
+  ]);
+  for (const field of [
+    "chapterId",
+    "scope",
+    "validFromEventId",
+    "validThroughEventId",
+    "change",
+  ]) {
+    assert.ok(
+      relationship.required.includes(field),
+      `relationship must require ${field}`,
+    );
+  }
+
+  const emotion = definitions.$defs.EmotionalState.allOf[1];
+  assert.ok(emotion.properties.emotion.enum.includes("unknown"));
+  assert.ok(emotion.properties.emotion.enum.includes("custom"));
+  assert.ok(emotion.required.includes("note"));
+  assert.ok(emotion.required.includes("subjectType"));
+  assert.equal(emotion.required.includes("characterId"), false);
+  assert.equal(emotion.oneOf.length, 2);
+  assert.equal(emotion.properties.note.maxLength, 1000);
+  const intent = definitions.$defs.DramaticIntent.allOf[1];
+  assert.ok(intent.properties.intent.enum.includes("question"));
+  assert.ok(intent.properties.intent.enum.includes("custom"));
+  assert.ok(intent.required.includes("note"));
+  assert.ok(intent.required.includes("subjectType"));
+  assert.ok(intent.required.includes("dramaticFunction"));
+  assert.equal(intent.required.includes("characterId"), false);
+  assert.equal(intent.oneOf.length, 4);
+  assert.equal(intent.properties.note.maxLength, 1000);
+
+  const execution = definitions.$defs.AnalysisAgentExecution;
+  for (const field of [
+    "progress",
+    "currentStage",
+    "checkpoint",
+    "retryClassification",
+    "retryPolicy",
+    "failurePolicy",
+    "failure",
+    "provenance",
+  ]) {
+    assert.ok(
+      execution.required.includes(field),
+      `analysis execution must require ${field}`,
+    );
+  }
+  assert.equal(execution.properties.progress.minimum, 0);
+  assert.equal(execution.properties.progress.maximum, 1);
+  assert.equal(
+    execution.properties.failure.oneOf[0].properties.redacted.const,
+    true,
+  );
+});
+
+test("Phase 2 CI schemas pin packaged v4 and complete manifest proof", async () => {
+  const definitions = await readJson(phase2DefinitionsPath);
+  const packaged = definitions.$defs.Phase2PackagedE2eResult;
+  const manifest = definitions.$defs.Phase2BuildEvidenceManifest;
+  const story = definitions.$defs.Phase2StoryAnalysisEvidence;
+
+  assert.equal(packaged.properties.schemaVersion.const, "4.0.0");
+  assert.ok(packaged.required.includes("storyAnalysis"));
+  assert.ok(packaged.required.includes("importReview"));
+  assert.equal(
+    packaged.properties.fixture.const,
+    "fixtures/synthetic-story/sample-story.docx.base64",
+  );
+  assert.equal(manifest.properties.schemaVersion.const, "3.0.0");
+  assert.equal(
+    manifest.properties.storyAnalysisContract.additionalProperties,
+    false,
+  );
+  assert.equal(
+    Object.values(manifest.properties.assertions.properties).every(
+      (property) => property.const === true,
+    ),
+    true,
+  );
+  assert.deepEqual(
+    definitions.$defs.Phase2PackagedFlow.prefixItems.map(
+      (item) => item.const,
+    ),
+    [
+      "create",
+      "import_synthetic_docx",
+      "wait_for_extraction",
+      "review_import",
+      "approve_import",
+      "analyze",
+      "correct_speaker",
+      "start_whole_book_analysis",
+      "observe_analysis_stages",
+      "inspect_structure",
+      "inspect_character_registry",
+      "correct_character_identity",
+      "inspect_dialogue_and_narration",
+      "correct_dialogue_speaker",
+      "inspect_whole_book_intelligence",
+      "disposition_continuity",
+      "approve_story_structure_review",
+      "approve_character_registry_review",
+      "approve_dialogue_attribution_review",
+      "approve_whole_book_analysis_review",
+      "close",
+      "restart",
+      "restore",
+      "verify_import_review_persistence",
+      "verify_story_analysis_persistence",
+      "close",
+    ],
+  );
+  assert.equal(
+    packaged.properties.flow.$ref,
+    "#/$defs/Phase2PackagedFlow",
+  );
+  assert.equal(
+    manifest.properties.packagedE2e.properties.flow.$ref,
+    "#/$defs/Phase2PackagedFlow",
+  );
+  assert.equal(
+    manifest.properties.packagedE2e.properties.screenshot.$ref,
+    "#/$defs/BuildEvidenceSuccessfulScreenshot",
+  );
+  assert.equal(
+    manifest.properties.packagedE2e.properties.launches.$ref,
+    "#/$defs/Phase2SuccessfulPackagedE2eLaunches",
+  );
+  assert.deepEqual(
+    {
+      os: manifest.properties.runner.properties.os.const,
+      architecture:
+        manifest.properties.runner.properties.architecture.const,
+      environment:
+        manifest.properties.runner.properties.environment.const,
+      workflow:
+        manifest.properties.runner.properties.workflow.const,
+      job: manifest.properties.runner.properties.job.const,
+    },
+    {
+      os: "Windows",
+      architecture: "X64",
+      environment: "github-hosted",
+      workflow: "Phase 2 Windows CI",
+      job: "verify-and-build",
+    },
+  );
+  assert.deepEqual(
+    story.properties.agents.prefixItems.map(
+      (item) => item.allOf[1].properties.agentId.const,
+    ),
+    [
+      "story-structure",
+      "story-beats",
+      "character-identity",
+      "dialogue-attribution",
+      "point-of-view",
+      "story-setting",
+      "story-timeline",
+      "character-relationships",
+      "emotion-dramatic-intent",
+      "story-continuity",
+      "analysis-synthesis",
+    ],
+  );
+  assert.equal(story.properties.observedStages.prefixItems.length, 14);
+  assert.deepEqual(
+    story.properties.corrections.required,
+    [
+      "characterIdentity",
+      "dialogueSpeaker",
+      "continuityDisposition",
+    ],
+  );
+  assert.deepEqual(
+    Object.values(story.properties.corrections.properties).map(
+      (item) => item.allOf[1].properties.category.const,
+    ),
+    [
+      "character_identity",
+      "dialogue_speaker",
+      "continuity_disposition",
+    ],
+  );
+  assert.deepEqual(
+    story.properties.gates.prefixItems.map(
+      (item) => item.allOf[1].properties.gateId.const,
+    ),
+    [
+      "story_structure_review",
+      "character_registry_review",
+      "dialogue_attribution_review",
+      "whole_book_analysis_review",
+    ],
+  );
+  assert.equal(
+    Object.values(
+      definitions.$defs.Phase2E2eAssertions.properties,
+    ).every((property) => property.const === true),
+    true,
+  );
+  assert.equal(
+    Object.values(story.properties.restart.properties).every(
+      (property) => property.const === true,
+    ),
+    true,
+  );
+  assert.equal(
+    story.properties.counts.$ref,
+    "#/$defs/Phase2E2eCounts",
+  );
+  assert.equal(
+    definitions.$defs.Phase2E2eCounts.properties.temporalConstraints
+      .minimum,
+    1,
+  );
+  assert.equal(
+    definitions.$defs.Phase2E2eCounts.properties.corrections.minimum,
+    3,
+  );
+
+  const proofSchemas = collectReachableDefinitions(definitions, [
+    "Phase2BuildEvidenceManifest",
+    "Phase2PackagedE2eResult",
+  ]);
+  const serializedProofSchemas = JSON.stringify(proofSchemas);
+  for (const privateContentField of [
+    "exactText",
+    "excerptText",
+    "manuscript",
+    "sourceText",
+    "textContent",
+  ]) {
+    assert.equal(
+      serializedProofSchemas.includes(`"${privateContentField}"`),
+      false,
+      `CI proof schemas must not admit ${privateContentField}`,
+    );
+  }
 });

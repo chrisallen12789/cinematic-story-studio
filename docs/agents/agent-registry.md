@@ -59,6 +59,16 @@ The composite output names above are exported by
 `@cinematic-story-studio/contracts/runtime-agent`; their members are validated
 against the public entity schemas.
 
+## Phase 2 whole-book analysis subset
+
+The Phase 2 registry refines the earlier composite structure and
+character-dialogue concepts into eleven bounded local executions. The
+controlling IDs, outputs, retry/cancellation policy, and gate impact are in
+[story-analysis-runtime-agents.md](story-analysis-runtime-agents.md). This is
+an additive refinement of the existing governed model: no refined agent gains
+direct database/provider/tool authority, and later casting/audio agents remain
+disabled and out of scope.
+
 ## Confidence and warning rules
 
 Confidence is about the proposed output, not provider availability. Each score

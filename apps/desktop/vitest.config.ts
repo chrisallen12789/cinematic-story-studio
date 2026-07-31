@@ -12,6 +12,9 @@ export default defineConfig({
       ),
       "@cinematic-story-studio/contracts/domain": fileURLToPath(
         new URL("../../packages/contracts/src/domain.ts", import.meta.url)
+      ),
+      "@cinematic-story-studio/contracts": fileURLToPath(
+        new URL("../../packages/contracts/src/index.ts", import.meta.url)
       )
     }
   },

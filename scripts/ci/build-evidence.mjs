@@ -35,7 +35,89 @@ const APP_EXECUTABLE_NAME = "Cinematic Story Studio.exe";
 const SERVICE_EXECUTABLE_NAME = "cinematic-story-service.exe";
 const MAX_HARNESS_RESULT_BYTES = 1024 * 1024;
 const MAX_SECURITY_INPUT_BYTES = 5 * 1024 * 1024;
-const PACKAGED_E2E_RESULT_SCHEMA_VERSION = "3.0.0";
+const BUILD_EVIDENCE_SCHEMA_VERSION = "3.0.0";
+const PACKAGED_E2E_RESULT_SCHEMA_VERSION = "4.0.0";
+const ANALYSIS_CONTRACT_VERSION = "2.0.0";
+const WHOLE_BOOK_ANALYSIS_PROFILE_ID = "whole-book-intelligence-v1";
+const WHOLE_BOOK_ANALYSIS_PROFILE_VERSION = "1.0.0";
+const WHOLE_BOOK_ANALYSIS_PRODUCER_ID =
+  "whole-book-analysis-orchestrator";
+const WHOLE_BOOK_ANALYSIS_PRODUCER_VERSION = "1.0.0";
+const WHOLE_BOOK_ANALYSIS_PROFILE_CANONICAL_JSON =
+  '{"agentVersions":[{"agentId":"story-structure","version":"1.0.0"},{"agentId":"story-beats","version":"1.0.0"},{"agentId":"character-identity","version":"1.0.0"},{"agentId":"dialogue-attribution","version":"1.0.0"},{"agentId":"point-of-view","version":"1.0.0"},{"agentId":"story-setting","version":"1.0.0"},{"agentId":"story-timeline","version":"1.0.0"},{"agentId":"character-relationships","version":"1.0.0"},{"agentId":"emotion-dramatic-intent","version":"1.0.0"},{"agentId":"story-continuity","version":"1.0.0"},{"agentId":"analysis-synthesis","version":"1.0.0"}],"analysisContractVersion":"2.0.0","confidenceClassification":{"high":{"maximumInclusive":1,"minimumInclusive":0.85},"low":{"maximumExclusive":0.75,"minimumExclusive":0},"medium":{"maximumExclusive":0.85,"minimumInclusive":0.75},"unknown":{"score":0}},"deterministic":true,"limits":{"defaultPageSize":50,"maximumAgentEnvelopeBytes":32768,"maximumAnalysisEntities":250000,"maximumAnalysisWords":150000,"maximumAttributionCandidatesPerLine":8,"maximumCheckpointBytes":67108864,"maximumEvidenceExcerptCodePoints":512,"maximumEvidenceSpansPerClaim":16,"maximumExactTextCodePoints":16384,"maximumPageSize":200,"maximumSnapshotStages":5,"maximumWarningsPerEntity":32},"offsetUnit":"unicode-code-point","producer":{"producerId":"whole-book-analysis-orchestrator","producerVersion":"1.0.0"},"profileId":"whole-book-intelligence-v1","semanticVersion":"1.0.0"}';
+const WHOLE_BOOK_ANALYSIS_PROFILE_FINGERPRINT =
+  "6ae73e83e89fbcfc0261ff339950407913cd990093fa13cdcc83ce3b1da810ec";
+const PHASE_2_CORRECTION_REASON_FINGERPRINTS = Object.freeze({
+  character_identity:
+    "b42b6091d0bde37b4dd15f99a321e86dd965f2272a4ca68da6703b6f5ba2f0da",
+  dialogue_speaker:
+    "6db94e679f663d3dfbed36c173eb8445d6a364beb114c7f8c070e30983247300",
+  continuity_disposition:
+    "d7497ae908f34096c6bbbfdcbf7ea8287967882880cd229af078eee2383c2554",
+});
+const PHASE_2_RUNTIME_AGENTS = Object.freeze([
+  Object.freeze({ agentId: "story-structure", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "story-beats", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "character-identity", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "dialogue-attribution", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "point-of-view", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "story-setting", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "story-timeline", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "character-relationships", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "emotion-dramatic-intent", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "story-continuity", agentVersion: "1.0.0" }),
+  Object.freeze({ agentId: "analysis-synthesis", agentVersion: "1.0.0" }),
+]);
+const PHASE_2_GATE_IDS = Object.freeze([
+  "story_structure_review",
+  "character_registry_review",
+  "dialogue_attribution_review",
+  "whole_book_analysis_review",
+]);
+const PHASE_2_JOB_STAGES = Object.freeze([
+  "validate_approved_input",
+  "initialize_run",
+  "analyze_structure",
+  "analyze_beats",
+  "analyze_character_identity",
+  "analyze_dialogue_attribution",
+  "analyze_point_of_view",
+  "analyze_locations",
+  "analyze_timeline",
+  "analyze_relationships",
+  "analyze_emotion_intent",
+  "analyze_continuity",
+  "synthesize_analysis",
+  "publish_analysis",
+]);
+const PHASE_2_PACKAGED_FLOW = Object.freeze([
+  "create",
+  "import_synthetic_docx",
+  "wait_for_extraction",
+  "review_import",
+  "approve_import",
+  "analyze",
+  "correct_speaker",
+  "start_whole_book_analysis",
+  "observe_analysis_stages",
+  "inspect_structure",
+  "inspect_character_registry",
+  "correct_character_identity",
+  "inspect_dialogue_and_narration",
+  "correct_dialogue_speaker",
+  "inspect_whole_book_intelligence",
+  "disposition_continuity",
+  "approve_story_structure_review",
+  "approve_character_registry_review",
+  "approve_dialogue_attribution_review",
+  "approve_whole_book_analysis_review",
+  "close",
+  "restart",
+  "restore",
+  "verify_import_review_persistence",
+  "verify_story_analysis_persistence",
+  "close",
+]);
 const SECURE_INGEST_DEPENDENCIES = Object.freeze([
   Object.freeze({
     name: "lxml",
@@ -184,6 +266,7 @@ export async function generateBuildEvidence({
     screenshotEvidence,
     resultEvidence,
     secureIngestEvidence,
+    storyAnalysisContractEvidence,
   ] = await Promise.all([
     requiredFileEvidence(canonicalRoot, root, expectedExecutable, "desktop application"),
     requiredFileEvidence(canonicalRoot, root, stagedService, "staged service"),
@@ -191,6 +274,7 @@ export async function generateBuildEvidence({
     optionalFileEvidence(canonicalRoot, root, expectedScreenshot, "packaged E2E screenshot"),
     optionalFileEvidence(canonicalRoot, root, expectedResult, "packaged E2E result"),
     collectSecureIngestEvidence(canonicalRoot, root),
+    collectStoryAnalysisContractEvidence(canonicalRoot, root),
   ]);
 
   const stagedServiceMatchesEmbeddedService =
@@ -217,6 +301,98 @@ export async function generateBuildEvidence({
     harnessResult.importReview.approvalPersistedAfterRestart &&
     harnessResult.importReview.extractionPersistedAfterRestart &&
     harnessResult.importReview.analysisPersistedAfterRestart;
+  const phase2ProfileAndAgentsProven =
+    harnessResult.storyAnalysis !== null &&
+    harnessResult.storyAnalysis.profile.profileFingerprint ===
+      storyAnalysisContractEvidence.profile.fingerprint &&
+    harnessResult.storyAnalysis.profile.profileId ===
+      storyAnalysisContractEvidence.profile.values.profileId &&
+    harnessResult.storyAnalysis.profile.semanticVersion ===
+      storyAnalysisContractEvidence.profile.values.semanticVersion &&
+    harnessResult.storyAnalysis.profile.producerId ===
+      storyAnalysisContractEvidence.profile.values.producer.producerId &&
+    harnessResult.storyAnalysis.profile.producerVersion ===
+      storyAnalysisContractEvidence.profile.values.producer
+        .producerVersion &&
+    equalAgentVersionEvidence(
+      harnessResult.storyAnalysis.agents,
+      PHASE_2_RUNTIME_AGENTS,
+    );
+  const phase2ApprovedInputProven =
+    harnessResult.storyAnalysis !== null &&
+    harnessResult.importReview !== null &&
+    harnessResult.storyAnalysis.approvedInput.sourceSha256 ===
+      secureIngestEvidence.syntheticDocx.decodedSha256 &&
+    harnessResult.storyAnalysis.approvedInput.sourceSha256 ===
+      storyAnalysisContractEvidence.fixture.syntheticDocx
+        .decodedSha256 &&
+    harnessResult.storyAnalysis.approvedInput.extractedTextSha256 ===
+      harnessResult.importReview.extractedTextSha256 &&
+    harnessResult.storyAnalysis.approvedInput.extractionRevision ===
+      harnessResult.importReview.extractionRevision;
+  const phase2RunSnapshotAndStagesProven =
+    harnessResult.storyAnalysis !== null &&
+    harnessResult.storyAnalysis.run.status === "succeeded" &&
+    equalStringArrays(
+      harnessResult.storyAnalysis.observedStages,
+      PHASE_2_JOB_STAGES,
+    ) &&
+    harnessResult.storyAnalysis.counts.agentExecutions ===
+      PHASE_2_RUNTIME_AGENTS.length;
+  const phase2StoryAssertionsProven =
+    harnessResult.storyAnalysis !== null &&
+    Object.values(harnessResult.storyAnalysis.assertions).every(
+      (value) => value === true,
+    ) &&
+    storyAnalysisCountsMeetFixture(
+      harnessResult.storyAnalysis.counts,
+      storyAnalysisContractEvidence.fixture.expectedCounts,
+    );
+  const phase2CorrectionsProven =
+    harnessResult.storyAnalysis !== null &&
+    harnessResult.storyAnalysis.counts.corrections >= 3 &&
+    Object.values(harnessResult.storyAnalysis.corrections).every(
+      (correction) =>
+        correction.immutable &&
+        correction.lockedAgainstAutomation &&
+        correction.persistedAfterRestart &&
+        correction.effectiveAuthorityAfterRestart === "human",
+    );
+  const phase2FourGateDecisionsProven =
+    harnessResult.storyAnalysis !== null &&
+    harnessResult.storyAnalysis.gates.length ===
+      PHASE_2_GATE_IDS.length &&
+    harnessResult.storyAnalysis.gates.every(
+      (gate, index) =>
+        gate.gateId === PHASE_2_GATE_IDS[index] &&
+        gate.immutable &&
+        gate.beforeRestart.state === "approved" &&
+        gate.afterRestart.state === "approved",
+    );
+  const phase2DecisionRecordsPersisted =
+    phase2FourGateDecisionsProven &&
+    harnessResult.storyAnalysis !== null &&
+    harnessResult.storyAnalysis.restart.gateDecisionsPersisted === true &&
+    harnessResult.storyAnalysis.gates.every(
+      (gate) =>
+        isSha256(gate.beforeRestart.decisionRecordFingerprint) &&
+        gate.beforeRestart.decisionRecordFingerprint ===
+          gate.afterRestart.decisionRecordFingerprint,
+    );
+  const phase2RestartDurabilityProven =
+    harnessResult.storyAnalysis !== null &&
+    Object.values(harnessResult.storyAnalysis.restart).every(
+      (value) => value === true,
+    );
+  const phase2WholeBookAnalysisProven =
+    phase2ProfileAndAgentsProven &&
+    phase2ApprovedInputProven &&
+    phase2RunSnapshotAndStagesProven &&
+    phase2StoryAssertionsProven &&
+    phase2CorrectionsProven &&
+    phase2FourGateDecisionsProven &&
+    phase2DecisionRecordsPersisted &&
+    phase2RestartDurabilityProven;
   const packagedE2eEvidenceComplete =
     normalizedStepOutcome === "success" &&
     harnessResultMatchesStepOutcome &&
@@ -224,7 +400,8 @@ export async function generateBuildEvidence({
     screenshotEvidence.sizeBytes > 0 &&
     harnessResult.screenshotCaptured === true &&
     packagedE2eOwnershipExitProven &&
-    phase1DocxImportReviewProven;
+    phase1DocxImportReviewProven &&
+    phase2WholeBookAnalysisProven;
   const normalizedWorkflowHeadSha = normalizeHeadSha(workflowHeadSha);
   const normalizedTestedCheckoutSha = normalizeHeadSha(
     testedCheckoutSha,
@@ -236,7 +413,7 @@ export async function generateBuildEvidence({
   }
 
   const manifest = {
-    schemaVersion: "2.0.0",
+    schemaVersion: BUILD_EVIDENCE_SCHEMA_VERSION,
     artifactPathScope: "repository-root",
     workflowHeadSha: normalizedWorkflowHeadSha,
     testedCheckoutSha: normalizedTestedCheckoutSha,
@@ -253,9 +430,19 @@ export async function generateBuildEvidence({
         harnessResultMatchesStepOutcome,
       packagedE2eOwnershipExitProven,
       phase1DocxImportReviewProven,
+      phase2ProfileAndAgentsProven,
+      phase2ApprovedInputProven,
+      phase2RunSnapshotAndStagesProven,
+      phase2StoryAssertionsProven,
+      phase2CorrectionsProven,
+      phase2FourGateDecisionsProven,
+      phase2DecisionRecordsPersisted,
+      phase2RestartDurabilityProven,
+      phase2WholeBookAnalysisProven,
       packagedE2eEvidenceComplete,
     },
     secureIngest: secureIngestEvidence,
+    storyAnalysisContract: storyAnalysisContractEvidence,
     packagedE2e: {
       result: harnessResult.reportedStatus ?? expectedHarnessStatus,
       stepOutcome: normalizedStepOutcome,
@@ -273,6 +460,8 @@ export async function generateBuildEvidence({
         completedLaunches: harnessResult.completedLaunches,
       },
       importReview: harnessResult.importReview,
+      storyAnalysis: harnessResult.storyAnalysis,
+      flow: harnessResult.flow,
       launches: harnessResult.launches,
     },
     testTimestamp:
@@ -280,8 +469,10 @@ export async function generateBuildEvidence({
     runner: normalizeRunner(runner),
   };
 
+  await assertNoSyntheticStoryTextLeak(root, manifest);
+  const serializedManifest = `${JSON.stringify(manifest, null, 2)}\n`;
   await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await writeFile(outputPath, serializedManifest, "utf8");
 
   if (!stagedServiceMatchesEmbeddedService) {
     throw new Error(
@@ -300,6 +491,383 @@ export async function generateBuildEvidence({
   return {
     manifest,
     manifestPath: outputPath,
+  };
+}
+
+export async function validateBuildEvidenceManifest({
+  repositoryRoot = defaultRepositoryRoot,
+  manifestPath,
+}) {
+  const root = path.resolve(repositoryRoot);
+  const canonicalRoot = await realpath(root);
+  const target =
+    manifestPath === undefined
+      ? path.join(
+          root,
+          "apps",
+          "desktop",
+          "release",
+          await readAppVersion(root),
+          "build-evidence.json",
+        )
+      : path.resolve(root, manifestPath);
+  assertRepositoryChild(root, target, "build-evidence manifest");
+  const manifestFile = await requiredFileEvidence(
+    canonicalRoot,
+    root,
+    target,
+    "build-evidence manifest",
+  );
+  if (
+    manifestFile.sizeBytes === 0 ||
+    manifestFile.sizeBytes > MAX_SECURITY_INPUT_BYTES
+  ) {
+    throw new Error("The build-evidence manifest size is invalid.");
+  }
+
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(target, "utf8"));
+  } catch {
+    throw new Error("The build-evidence manifest is invalid JSON.");
+  }
+  const topLevelKeys = [
+    "schemaVersion",
+    "artifactPathScope",
+    "workflowHeadSha",
+    "testedCheckoutSha",
+    "pullRequestHeadSha",
+    "appVersion",
+    "artifacts",
+    "assertions",
+    "secureIngest",
+    "storyAnalysisContract",
+    "packagedE2e",
+    "testTimestamp",
+    "runner",
+  ];
+  if (
+    !isPlainObject(manifest) ||
+    !hasExactKeys(manifest, topLevelKeys) ||
+    manifest.schemaVersion !== BUILD_EVIDENCE_SCHEMA_VERSION ||
+    manifest.artifactPathScope !== "repository-root" ||
+    normalizeHeadSha(manifest.workflowHeadSha) !==
+      manifest.workflowHeadSha ||
+    normalizeHeadSha(manifest.testedCheckoutSha) !==
+      manifest.testedCheckoutSha ||
+    manifest.workflowHeadSha !== manifest.testedCheckoutSha ||
+    (manifest.pullRequestHeadSha !== null &&
+      normalizeHeadSha(manifest.pullRequestHeadSha) !==
+        manifest.pullRequestHeadSha) ||
+    normalizeTimestamp(manifest.testTimestamp) !==
+      manifest.testTimestamp
+  ) {
+    throw new Error(
+      "The build-evidence manifest envelope is invalid.",
+    );
+  }
+  await assertNoSyntheticStoryTextLeak(root, manifest);
+  const appVersion = await readAppVersion(root);
+  if (manifest.appVersion !== appVersion) {
+    throw new Error(
+      "The build-evidence manifest app version is invalid.",
+    );
+  }
+  const releaseRoot = path.join(
+    root,
+    "apps",
+    "desktop",
+    "release",
+    appVersion,
+  );
+  const expectedPaths = {
+    desktopApplication: path.join(
+      releaseRoot,
+      "win-unpacked",
+      APP_EXECUTABLE_NAME,
+    ),
+    stagedService: path.join(
+      root,
+      "apps",
+      "desktop",
+      "build-resources",
+      "service",
+      SERVICE_EXECUTABLE_NAME,
+    ),
+    embeddedService: path.join(
+      releaseRoot,
+      "win-unpacked",
+      "resources",
+      "service",
+      SERVICE_EXECUTABLE_NAME,
+    ),
+    screenshot: path.join(releaseRoot, "packaged-e2e.png"),
+    result: path.join(releaseRoot, "packaged-e2e-result.json"),
+  };
+  if (
+    !isPlainObject(manifest.artifacts) ||
+    !hasExactKeys(manifest.artifacts, [
+      "desktopApplication",
+      "stagedService",
+      "embeddedService",
+    ])
+  ) {
+    throw new Error(
+      "The build-evidence artifact inventory is invalid.",
+    );
+  }
+  const [
+    desktopApplication,
+    stagedService,
+    embeddedService,
+    screenshot,
+    resultEvidence,
+    secureIngest,
+    storyAnalysisContract,
+  ] = await Promise.all([
+    requiredFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.desktopApplication,
+      "desktop application",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.stagedService,
+      "staged service",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.embeddedService,
+      "embedded service",
+    ),
+    optionalFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.screenshot,
+      "packaged E2E screenshot",
+    ),
+    optionalFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.result,
+      "packaged E2E result",
+    ),
+    collectSecureIngestEvidence(canonicalRoot, root),
+    collectStoryAnalysisContractEvidence(canonicalRoot, root),
+  ]);
+  const expectedArtifacts = {
+    desktopApplication,
+    stagedService,
+    embeddedService,
+  };
+  if (
+    !jsonValuesEqual(manifest.artifacts, expectedArtifacts) ||
+    !jsonValuesEqual(manifest.secureIngest, secureIngest) ||
+    !jsonValuesEqual(
+      manifest.storyAnalysisContract,
+      storyAnalysisContract,
+    )
+  ) {
+    throw new Error(
+      "The build-evidence inputs or artifact hashes are stale.",
+    );
+  }
+
+  const assertionKeys = [
+    "stagedServiceMatchesEmbeddedService",
+    "packagedE2eHarnessResultMatchesStepOutcome",
+    "packagedE2eOwnershipExitProven",
+    "phase1DocxImportReviewProven",
+    "phase2ProfileAndAgentsProven",
+    "phase2ApprovedInputProven",
+    "phase2RunSnapshotAndStagesProven",
+    "phase2StoryAssertionsProven",
+    "phase2CorrectionsProven",
+    "phase2FourGateDecisionsProven",
+    "phase2DecisionRecordsPersisted",
+    "phase2RestartDurabilityProven",
+    "phase2WholeBookAnalysisProven",
+    "packagedE2eEvidenceComplete",
+  ];
+  if (
+    !isPlainObject(manifest.assertions) ||
+    !hasExactKeys(manifest.assertions, assertionKeys) ||
+    !assertionKeys.every(
+      (key) => manifest.assertions[key] === true,
+    )
+  ) {
+    throw new Error(
+      "The build-evidence manifest contains an unproven assertion.",
+    );
+  }
+  if (
+    stagedService.sha256 !== embeddedService.sha256 ||
+    stagedService.sizeBytes !== embeddedService.sizeBytes
+  ) {
+    throw new Error(
+      "The build-evidence staged and embedded services differ.",
+    );
+  }
+
+  const harnessResult = await inspectHarnessResult(
+    expectedPaths.result,
+    resultEvidence,
+    appVersion,
+  );
+  const packaged = manifest.packagedE2e;
+  if (
+    !isPlainObject(packaged) ||
+    !hasExactKeys(packaged, [
+      "result",
+      "stepOutcome",
+      "screenshot",
+      "machineResult",
+      "importReview",
+      "storyAnalysis",
+      "flow",
+      "launches",
+    ]) ||
+    packaged.result !== "passed" ||
+    packaged.stepOutcome !== "success" ||
+    !jsonValuesEqual(packaged.screenshot, screenshot) ||
+    !isPlainObject(packaged.machineResult) ||
+    !hasExactKeys(packaged.machineResult, [
+      "path",
+      "exists",
+      "sizeBytes",
+      "sha256",
+      "contractValid",
+      "reportedStatus",
+      "failureStage",
+      "failureCode",
+      "applicationLaunchBegan",
+      "ownershipEstablished",
+      "cleanupCompleted",
+      "completedLaunches",
+    ]) ||
+    !jsonValuesEqual(
+      {
+        path: packaged.machineResult.path,
+        exists: packaged.machineResult.exists,
+        sizeBytes: packaged.machineResult.sizeBytes,
+        sha256: packaged.machineResult.sha256,
+      },
+      resultEvidence,
+    ) ||
+    packaged.machineResult.contractValid !== true ||
+    packaged.machineResult.reportedStatus !== "passed" ||
+    packaged.machineResult.failureStage !== null ||
+    packaged.machineResult.failureCode !== null ||
+    packaged.machineResult.applicationLaunchBegan !== true ||
+    packaged.machineResult.ownershipEstablished !== true ||
+    packaged.machineResult.cleanupCompleted !== true ||
+    !equalNumberArrays(
+      packaged.machineResult.completedLaunches,
+      [1, 2],
+    ) ||
+    harnessResult.contractValid !== true ||
+    harnessResult.reportedStatus !== "passed" ||
+    harnessResult.ownershipExitProven !== true ||
+    harnessResult.completedAt !== manifest.testTimestamp ||
+    harnessResult.screenshotCaptured !== true ||
+    screenshot.exists !== true ||
+    screenshot.sizeBytes === null ||
+    screenshot.sizeBytes <= 0 ||
+    harnessResult.importReview === null ||
+    harnessResult.storyAnalysis === null ||
+    harnessResult.importReview.sourceSha256 !==
+      secureIngest.syntheticDocx.decodedSha256 ||
+    harnessResult.storyAnalysis.approvedInput.sourceSha256 !==
+      secureIngest.syntheticDocx.decodedSha256 ||
+    harnessResult.storyAnalysis.approvedInput.extractedTextSha256 !==
+      harnessResult.importReview.extractedTextSha256 ||
+    harnessResult.storyAnalysis.approvedInput.extractionRevision !==
+      harnessResult.importReview.extractionRevision ||
+    !storyAnalysisCountsMeetFixture(
+      harnessResult.storyAnalysis.counts,
+      storyAnalysisContract.fixture.expectedCounts,
+    ) ||
+    harnessResult.storyAnalysis.counts.corrections < 3 ||
+    !Object.values(harnessResult.storyAnalysis.assertions).every(
+      (value) => value === true,
+    ) ||
+    !Object.values(harnessResult.storyAnalysis.corrections).every(
+      (correction) =>
+        correction.immutable &&
+        correction.lockedAgainstAutomation &&
+        correction.persistedAfterRestart &&
+        correction.effectiveAuthorityBeforeRestart === "human" &&
+        correction.effectiveAuthorityAfterRestart === "human",
+    ) ||
+    harnessResult.storyAnalysis.corrections.characterIdentity
+      .reasonFingerprint !==
+      PHASE_2_CORRECTION_REASON_FINGERPRINTS.character_identity ||
+    harnessResult.storyAnalysis.corrections.dialogueSpeaker
+      .reasonFingerprint !==
+      PHASE_2_CORRECTION_REASON_FINGERPRINTS.dialogue_speaker ||
+    harnessResult.storyAnalysis.corrections.continuityDisposition
+      .reasonFingerprint !==
+      PHASE_2_CORRECTION_REASON_FINGERPRINTS.continuity_disposition ||
+    !harnessResult.storyAnalysis.gates.every(
+      (gate, index) =>
+        gate.gateId === PHASE_2_GATE_IDS[index] &&
+        gate.immutable &&
+        gate.beforeRestart.state === "approved" &&
+        gate.afterRestart.state === "approved" &&
+        gate.beforeRestart.profileFingerprint ===
+          harnessResult.storyAnalysis.profile.profileFingerprint &&
+        gate.beforeRestart.runFingerprint ===
+          harnessResult.storyAnalysis.run.runFingerprint &&
+        gate.beforeRestart.snapshotId ===
+          harnessResult.storyAnalysis.run.snapshotId &&
+        gate.beforeRestart.snapshotRevision ===
+          harnessResult.storyAnalysis.run.snapshotRevision &&
+        gate.beforeRestart.snapshotFingerprint ===
+          harnessResult.storyAnalysis.run.snapshotFingerprint &&
+        jsonValuesEqual(gate.beforeRestart, gate.afterRestart),
+    ) ||
+    !Object.values(harnessResult.storyAnalysis.restart).every(
+      (value) => value === true,
+    ) ||
+    !jsonValuesEqual(
+      packaged.importReview,
+      harnessResult.importReview,
+    ) ||
+    !jsonValuesEqual(
+      packaged.storyAnalysis,
+      harnessResult.storyAnalysis,
+    ) ||
+    !jsonValuesEqual(packaged.flow, harnessResult.flow) ||
+    !jsonValuesEqual(packaged.launches, harnessResult.launches)
+  ) {
+    throw new Error(
+      "The build-evidence packaged E2E proof is invalid or stale.",
+    );
+  }
+  if (
+    !hasExactKeys(manifest.runner, [
+      "name",
+      "os",
+      "architecture",
+      "environment",
+      "runId",
+      "runAttempt",
+      "workflow",
+      "job",
+    ]) ||
+    !jsonValuesEqual(manifest.runner, normalizeRunner(manifest.runner))
+  ) {
+    throw new Error(
+      "The build-evidence runner identity is invalid.",
+    );
+  }
+  return {
+    manifest,
+    manifestPath: target,
+    manifestSha256: manifestFile.sha256,
   };
 }
 
@@ -435,6 +1003,360 @@ async function collectSecureIngestEvidence(
       decodedSha256: sha256Bytes(decodedDocx),
     },
   };
+}
+
+async function collectStoryAnalysisContractEvidence(
+  canonicalRoot,
+  repositoryRoot,
+) {
+  const fixtureDirectory = path.join(
+    repositoryRoot,
+    "fixtures",
+    "synthetic-story",
+  );
+  const paths = {
+    generator: path.join(fixtureDirectory, "generate-fixtures.mjs"),
+    canonicalText: path.join(fixtureDirectory, "sample-story.txt"),
+    markdown: path.join(fixtureDirectory, "sample-story.md"),
+    expectations: path.join(
+      fixtureDirectory,
+      "sample-story.expected.json",
+    ),
+    encodedDocx: path.join(
+      fixtureDirectory,
+      "sample-story.docx.base64",
+    ),
+  };
+  const [
+    generator,
+    canonicalTextFile,
+    markdownFile,
+    expectationsFile,
+    encodedDocxFile,
+    canonicalText,
+    markdownText,
+    expectationsText,
+    encodedDocxText,
+  ] = await Promise.all([
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      paths.generator,
+      "Phase 2 fixture generator",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      paths.canonicalText,
+      "Phase 2 canonical text fixture",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      paths.markdown,
+      "Phase 2 Markdown fixture",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      paths.expectations,
+      "Phase 2 fixture expectations",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      repositoryRoot,
+      paths.encodedDocx,
+      "Phase 2 DOCX base64 fixture",
+    ),
+    readBoundedUtf8(
+      paths.canonicalText,
+      "Phase 2 canonical text fixture",
+    ),
+    readBoundedUtf8(paths.markdown, "Phase 2 Markdown fixture"),
+    readBoundedUtf8(
+      paths.expectations,
+      "Phase 2 fixture expectations",
+    ),
+    readBoundedAscii(
+      paths.encodedDocx,
+      "Phase 2 DOCX base64 fixture",
+    ),
+  ]);
+  let expectations;
+  try {
+    expectations = JSON.parse(expectationsText);
+  } catch {
+    throw new Error("The Phase 2 fixture expectations are invalid JSON.");
+  }
+  const decodedDocx = decodeStrictBase64(encodedDocxText);
+  const canonicalTextSha256 = sha256Bytes(
+    Buffer.from(canonicalText, "utf8"),
+  );
+  const markdownSha256 = sha256Bytes(
+    Buffer.from(markdownText, "utf8"),
+  );
+  const decodedDocxSha256 = sha256Bytes(decodedDocx);
+  if (
+    !isPlainObject(expectations) ||
+    expectations.schemaVersion !== ANALYSIS_CONTRACT_VERSION ||
+    expectations.fixtureId !== "phase-2-whole-book-intelligence" ||
+    expectations.offsetUnit !== "unicode-code-point" ||
+    !isPlainObject(expectations.canonicalText) ||
+    expectations.canonicalText.fileName !== "sample-story.txt" ||
+    expectations.canonicalText.byteLength !==
+      Buffer.byteLength(canonicalText, "utf8") ||
+    expectations.canonicalText.codePointLength !==
+      [...canonicalText].length ||
+    expectations.canonicalText.sha256 !== canonicalTextSha256 ||
+    !isPlainObject(expectations.markdown) ||
+    expectations.markdown.fileName !== "sample-story.md" ||
+    expectations.markdown.byteLength !==
+      Buffer.byteLength(markdownText, "utf8") ||
+    expectations.markdown.codePointLength !==
+      [...markdownText].length ||
+    expectations.markdown.sha256 !== markdownSha256 ||
+    !isPlainObject(expectations.binaryFixtures) ||
+    !isPlainObject(expectations.binaryFixtures.docx) ||
+    expectations.binaryFixtures.docx.encodedFileName !==
+      "sample-story.docx.base64" ||
+    expectations.binaryFixtures.docx.decodedFileName !==
+      "sample-story.docx" ||
+    expectations.binaryFixtures.docx.sizeBytes !== decodedDocx.length ||
+    expectations.binaryFixtures.docx.sha256 !== decodedDocxSha256
+  ) {
+    throw new Error(
+      "The Phase 2 fixture expectations do not match the committed inputs.",
+    );
+  }
+  const counts = sanitizeSyntheticExpectedCounts(
+    expectations.expectedCounts,
+  );
+  const expectedSpans = [];
+  collectExpectedFixtureSpans(expectations, expectedSpans);
+  if (expectedSpans.length < 40) {
+    throw new Error(
+      "The Phase 2 fixture does not contain enough exact expected spans.",
+    );
+  }
+  const seenSpanIds = new Set();
+  for (const span of expectedSpans) {
+    if (
+      seenSpanIds.has(span.spanId) ||
+      !validExpectedFixtureSpan(canonicalText, span)
+    ) {
+      throw new Error(
+        "The Phase 2 fixture expected offsets or hashes are invalid.",
+      );
+    }
+    seenSpanIds.add(span.spanId);
+  }
+  if (
+    !Array.isArray(expectations.chapters) ||
+    expectations.chapters.length !== counts.chapters ||
+    !Array.isArray(expectations.scenes) ||
+    expectations.scenes.length !== counts.scenes ||
+    !Array.isArray(expectations.characters) ||
+    expectations.characters.length !== counts.namedCharacters ||
+    !Array.isArray(expectations.locations) ||
+    expectations.locations.length !== counts.locations ||
+    !Array.isArray(expectations.dialogueLines) ||
+    expectations.dialogueLines.length !== counts.dialogueLines ||
+    !isPlainObject(expectations.narrationDistinction) ||
+    !isPlainObject(expectations.pointOfView) ||
+    !isPlainObject(expectations.timeline) ||
+    !Array.isArray(expectations.relationshipChanges) ||
+    expectations.relationshipChanges.length < 2 ||
+    !isPlainObject(expectations.emotionalProgression) ||
+    !isPlainObject(expectations.continuityAnomaly) ||
+    expectations.continuityAnomaly.expectedCategory !==
+      "unexplained_object_state_change"
+  ) {
+    throw new Error(
+      "The Phase 2 fixture semantic expectations are incomplete.",
+    );
+  }
+  const profileValues = JSON.parse(
+    WHOLE_BOOK_ANALYSIS_PROFILE_CANONICAL_JSON,
+  );
+  if (
+    sha256Bytes(
+      Buffer.from(
+        WHOLE_BOOK_ANALYSIS_PROFILE_CANONICAL_JSON,
+        "utf8",
+      ),
+    ) !== WHOLE_BOOK_ANALYSIS_PROFILE_FINGERPRINT
+  ) {
+    throw new Error(
+      "The Phase 2 analysis profile fingerprint is invalid.",
+    );
+  }
+  return {
+    profile: {
+      values: profileValues,
+      canonicalJson: WHOLE_BOOK_ANALYSIS_PROFILE_CANONICAL_JSON,
+      fingerprint: WHOLE_BOOK_ANALYSIS_PROFILE_FINGERPRINT,
+    },
+    inputs: {
+      generator,
+      canonicalText: canonicalTextFile,
+      markdown: markdownFile,
+      expectations: expectationsFile,
+      syntheticDocxEncoding: encodedDocxFile,
+    },
+    fixture: {
+      fixtureId: expectations.fixtureId,
+      canonicalText: {
+        byteLength: Buffer.byteLength(canonicalText, "utf8"),
+        codePointLength: [...canonicalText].length,
+        sha256: canonicalTextSha256,
+      },
+      markdown: {
+        byteLength: Buffer.byteLength(markdownText, "utf8"),
+        codePointLength: [...markdownText].length,
+        sha256: markdownSha256,
+      },
+      syntheticDocx: {
+        decodedSizeBytes: decodedDocx.length,
+        decodedSha256: decodedDocxSha256,
+      },
+      expectedCounts: counts,
+      expectedSpanCount: expectedSpans.length,
+      expectationsSha256: expectationsFile.sha256,
+    },
+  };
+}
+
+function sanitizeSyntheticExpectedCounts(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "chapters",
+      "scenes",
+      "namedCharacters",
+      "locations",
+      "dialogueLines",
+      "ambiguousDialogueLines",
+      "povShifts",
+      "continuityAnomalies",
+    ])
+  ) {
+    throw new Error("The Phase 2 fixture expected counts are invalid.");
+  }
+  const counts = {};
+  for (const [key, count] of Object.entries(value)) {
+    if (
+      !Number.isSafeInteger(count) ||
+      count < 0 ||
+      count > 1_000_000
+    ) {
+      throw new Error("The Phase 2 fixture expected counts are invalid.");
+    }
+    counts[key] = count;
+  }
+  if (
+    counts.chapters < 3 ||
+    counts.scenes < 6 ||
+    counts.namedCharacters < 6 ||
+    counts.locations < 3 ||
+    counts.dialogueLines < 4 ||
+    counts.ambiguousDialogueLines < 2 ||
+    counts.povShifts < 1 ||
+    counts.continuityAnomalies < 1
+  ) {
+    throw new Error(
+      "The Phase 2 fixture does not meet the semantic minimums.",
+    );
+  }
+  return counts;
+}
+
+function collectExpectedFixtureSpans(value, spans) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectExpectedFixtureSpans(item, spans);
+    }
+    return;
+  }
+  if (!isPlainObject(value)) {
+    return;
+  }
+  if (
+    typeof value.spanId === "string" &&
+    Object.hasOwn(value, "startOffset") &&
+    Object.hasOwn(value, "endOffset") &&
+    Object.hasOwn(value, "textSha256")
+  ) {
+    spans.push(value);
+    return;
+  }
+  for (const item of Object.values(value)) {
+    collectExpectedFixtureSpans(item, spans);
+  }
+}
+
+function validExpectedFixtureSpan(text, span) {
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(span.spanId) ||
+    !Number.isSafeInteger(span.startOffset) ||
+    !Number.isSafeInteger(span.endOffset) ||
+    span.startOffset < 0 ||
+    span.endOffset <= span.startOffset ||
+    span.endOffset > [...text].length ||
+    !isSha256(span.textSha256)
+  ) {
+    return false;
+  }
+  const exactText = [...text]
+    .slice(span.startOffset, span.endOffset)
+    .join("");
+  return (
+    (!Object.hasOwn(span, "exactText") ||
+      span.exactText === exactText) &&
+    sha256Bytes(Buffer.from(exactText, "utf8")) === span.textSha256
+  );
+}
+
+async function assertNoSyntheticStoryTextLeak(root, manifest) {
+  const expectationsPath = path.join(
+    root,
+    "fixtures",
+    "synthetic-story",
+    "sample-story.expected.json",
+  );
+  const expectations = JSON.parse(
+    await readBoundedUtf8(
+      expectationsPath,
+      "Phase 2 fixture expectations",
+    ),
+  );
+  const expectedSpans = [];
+  collectExpectedFixtureSpans(expectations, expectedSpans);
+  if (
+    expectedSpans.some(
+      (span) =>
+        typeof span.exactText === "string" &&
+        objectContainsString(manifest, span.exactText),
+    )
+  ) {
+    throw new Error(
+      "The build-evidence manifest contains private story text.",
+    );
+  }
+}
+
+function objectContainsString(value, privateText) {
+  if (typeof value === "string") {
+    return value.includes(privateText);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => objectContainsString(item, privateText));
+  }
+  if (isPlainObject(value)) {
+    return Object.values(value).some((item) =>
+      objectContainsString(item, privateText),
+    );
+  }
+  return false;
 }
 
 async function readBoundedUtf8(target, label) {
@@ -612,6 +1534,7 @@ async function inspectHarnessResult(
         "flow",
         "screenshot",
         "importReview",
+        "storyAnalysis",
         "launches",
       ])
     ) {
@@ -632,6 +1555,13 @@ async function inspectHarnessResult(
         : sanitizeImportReviewEvidence(value.importReview);
     const importReviewShapeValid =
       value.importReview === null || importReview !== null;
+    const storyAnalysis =
+      value.storyAnalysis === null
+        ? null
+        : sanitizeStoryAnalysisEvidence(value.storyAnalysis);
+    const storyAnalysisShapeValid =
+      value.storyAnalysis === null || storyAnalysis !== null;
+    const flow = sanitizePackagedFlow(value.flow);
     const preexistingRelevantProcessesWereUnavailable =
       value.preexistingRelevantProcesses === null;
     const preexistingRelevantProcesses =
@@ -676,25 +1606,14 @@ async function inspectHarnessResult(
         "TEMP",
         "TMP",
       ]) &&
-      equalStringArrays(value.flow, [
-        "create",
-        "import_synthetic_docx",
-        "wait_for_extraction",
-        "review_import",
-        "approve_import",
-        "analyze",
-        "correct_speaker",
-        "close",
-        "restart",
-        "restore",
-        "verify_import_review_persistence",
-        "close",
-      ]) &&
+      Array.isArray(flow) &&
+      equalStringArrays(flow, PHASE_2_PACKAGED_FLOW) &&
       isPlainObject(value.screenshot) &&
       hasExactKeys(value.screenshot, ["artifactId", "captured"]) &&
       value.screenshot.artifactId === "packaged-ui-screenshot" &&
       typeof value.screenshot.captured === "boolean" &&
       importReviewShapeValid &&
+      storyAnalysisShapeValid &&
       Array.isArray(launches) &&
       Array.isArray(completedLaunches) &&
       equalNumberArrays(
@@ -724,6 +1643,7 @@ async function inspectHarnessResult(
       value.cleanupCompleted === true &&
       value.screenshot.captured === true &&
       importReview !== null &&
+      storyAnalysis !== null &&
       importReview.approvalPersistedAfterRestart &&
       importReview.extractionPersistedAfterRestart &&
       importReview.analysisPersistedAfterRestart &&
@@ -768,6 +1688,8 @@ async function inspectHarnessResult(
       cleanupCompleted: value.cleanupCompleted,
       completedLaunches,
       importReview,
+      storyAnalysis,
+      flow,
     };
   } catch {
     return invalidHarnessResult();
@@ -818,6 +1740,472 @@ function sanitizeImportReviewEvidence(value) {
     analysisPersistedAfterRestart:
       value.analysisPersistedAfterRestart,
   };
+}
+
+function sanitizeStoryAnalysisEvidence(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "profile",
+      "agents",
+      "approvedInput",
+      "run",
+      "observedStages",
+      "counts",
+      "assertions",
+      "corrections",
+      "gates",
+      "restart",
+    ]) ||
+    !isPlainObject(value.profile) ||
+    !hasExactKeys(value.profile, [
+      "profileId",
+      "semanticVersion",
+      "profileFingerprint",
+      "producerId",
+      "producerVersion",
+    ]) ||
+    value.profile.profileId !== WHOLE_BOOK_ANALYSIS_PROFILE_ID ||
+    value.profile.semanticVersion !==
+      WHOLE_BOOK_ANALYSIS_PROFILE_VERSION ||
+    value.profile.profileFingerprint !==
+      WHOLE_BOOK_ANALYSIS_PROFILE_FINGERPRINT ||
+    value.profile.producerId !== WHOLE_BOOK_ANALYSIS_PRODUCER_ID ||
+    value.profile.producerVersion !==
+      WHOLE_BOOK_ANALYSIS_PRODUCER_VERSION
+  ) {
+    return null;
+  }
+  const agents = sanitizePhase2AgentEvidence(value.agents);
+  const approvedInput = sanitizeApprovedAnalysisInput(
+    value.approvedInput,
+  );
+  const run = sanitizeAnalysisRunEvidence(value.run);
+  const counts = sanitizeAnalysisCounts(value.counts);
+  const assertions = sanitizeAnalysisAssertions(value.assertions);
+  const corrections = sanitizeAnalysisCorrectionEvidence(
+    value.corrections,
+  );
+  const gates = sanitizeAnalysisGateEvidence(value.gates, {
+    profileFingerprint: value.profile.profileFingerprint,
+    runFingerprint: run?.runFingerprint,
+    snapshotId: run?.snapshotId,
+    snapshotRevision: run?.snapshotRevision,
+    snapshotFingerprint: run?.snapshotFingerprint,
+  });
+  const restart = sanitizeAnalysisRestartEvidence(value.restart);
+  if (
+    agents === null ||
+    approvedInput === null ||
+    run === null ||
+    counts === null ||
+    assertions === null ||
+    corrections === null ||
+    gates === null ||
+    restart === null ||
+    !equalStringArrays(value.observedStages, PHASE_2_JOB_STAGES)
+  ) {
+    return null;
+  }
+  return {
+    profile: {
+      profileId: value.profile.profileId,
+      semanticVersion: value.profile.semanticVersion,
+      profileFingerprint: value.profile.profileFingerprint,
+      producerId: value.profile.producerId,
+      producerVersion: value.profile.producerVersion,
+    },
+    agents,
+    approvedInput,
+    run,
+    observedStages: [...value.observedStages],
+    counts,
+    assertions,
+    corrections,
+    gates,
+    restart,
+  };
+}
+
+function sanitizePhase2AgentEvidence(value) {
+  if (
+    !Array.isArray(value) ||
+    value.length !== PHASE_2_RUNTIME_AGENTS.length
+  ) {
+    return null;
+  }
+  const seenExecutions = new Set();
+  const agents = [];
+  for (const [index, item] of value.entries()) {
+    const expected = PHASE_2_RUNTIME_AGENTS[index];
+    if (
+      !isPlainObject(item) ||
+      !hasExactKeys(item, [
+        "agentId",
+        "agentVersion",
+        "executionId",
+        "status",
+        "outputFingerprint",
+      ]) ||
+      item.agentId !== expected.agentId ||
+      item.agentVersion !== expected.agentVersion ||
+      !isPublicId(item.executionId) ||
+      seenExecutions.has(item.executionId) ||
+      item.status !== "succeeded" ||
+      !isSha256(item.outputFingerprint)
+    ) {
+      return null;
+    }
+    seenExecutions.add(item.executionId);
+    agents.push({
+      agentId: item.agentId,
+      agentVersion: item.agentVersion,
+      executionId: item.executionId,
+      status: item.status,
+      outputFingerprint: item.outputFingerprint,
+    });
+  }
+  return agents;
+}
+
+function sanitizeApprovedAnalysisInput(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "sourceDocumentId",
+      "sourceRevision",
+      "sourceSha256",
+      "extractionId",
+      "extractionRevision",
+      "extractedTextSha256",
+      "importReviewId",
+      "importReviewRevision",
+      "importReviewDecisionId",
+      "approvedEvidenceFingerprint",
+      "storyId",
+      "storyRevision",
+      "storyFingerprint",
+    ])
+  ) {
+    return null;
+  }
+  for (const key of [
+    "sourceDocumentId",
+    "extractionId",
+    "importReviewId",
+    "importReviewDecisionId",
+    "storyId",
+  ]) {
+    if (!isPublicId(value[key])) {
+      return null;
+    }
+  }
+  for (const key of [
+    "sourceRevision",
+    "extractionRevision",
+    "importReviewRevision",
+    "storyRevision",
+  ]) {
+    if (
+      !Number.isSafeInteger(value[key]) ||
+      value[key] < 1 ||
+      value[key] > 1_000_000
+    ) {
+      return null;
+    }
+  }
+  for (const key of [
+    "sourceSha256",
+    "extractedTextSha256",
+    "approvedEvidenceFingerprint",
+    "storyFingerprint",
+  ]) {
+    if (!isSha256(value[key])) {
+      return null;
+    }
+  }
+  return { ...value };
+}
+
+function sanitizeAnalysisRunEvidence(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "runId",
+      "inputFingerprint",
+      "runFingerprint",
+      "jobId",
+      "status",
+      "snapshotId",
+      "snapshotRevision",
+      "snapshotFingerprint",
+      "correctionSetFingerprint",
+    ]) ||
+    !isPublicId(value.runId) ||
+    !isPublicId(value.jobId) ||
+    value.status !== "succeeded" ||
+    !isPublicId(value.snapshotId) ||
+    !Number.isSafeInteger(value.snapshotRevision) ||
+    value.snapshotRevision < 1 ||
+    value.snapshotRevision > 1_000_000
+  ) {
+    return null;
+  }
+  for (const key of [
+    "inputFingerprint",
+    "runFingerprint",
+    "snapshotFingerprint",
+    "correctionSetFingerprint",
+  ]) {
+    if (!isSha256(value[key])) {
+      return null;
+    }
+  }
+  return { ...value };
+}
+
+function sanitizeAnalysisCounts(value) {
+  const keys = [
+    "agentExecutions",
+    "chapters",
+    "scenes",
+    "beats",
+    "characters",
+    "mentions",
+    "dialogueLines",
+    "narrationSpans",
+    "povSegments",
+    "locations",
+    "timelineEvents",
+    "temporalConstraints",
+    "relationships",
+    "emotionalStates",
+    "dramaticIntents",
+    "continuityFindings",
+    "corrections",
+  ];
+  if (!isPlainObject(value) || !hasExactKeys(value, keys)) {
+    return null;
+  }
+  const counts = {};
+  for (const key of keys) {
+    if (
+      !Number.isSafeInteger(value[key]) ||
+      value[key] < 0 ||
+      value[key] > 10_000_000
+    ) {
+      return null;
+    }
+    counts[key] = value[key];
+  }
+  return counts;
+}
+
+function sanitizeAnalysisAssertions(value) {
+  const keys = [
+    "structureDetected",
+    "characterRegistryDetected",
+    "ambiguousIdentityPreserved",
+    "ambiguousDialoguePreserved",
+    "narrationDistinctionDetected",
+    "povShiftDetected",
+    "locationsDetected",
+    "timelineFlashbackDetected",
+    "relationshipChangeDetected",
+    "emotionalProgressionDetected",
+    "continuityAnomalyDetected",
+  ];
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, keys) ||
+    !keys.every((key) => typeof value[key] === "boolean")
+  ) {
+    return null;
+  }
+  return Object.fromEntries(keys.map((key) => [key, value[key]]));
+}
+
+function sanitizeAnalysisCorrectionEvidence(value) {
+  const expected = {
+    characterIdentity: "character_identity",
+    dialogueSpeaker: "dialogue_speaker",
+    continuityDisposition: "continuity_disposition",
+  };
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, Object.keys(expected))
+  ) {
+    return null;
+  }
+  const corrections = {};
+  const seenIds = new Set();
+  for (const [name, category] of Object.entries(expected)) {
+    const item = value[name];
+    if (
+      !isPlainObject(item) ||
+      !hasExactKeys(item, [
+        "correctionId",
+        "category",
+        "targetEntityId",
+        "reasonFingerprint",
+        "previousValueFingerprint",
+        "correctedValueFingerprint",
+        "effectiveValueFingerprintBeforeRestart",
+        "effectiveValueFingerprintAfterRestart",
+        "effectiveAuthorityBeforeRestart",
+        "effectiveAuthorityAfterRestart",
+        "immutable",
+        "lockedAgainstAutomation",
+        "persistedAfterRestart",
+      ]) ||
+      !isPublicId(item.correctionId) ||
+      seenIds.has(item.correctionId) ||
+      item.category !== category ||
+      !isPublicId(item.targetEntityId) ||
+      item.reasonFingerprint !==
+        PHASE_2_CORRECTION_REASON_FINGERPRINTS[category] ||
+      !isSha256(item.previousValueFingerprint) ||
+      !isSha256(item.correctedValueFingerprint) ||
+      item.effectiveValueFingerprintBeforeRestart !==
+        item.correctedValueFingerprint ||
+      item.effectiveValueFingerprintAfterRestart !==
+        item.correctedValueFingerprint ||
+      item.effectiveAuthorityBeforeRestart !== "human" ||
+      item.effectiveAuthorityAfterRestart !== "human" ||
+      item.immutable !== true ||
+      item.lockedAgainstAutomation !== true ||
+      typeof item.persistedAfterRestart !== "boolean"
+    ) {
+      return null;
+    }
+    seenIds.add(item.correctionId);
+    corrections[name] = { ...item };
+  }
+  return corrections;
+}
+
+function sanitizeAnalysisGateEvidence(value, expected) {
+  if (
+    !Array.isArray(value) ||
+    value.length !== PHASE_2_GATE_IDS.length
+  ) {
+    return null;
+  }
+  const gates = [];
+  const seenDecisionIds = new Set();
+  for (const [index, item] of value.entries()) {
+    if (
+      !isPlainObject(item) ||
+      !hasExactKeys(item, [
+        "gateId",
+        "beforeRestart",
+        "afterRestart",
+        "immutable",
+      ]) ||
+      item.gateId !== PHASE_2_GATE_IDS[index] ||
+      item.immutable !== true
+    ) {
+      return null;
+    }
+    const beforeRestart = sanitizeGateStateEvidence(
+      item.beforeRestart,
+      expected,
+    );
+    const afterRestart = sanitizeGateStateEvidence(
+      item.afterRestart,
+      expected,
+    );
+    if (
+      beforeRestart === null ||
+      afterRestart === null ||
+      seenDecisionIds.has(beforeRestart.decisionId) ||
+      JSON.stringify(beforeRestart) !== JSON.stringify(afterRestart)
+    ) {
+      return null;
+    }
+    seenDecisionIds.add(beforeRestart.decisionId);
+    gates.push({
+      gateId: item.gateId,
+      beforeRestart,
+      afterRestart,
+      immutable: true,
+    });
+  }
+  return gates;
+}
+
+function sanitizeGateStateEvidence(value, expected) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "reviewId",
+      "decisionId",
+      "state",
+      "profileFingerprint",
+      "runFingerprint",
+      "snapshotId",
+      "snapshotRevision",
+      "snapshotFingerprint",
+      "decisionRecordFingerprint",
+      "artifactFingerprint",
+      "evidenceFingerprint",
+    ]) ||
+    !isPublicId(value.reviewId) ||
+    !isPublicId(value.decisionId) ||
+    value.state !== "approved" ||
+    value.profileFingerprint !== expected.profileFingerprint ||
+    value.runFingerprint !== expected.runFingerprint ||
+    value.snapshotId !== expected.snapshotId ||
+    value.snapshotRevision !== expected.snapshotRevision ||
+    value.snapshotFingerprint !== expected.snapshotFingerprint ||
+    !isSha256(value.profileFingerprint) ||
+    !isSha256(value.runFingerprint) ||
+    !isPublicId(value.snapshotId) ||
+    !Number.isSafeInteger(value.snapshotRevision) ||
+    value.snapshotRevision < 1 ||
+    value.snapshotRevision > 1_000_000 ||
+    !isSha256(value.snapshotFingerprint) ||
+    !isSha256(value.decisionRecordFingerprint) ||
+    !isSha256(value.artifactFingerprint) ||
+    !isSha256(value.evidenceFingerprint)
+  ) {
+    return null;
+  }
+  return { ...value };
+}
+
+function sanitizeAnalysisRestartEvidence(value) {
+  const keys = [
+    "runPersisted",
+    "snapshotPersisted",
+    "correctionSetPersisted",
+    "gateDecisionsPersisted",
+    "agentExecutionsPersisted",
+  ];
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, keys) ||
+    !keys.every((key) => typeof value[key] === "boolean")
+  ) {
+    return null;
+  }
+  return Object.fromEntries(keys.map((key) => [key, value[key]]));
+}
+
+function sanitizePackagedFlow(value) {
+  if (
+    !Array.isArray(value) ||
+    value.length < 12 ||
+    value.length > 64 ||
+    !value.every(
+      (item) =>
+        typeof item === "string" &&
+        /^[a-z][a-z0-9_]{0,79}$/u.test(item),
+    )
+  ) {
+    return null;
+  }
+  return [...value];
 }
 
 function validFailureCodeForStage(stage, code) {
@@ -1028,6 +2416,8 @@ function invalidHarnessResult() {
     cleanupCompleted: null,
     completedLaunches: [],
     importReview: null,
+    storyAnalysis: null,
+    flow: [],
   };
 }
 
@@ -1315,6 +2705,13 @@ function isSha256(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 }
 
+function isPublicId(value) {
+  return (
+    typeof value === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)
+  );
+}
+
 function equalStringArrays(value, expected) {
   return (
     Array.isArray(value) &&
@@ -1327,6 +2724,36 @@ function equalNumberArrays(left, right) {
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
+  );
+}
+
+function equalAgentVersionEvidence(actual, expected) {
+  return (
+    Array.isArray(actual) &&
+    actual.length === expected.length &&
+    actual.every(
+      (item, index) =>
+        item.agentId === expected[index].agentId &&
+        item.agentVersion === expected[index].agentVersion,
+    )
+  );
+}
+
+function storyAnalysisCountsMeetFixture(counts, expected) {
+  return (
+    counts.chapters >= expected.chapters &&
+    counts.scenes >= expected.scenes &&
+    counts.characters >= expected.namedCharacters &&
+    counts.locations >= expected.locations &&
+    counts.dialogueLines >= expected.dialogueLines &&
+    counts.povSegments >= expected.povShifts &&
+    counts.continuityFindings >= expected.continuityAnomalies &&
+    counts.narrationSpans >= 1 &&
+    counts.timelineEvents >= 2 &&
+    counts.temporalConstraints >= 1 &&
+    counts.relationships >= 2 &&
+    counts.emotionalStates >= 3 &&
+    counts.dramaticIntents >= 1
   );
 }
 
@@ -1415,7 +2842,7 @@ function normalizeRunner(value) {
   if (!isPlainObject(value)) {
     throw new Error("The runner identity is invalid.");
   }
-  return {
+  const runner = {
     name: requiredBoundedString(value.name, "runner name", 200),
     os: requiredBoundedString(value.os, "runner operating system", 40),
     architecture: requiredBoundedString(
@@ -1437,6 +2864,18 @@ function normalizeRunner(value) {
     workflow: requiredBoundedString(value.workflow, "workflow name", 200),
     job: requiredBoundedString(value.job, "job name", 200),
   };
+  if (
+    runner.os !== "Windows" ||
+    runner.architecture !== "X64" ||
+    runner.environment !== "github-hosted" ||
+    runner.workflow !== "Phase 2 Windows CI" ||
+    runner.job !== "verify-and-build"
+  ) {
+    throw new Error(
+      "The build-evidence runner does not match the Phase 2 Windows CI job.",
+    );
+  }
+  return runner;
 }
 
 function requiredBoundedString(value, label, maximumLength) {
@@ -1523,6 +2962,36 @@ function hasExactKeys(value, expected) {
   );
 }
 
+function jsonValuesEqual(left, right) {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) =>
+        jsonValuesEqual(item, right[index]),
+      )
+    );
+  }
+  if (isPlainObject(left) || isPlainObject(right)) {
+    if (!isPlainObject(left) || !isPlainObject(right)) {
+      return false;
+    }
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return (
+      equalStringArrays(leftKeys, rightKeys) &&
+      leftKeys.every((key) =>
+        jsonValuesEqual(left[key], right[key]),
+      )
+    );
+  }
+  return false;
+}
+
 function environmentValue(name) {
   const value = process.env[name];
   if (value === undefined) {
@@ -1532,6 +3001,30 @@ function environmentValue(name) {
 }
 
 async function main() {
+  const arguments_ = process.argv.slice(2);
+  if (arguments_[0] === "--validate-manifest") {
+    if (arguments_.length !== 2) {
+      throw new Error(
+        "Usage: node scripts/ci/build-evidence.mjs --validate-manifest <path>.",
+      );
+    }
+    const result = await validateBuildEvidenceManifest({
+      manifestPath: arguments_[1],
+    });
+    process.stdout.write(
+      `Build evidence validated: ${relativeRepositoryPath(
+        defaultRepositoryRoot,
+        result.manifestPath,
+        "build-evidence manifest",
+      )}\n`,
+    );
+    return;
+  }
+  if (arguments_.length !== 0) {
+    throw new Error(
+      "Usage: node scripts/ci/build-evidence.mjs [--validate-manifest <path>].",
+    );
+  }
   const result = await generateBuildEvidence({
     workflowHeadSha: environmentValue(
       BUILD_EVIDENCE_ENVIRONMENT.workflowHeadSha,

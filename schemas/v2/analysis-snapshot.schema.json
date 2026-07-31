@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v2/analysis-snapshot.schema.json",
+  "title": "AnalysisSnapshot",
+  "$ref": "definitions.schema.json#/$defs/AnalysisSnapshot"
+}

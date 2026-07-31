@@ -11,7 +11,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { generateBuildEvidence } from "../../scripts/ci/build-evidence.mjs";
+import {
+  createSyntheticFixtures,
+  createSyntheticStoryExpectations,
+} from "../../fixtures/synthetic-story/generate-fixtures.mjs";
+import {
+  generateBuildEvidence,
+  validateBuildEvidenceManifest,
+} from "../../scripts/ci/build-evidence.mjs";
 import { capture } from "../../scripts/lib/process.mjs";
 import {
   repositoryRoot,
@@ -24,10 +31,16 @@ const WORKFLOW_HEAD_SHA =
   "89abcdef0123456789abcdef0123456789abcdef";
 const FALLBACK_TIMESTAMP = "2026-07-29T18:00:00.000Z";
 const COMPLETED_AT = "2026-07-29T18:15:21.123Z";
-const SYNTHETIC_DOCX_BYTES = Buffer.from(
-  "PK\u0003\u0004synthetic-docx",
-  "binary",
+const SYNTHETIC_FIXTURES = await createSyntheticFixtures();
+const SYNTHETIC_EXPECTATIONS =
+  await createSyntheticStoryExpectations();
+const SYNTHETIC_MARKDOWN_BYTES = await readFile(
+  new URL(
+    "../../fixtures/synthetic-story/sample-story.md",
+    import.meta.url,
+  ),
 );
+const SYNTHETIC_DOCX_BYTES = SYNTHETIC_FIXTURES.docx;
 const SYNTHETIC_DOCX_SHA256 = createHash("sha256")
   .update(SYNTHETIC_DOCX_BYTES)
   .digest("hex");
@@ -40,7 +53,7 @@ const RUNNER = Object.freeze({
   environment: "github-hosted",
   runId: "30478862847",
   runAttempt: "2",
-  workflow: "Phase 1 Windows CI",
+  workflow: "Phase 2 Windows CI",
   job: "verify-and-build",
 });
 const PACKAGED_FIXTURE =
@@ -53,11 +66,70 @@ const PACKAGED_FLOW = Object.freeze([
   "approve_import",
   "analyze",
   "correct_speaker",
+  "start_whole_book_analysis",
+  "observe_analysis_stages",
+  "inspect_structure",
+  "inspect_character_registry",
+  "correct_character_identity",
+  "inspect_dialogue_and_narration",
+  "correct_dialogue_speaker",
+  "inspect_whole_book_intelligence",
+  "disposition_continuity",
+  "approve_story_structure_review",
+  "approve_character_registry_review",
+  "approve_dialogue_attribution_review",
+  "approve_whole_book_analysis_review",
   "close",
   "restart",
   "restore",
   "verify_import_review_persistence",
+  "verify_story_analysis_persistence",
   "close",
+]);
+const PROFILE_FINGERPRINT =
+  "6ae73e83e89fbcfc0261ff339950407913cd990093fa13cdcc83ce3b1da810ec";
+const CORRECTION_REASON_FINGERPRINTS = Object.freeze({
+  character_identity:
+    "b42b6091d0bde37b4dd15f99a321e86dd965f2272a4ca68da6703b6f5ba2f0da",
+  dialogue_speaker:
+    "6db94e679f663d3dfbed36c173eb8445d6a364beb114c7f8c070e30983247300",
+  continuity_disposition:
+    "d7497ae908f34096c6bbbfdcbf7ea8287967882880cd229af078eee2383c2554",
+});
+const AGENTS = Object.freeze([
+  "story-structure",
+  "story-beats",
+  "character-identity",
+  "dialogue-attribution",
+  "point-of-view",
+  "story-setting",
+  "story-timeline",
+  "character-relationships",
+  "emotion-dramatic-intent",
+  "story-continuity",
+  "analysis-synthesis",
+]);
+const OBSERVED_STAGES = Object.freeze([
+  "validate_approved_input",
+  "initialize_run",
+  "analyze_structure",
+  "analyze_beats",
+  "analyze_character_identity",
+  "analyze_dialogue_attribution",
+  "analyze_point_of_view",
+  "analyze_locations",
+  "analyze_timeline",
+  "analyze_relationships",
+  "analyze_emotion_intent",
+  "analyze_continuity",
+  "synthesize_analysis",
+  "publish_analysis",
+]);
+const GATE_IDS = Object.freeze([
+  "story_structure_review",
+  "character_registry_review",
+  "dialogue_attribution_review",
+  "whole_book_analysis_review",
 ]);
 const IMPORT_REVIEW = Object.freeze({
   format: "docx",
@@ -90,6 +162,157 @@ const PARSER_PROFILE_FINGERPRINT =
 const PARSER_PROFILE_CANONICAL_JSON =
   '{"archiveExpandedBytes":209715200,"archiveMemberBytes":33554432,"archiveMemberNameCodePoints":512,"archiveMembers":2048,"archivePathDepth":20,"canonicalTextCodePoints":10000000,"extractedSections":10000,"ingestContractVersion":"1.0.0","maximumCompressionRatio":100.0,"parserDeadlineMs":30000,"parserProcessMemoryBytes":805306368,"pdfPages":2000,"profileId":"secure-ingest-v1"}';
 
+function storyAnalysisEvidence() {
+  const fingerprint = (label) => sha256(Buffer.from(label, "utf8"));
+  const correction = (name, category) => {
+    const correctedValueFingerprint = fingerprint(
+      `${name}-corrected-value`,
+    );
+    return {
+      correctionId: `correction-${name}`,
+      category,
+      targetEntityId: `entity-${name}`,
+      reasonFingerprint: CORRECTION_REASON_FINGERPRINTS[category],
+      previousValueFingerprint: fingerprint(`${name}-previous-value`),
+      correctedValueFingerprint,
+      effectiveValueFingerprintBeforeRestart:
+        correctedValueFingerprint,
+      effectiveValueFingerprintAfterRestart:
+        correctedValueFingerprint,
+      effectiveAuthorityBeforeRestart: "human",
+      effectiveAuthorityAfterRestart: "human",
+      immutable: true,
+      lockedAgainstAutomation: true,
+      persistedAfterRestart: true,
+    };
+  };
+  return {
+    profile: {
+      profileId: "whole-book-intelligence-v1",
+      semanticVersion: "1.0.0",
+      profileFingerprint: PROFILE_FINGERPRINT,
+      producerId: "whole-book-analysis-orchestrator",
+      producerVersion: "1.0.0",
+    },
+    agents: AGENTS.map((agentId, index) => ({
+      agentId,
+      agentVersion: "1.0.0",
+      executionId: `execution-${String(index + 1).padStart(2, "0")}`,
+      status: "succeeded",
+      outputFingerprint: fingerprint(`${agentId}-output`),
+    })),
+    approvedInput: {
+      sourceDocumentId: "source-document-1",
+      sourceRevision: 1,
+      sourceSha256: SYNTHETIC_DOCX_SHA256,
+      extractionId: "extraction-1",
+      extractionRevision: 1,
+      extractedTextSha256: EXTRACTED_TEXT_SHA256,
+      importReviewId: "import-review-1",
+      importReviewRevision: 2,
+      importReviewDecisionId: "import-decision-1",
+      approvedEvidenceFingerprint: fingerprint(
+        "approved-import-evidence",
+      ),
+      storyId: "story-1",
+      storyRevision: 1,
+      storyFingerprint: fingerprint("story-1"),
+    },
+    run: {
+      runId: "analysis-run-1",
+      inputFingerprint: fingerprint("analysis-input"),
+      runFingerprint: fingerprint("analysis-run"),
+      jobId: "whole-book-job-1",
+      status: "succeeded",
+      snapshotId: "analysis-snapshot-4",
+      snapshotRevision: 4,
+      snapshotFingerprint: fingerprint("analysis-snapshot-4"),
+      correctionSetFingerprint: fingerprint("correction-set-3"),
+    },
+    observedStages: [...OBSERVED_STAGES],
+    counts: {
+      agentExecutions: 11,
+      chapters: 3,
+      scenes: 6,
+      beats: 24,
+      characters: 10,
+      mentions: 48,
+      dialogueLines: 10,
+      narrationSpans: 15,
+      povSegments: 6,
+      locations: 6,
+      timelineEvents: 8,
+      temporalConstraints: 7,
+      relationships: 4,
+      emotionalStates: 6,
+      dramaticIntents: 5,
+      continuityFindings: 1,
+      corrections: 3,
+    },
+    assertions: {
+      structureDetected: true,
+      characterRegistryDetected: true,
+      ambiguousIdentityPreserved: true,
+      ambiguousDialoguePreserved: true,
+      narrationDistinctionDetected: true,
+      povShiftDetected: true,
+      locationsDetected: true,
+      timelineFlashbackDetected: true,
+      relationshipChangeDetected: true,
+      emotionalProgressionDetected: true,
+      continuityAnomalyDetected: true,
+    },
+    corrections: {
+      characterIdentity: correction(
+        "character-identity",
+        "character_identity",
+      ),
+      dialogueSpeaker: correction(
+        "dialogue-speaker",
+        "dialogue_speaker",
+      ),
+      continuityDisposition: correction(
+        "continuity-disposition",
+        "continuity_disposition",
+      ),
+    },
+    gates: GATE_IDS.map((gateId, index) => {
+      const state = {
+        reviewId: `gate-review-${index + 1}`,
+        decisionId: `gate-decision-${index + 1}`,
+        state: "approved",
+        profileFingerprint: PROFILE_FINGERPRINT,
+        runFingerprint: fingerprint("analysis-run"),
+        snapshotId: "analysis-snapshot-4",
+        snapshotRevision: 4,
+        snapshotFingerprint: fingerprint("analysis-snapshot-4"),
+        decisionRecordFingerprint: fingerprint(
+          `gate-${index + 1}-decision-record`,
+        ),
+        artifactFingerprint: fingerprint(
+          `gate-${index + 1}-artifact`,
+        ),
+        evidenceFingerprint: fingerprint(
+          `gate-${index + 1}-evidence`,
+        ),
+      };
+      return {
+        gateId,
+        beforeRestart: state,
+        afterRestart: { ...state },
+        immutable: true,
+      };
+    }),
+    restart: {
+      runPersisted: true,
+      snapshotPersisted: true,
+      correctionSetPersisted: true,
+      gateDecisionsPersisted: true,
+      agentExecutionsPersisted: true,
+    },
+  };
+}
+
 test("writes stable relative-path evidence for a successful packaged gate", async (t) => {
   const fixture = await createFixture(t);
   const options = generationOptions(fixture, "success");
@@ -100,7 +323,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   const secondBytes = await readFile(second.manifestPath, "utf8");
 
   assert.equal(secondBytes, firstBytes);
-  assert.equal(first.manifest.schemaVersion, "2.0.0");
+  assert.equal(first.manifest.schemaVersion, "3.0.0");
   assert.equal(first.manifest.artifactPathScope, "repository-root");
   assert.equal(first.manifest.workflowHeadSha, WORKFLOW_HEAD_SHA);
   assert.equal(first.manifest.testedCheckoutSha, WORKFLOW_HEAD_SHA);
@@ -129,6 +352,15 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     packagedE2eHarnessResultMatchesStepOutcome: true,
     packagedE2eOwnershipExitProven: true,
     phase1DocxImportReviewProven: true,
+    phase2ProfileAndAgentsProven: true,
+    phase2ApprovedInputProven: true,
+    phase2RunSnapshotAndStagesProven: true,
+    phase2StoryAssertionsProven: true,
+    phase2CorrectionsProven: true,
+    phase2FourGateDecisionsProven: true,
+    phase2DecisionRecordsPersisted: true,
+    phase2RestartDurabilityProven: true,
+    phase2WholeBookAnalysisProven: true,
     packagedE2eEvidenceComplete: true,
   });
   assert.deepEqual(
@@ -188,6 +420,19 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   assert.deepEqual(
     first.manifest.packagedE2e.machineResult.completedLaunches,
     [1, 2],
+  );
+  assert.deepEqual(
+    first.manifest.packagedE2e.storyAnalysis,
+    storyAnalysisEvidence(),
+  );
+  assert.equal(
+    first.manifest.storyAnalysisContract.profile.fingerprint,
+    PROFILE_FINGERPRINT,
+  );
+  assert.equal(
+    first.manifest.storyAnalysisContract.fixture.expectedSpanCount >=
+      40,
+    true,
   );
   assert.equal(
     first.manifest.packagedE2e.machineResult.applicationLaunchBegan,
@@ -283,15 +528,72 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   assert.deepEqual(first.manifest.runner, RUNNER);
   assert.equal(firstBytes.endsWith("\n"), true);
   assert.equal(firstBytes.includes(fixture.root), false);
+  for (const privateExcerpt of collectExactStoryText(
+    SYNTHETIC_EXPECTATIONS,
+  )) {
+    assert.equal(
+      objectContainsString(first.manifest, privateExcerpt),
+      false,
+      "build evidence must not contain manuscript excerpts",
+    );
+  }
   const workflow = await readFile(
     new URL("../../.github/workflows/ci.yml", import.meta.url),
     "utf8",
   );
+  const desktopEvidenceSource = await readFile(
+    new URL(
+      "../../apps/desktop/src/verification/packaged-e2e-evidence.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const desktopFlowStart = desktopEvidenceSource.indexOf(
+    "export const packagedFlow",
+  );
+  const desktopFlowEnd = desktopEvidenceSource.indexOf(
+    "]);",
+    desktopFlowStart,
+  );
+  assert.notEqual(desktopFlowStart, -1);
+  assert.notEqual(desktopFlowEnd, -1);
+  assert.deepEqual(
+    [
+      ...desktopEvidenceSource
+        .slice(desktopFlowStart, desktopFlowEnd)
+        .matchAll(/"([a-z][a-z0-9_]*)"/gu),
+    ].map((match) => match[1]),
+    PACKAGED_FLOW,
+  );
+  const workflowStep = (name) => {
+    const marker = `      - name: ${name}`;
+    const start = workflow.indexOf(marker);
+    assert.notEqual(start, -1, `missing workflow step: ${name}`);
+    const next = workflow.indexOf("\n      - name:", start + marker.length);
+    return workflow.slice(start, next === -1 ? undefined : next);
+  };
+  const developmentPreparationIndex = workflow.indexOf(
+    "- name: Prepare development Electron assets",
+  );
+  const developmentGateIndex = workflow.indexOf(
+    "id: development_e2e",
+  );
   const buildIndex = workflow.indexOf("id: build");
+  const resolveEvidenceIndex = workflow.indexOf(
+    "- name: Resolve packaged E2E evidence paths",
+  );
   const packagedGateIndex = workflow.indexOf("id: packaged_e2e");
 
+  assert.notEqual(developmentPreparationIndex, -1);
+  assert.notEqual(developmentGateIndex, -1);
   assert.notEqual(buildIndex, -1);
-  assert.equal(packagedGateIndex > buildIndex, true);
+  assert.equal(
+    developmentGateIndex > developmentPreparationIndex,
+    true,
+  );
+  assert.equal(buildIndex > developmentGateIndex, true);
+  assert.equal(resolveEvidenceIndex > buildIndex, true);
+  assert.equal(packagedGateIndex > resolveEvidenceIndex, true);
   for (const environmentName of [
     "CSS_PACKAGED_E2E_EXECUTABLE",
     "CSS_PACKAGED_E2E_EVIDENCE_PATH",
@@ -308,9 +610,181 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     /win-unpacked\/Cinematic Story Studio\.exe/u,
   );
   assert.match(workflow, /node scripts\/ci\/build-evidence\.mjs/u);
+  assert.match(workflow, /name: Phase 2 Windows CI/u);
+  assert.match(workflow, /group: phase-2-windows-/u);
+  assert.match(
+    workflow,
+    /--validate-manifest \$env:CSS_BUILD_EVIDENCE_MANIFEST_PATH/u,
+  );
+  for (const focusedTest of [
+    "test_database_v3_migration.py",
+    "test_whole_book_analysis.py",
+    "test_phase2_api.py",
+    "test_analysis_corrections_restart.py",
+    "test_phase2_correction_scope_regressions.py",
+    "test_phase2_structure_graph_regressions.py",
+    "test_phase2_scale.py",
+  ]) {
+    assert.match(workflow, new RegExp(focusedTest, "u"));
+  }
+  assert.match(
+    workflow,
+    /cinematic-story-studio-phase-2-windows-unpacked-/u,
+  );
   assert.match(
     workflow,
     /github\.event\.pull_request\.head\.sha \|\| github\.sha/u,
+  );
+  assert.match(
+    workflowStep("Run development whole-book analysis Electron E2E"),
+    /CSS_E2E: "1"/u,
+  );
+  const printEvidenceStep = workflowStep(
+    "Print sanitized build evidence",
+  );
+  assert.match(
+    printEvidenceStep,
+    /CSS_BUILD_EVIDENCE_MANIFEST_PATH/u,
+  );
+  assert.doesNotMatch(
+    printEvidenceStep,
+    /CSS_PACKAGED_E2E_RESULT_PATH/u,
+    "raw packaged results must not be echoed into CI logs",
+  );
+  for (const [gateName, gateId, enforcementName] of [
+    [
+      "Run development whole-book analysis Electron E2E",
+      "development_e2e",
+      "Enforce development Electron E2E result",
+    ],
+    [
+      "Run exact packaged whole-book analysis persistence E2E",
+      "packaged_e2e",
+      "Enforce packaged E2E result",
+    ],
+    [
+      "Generate deterministic build-evidence manifest",
+      "build_evidence",
+      "Enforce build-evidence generation",
+    ],
+    [
+      "Validate schema-v4 packaged result and Phase 2 build manifest",
+      "manifest_validation",
+      "Enforce build-evidence manifest validation",
+    ],
+  ]) {
+    assert.match(
+      workflowStep(gateName),
+      /continue-on-error: true/u,
+      `${gateId} must retain evidence before enforcement`,
+    );
+    assert.match(
+      workflowStep(enforcementName),
+      new RegExp(`steps\\.${gateId}\\.outcome != 'success'`, "u"),
+      `${gateId} must have an explicit failing enforcement step`,
+    );
+  }
+  const uploadIndex = workflow.indexOf(
+    "- name: Upload short-lived development artifact",
+  );
+  for (const enforcementName of [
+    "Enforce packaged E2E result",
+    "Enforce build-evidence generation",
+    "Enforce build-evidence manifest validation",
+    "Enforce development Electron E2E result",
+  ]) {
+    assert.equal(
+      workflow.indexOf(`- name: ${enforcementName}`) > uploadIndex,
+      true,
+      `${enforcementName} must run after evidence upload`,
+    );
+  }
+  await assert.rejects(
+    generateBuildEvidence({
+      ...generationOptions(fixture, "success"),
+      runner: {
+        ...RUNNER,
+        name: SYNTHETIC_EXPECTATIONS.dialogueLines[0].exactText
+          .exactText,
+      },
+    }),
+    /manifest contains private story text/u,
+  );
+  await assert.rejects(
+    generateBuildEvidence({
+      ...generationOptions(fixture, "success"),
+      runner: {
+        ...RUNNER,
+        os: "Linux",
+      },
+    }),
+    /runner does not match the Phase 2 Windows CI job/u,
+  );
+});
+
+test("validates a complete Phase 2 manifest and rejects tampering", async (t) => {
+  const fixture = await createFixture(t);
+  const generated = await generateBuildEvidence(
+    generationOptions(fixture, "success"),
+  );
+
+  const validated = await validateBuildEvidenceManifest({
+    repositoryRoot: fixture.root,
+    manifestPath: generated.manifestPath,
+  });
+
+  assert.equal(validated.manifestPath, generated.manifestPath);
+  assert.equal(validated.manifest.schemaVersion, "3.0.0");
+  assert.match(validated.manifestSha256, /^[a-f0-9]{64}$/u);
+
+  const leakTamper = structuredClone(generated.manifest);
+  leakTamper.runner.name =
+    SYNTHETIC_EXPECTATIONS.characters[0].firstMention.exactText;
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(leakTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /manifest contains private story text/u,
+  );
+
+  const flowTamper = structuredClone(generated.manifest);
+  flowTamper.packagedE2e.flow =
+    flowTamper.packagedE2e.flow.filter(
+      (action) => action !== "approve_whole_book_analysis_review",
+    );
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(flowTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /packaged E2E proof is invalid or stale/u,
+  );
+
+  const tampered = structuredClone(generated.manifest);
+  tampered.artifacts.desktopApplication.sha256 = "0".repeat(64);
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(tampered, null, 2)}\n`,
+    "utf8",
+  );
+
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /artifact hashes are stale/u,
   );
 });
 
@@ -513,6 +987,63 @@ test("rejects a successful step without exact harness ownership evidence", async
         value.importReview.sourceSha256 = "not-a-sha256";
       },
     },
+    {
+      name: "unexpected correction reason fingerprint",
+      mutate(value) {
+        value.storyAnalysis.corrections.characterIdentity.reasonFingerprint =
+          "f".repeat(64);
+      },
+    },
+    {
+      name: "gate not linked to the canonical profile",
+      mutate(value) {
+        value.storyAnalysis.gates[0].beforeRestart.profileFingerprint =
+          "f".repeat(64);
+        value.storyAnalysis.gates[0].afterRestart.profileFingerprint =
+          "f".repeat(64);
+      },
+    },
+    {
+      name: "gate not linked to the analysis run",
+      mutate(value) {
+        value.storyAnalysis.gates[0].beforeRestart.runFingerprint =
+          "f".repeat(64);
+        value.storyAnalysis.gates[0].afterRestart.runFingerprint =
+          "f".repeat(64);
+      },
+    },
+    {
+      name: "gate not linked to the analysis snapshot identity",
+      mutate(value) {
+        value.storyAnalysis.gates[0].beforeRestart.snapshotId =
+          "other-snapshot";
+        value.storyAnalysis.gates[0].afterRestart.snapshotId =
+          "other-snapshot";
+      },
+    },
+    {
+      name: "gate not linked to the analysis snapshot revision",
+      mutate(value) {
+        value.storyAnalysis.gates[0].beforeRestart.snapshotRevision = 5;
+        value.storyAnalysis.gates[0].afterRestart.snapshotRevision = 5;
+      },
+    },
+    {
+      name: "gate not linked to the analysis snapshot fingerprint",
+      mutate(value) {
+        value.storyAnalysis.gates[0].beforeRestart.snapshotFingerprint =
+          "f".repeat(64);
+        value.storyAnalysis.gates[0].afterRestart.snapshotFingerprint =
+          "f".repeat(64);
+      },
+    },
+    {
+      name: "gate decision record changed across restart",
+      mutate(value) {
+        value.storyAnalysis.gates[0].afterRestart
+          .decisionRecordFingerprint = "f".repeat(64);
+      },
+    },
   ];
   for (const malformed of malformedResults) {
     const value = structuredClone(validResult);
@@ -549,7 +1080,7 @@ test("accepts structured prelaunch failure while keeping the packaged gate incom
   await writeFile(
     fixture.resultPath,
     `${JSON.stringify({
-      schemaVersion: "3.0.0",
+      schemaVersion: "4.0.0",
       completedAt: COMPLETED_AT,
       status: "failed",
       failureStage: "prelaunch_inventory_1",
@@ -570,6 +1101,7 @@ test("accepts structured prelaunch failure while keeping the packaged gate incom
         captured: false,
       },
       importReview: null,
+      storyAnalysis: null,
       launches: [],
     })}\n`,
     "utf8",
@@ -628,7 +1160,7 @@ test("accepts structured prelaunch failure while keeping the packaged gate incom
   assert.equal(manifest.testTimestamp, COMPLETED_AT);
 });
 
-test("validates exact failed progress and rejects contradictory v3 evidence", async (t) => {
+test("validates exact failed progress and rejects contradictory v4 evidence", async (t) => {
   const fixture = await createFixture(t);
   const firstLaunch = launchEvidence(1, 4100, 4101);
   const secondLaunch = launchEvidence(2, 4200, 4201);
@@ -937,9 +1469,25 @@ async function createFixture(t) {
       "ascii",
     ),
     writeFile(
+      path.join(syntheticFixtureDirectory, "sample-story.txt"),
+      SYNTHETIC_FIXTURES.txt,
+    ),
+    writeFile(
+      path.join(syntheticFixtureDirectory, "sample-story.md"),
+      SYNTHETIC_MARKDOWN_BYTES,
+    ),
+    writeFile(
+      path.join(
+        syntheticFixtureDirectory,
+        "sample-story.expected.json",
+      ),
+      `${JSON.stringify(SYNTHETIC_EXPECTATIONS, null, 2)}\n`,
+      "utf8",
+    ),
+    writeFile(
       resultPath,
       `${JSON.stringify({
-        schemaVersion: "3.0.0",
+        schemaVersion: "4.0.0",
         completedAt: COMPLETED_AT,
         status: "passed",
         failureStage: null,
@@ -960,6 +1508,7 @@ async function createFixture(t) {
           captured: true,
         },
         importReview: IMPORT_REVIEW,
+        storyAnalysis: storyAnalysisEvidence(),
         launches: [
           launchEvidence(1, 4100, 4101),
           launchEvidence(2, 4200, 4201),
@@ -1002,6 +1551,43 @@ function generationOptions(fixture, stepOutcome) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function collectExactStoryText(value, excerpts = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectExactStoryText(item, excerpts);
+    }
+    return excerpts;
+  }
+  if (value === null || typeof value !== "object") {
+    return excerpts;
+  }
+  if (
+    Object.hasOwn(value, "exactText") &&
+    typeof value.exactText === "string"
+  ) {
+    excerpts.add(value.exactText);
+  }
+  for (const item of Object.values(value)) {
+    collectExactStoryText(item, excerpts);
+  }
+  return excerpts;
+}
+
+function objectContainsString(value, expected) {
+  if (typeof value === "string") {
+    return value.includes(expected);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => objectContainsString(item, expected));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some((item) =>
+      objectContainsString(item, expected),
+    );
+  }
+  return false;
 }
 
 function launchEvidence(launch, appPid, servicePid) {
@@ -1057,7 +1643,7 @@ function failedMachineResult({
   launches = [],
 } = {}) {
   return {
-    schemaVersion: "3.0.0",
+    schemaVersion: "4.0.0",
     completedAt: COMPLETED_AT,
     status: "failed",
     failureStage,
@@ -1079,6 +1665,7 @@ function failedMachineResult({
       captured: screenshotCaptured,
     },
     importReview: null,
+    storyAnalysis: null,
     launches,
   };
 }

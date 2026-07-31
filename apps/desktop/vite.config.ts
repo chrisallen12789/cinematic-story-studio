@@ -10,7 +10,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@shared": fileURLToPath(new URL("./src/shared", import.meta.url)),
-      "@renderer": fileURLToPath(new URL("./src/renderer", import.meta.url))
+      "@renderer": fileURLToPath(new URL("./src/renderer", import.meta.url)),
+      "@cinematic-story-studio/contracts": fileURLToPath(
+        new URL("../../packages/contracts/src/index.ts", import.meta.url)
+      )
     }
   },
   build: {

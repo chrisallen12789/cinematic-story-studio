@@ -57,6 +57,65 @@ network fetch, cloud credential, downloaded model, or OCR engine.
 | VS-107 | Build on GitHub Windows and run the committed packaged persistence test against the exact unpacked executable. | The synthetic DOCX is imported, reviewed, approved, analyzed, corrected, closed, reopened, and restored; source/extraction/approval/analysis/correction persist; owned Electron/service PIDs are identified by ancestry and creation identity and are gone after both shutdowns. | Playwright/CI Windows |
 | VS-108 | Generate build evidence after the exact CI build. | Schema-v2 manifest records tested SHA, runner/time, app/staged/embedded hashes, parser pins, exact canonical parser-profile fingerprint, separately named source/preview boundary limits, DOCX fixture hash, packaged Import Review result, and owned-process exit proof; staged and embedded services match. | Tooling/CI Windows |
 
+## Phase 2 whole-book intelligence extension
+
+Phase 0 and Phase 1 cases remain regression gates. Phase 2 uses only the
+repository-owned compact story and deterministic generated scale fixture.
+Cloud/model/network analysis remains disabled.
+
+| ID | Required executable behavior | Primary level |
+| --- | --- | --- |
+| VS-201 | Analysis creation succeeds only for the current approved extraction. | Pytest/API |
+| VS-202 | A stale, rejected, wrong-revision, or fingerprint-mismatched approval is rejected without a run. | Pytest/API |
+| VS-203 | Run creation persists exact source/extraction/review/profile/agent lineage and is idempotent. | Pytest/API |
+| VS-204 | Python, TypeScript/tooling, and evidence agree on the canonical profile fingerprint. | Pytest/Node |
+| VS-205 | Same inputs/profile/agent versions/corrections reproduce stable IDs, ordering, and content fingerprints. | Pytest |
+| VS-206 | Explicit chapter/section/scene markers create evidence-backed bounded structure. | Pytest |
+| VS-207 | Human add/remove/move/relabel structure corrections become effective without editing machine rows. | Pytest/API |
+| VS-208 | At least six fixture characters are extracted with stable IDs and evidence. | Pytest |
+| VS-209 | Alias and honorific claims retain evidence, confidence, warnings, and time/range scope. | Pytest |
+| VS-210 | Human character merge is append-only, protected, and preserved on rerun. | Pytest/API |
+| VS-211 | Human character split preserves prior machine identity/mention history. | Pytest/API |
+| VS-212 | Named and ambiguous mentions can be resolved or left explicitly unresolved. | Pytest/API |
+| VS-213 | Duplicate display names remain distinct unless evidence or a human merge connects them. | Pytest |
+| VS-214 | Dialogue and narration slices equal exact approved canonical text at their recorded offsets. | Pytest |
+| VS-215 | Explicit speech tags create documented high-support attribution candidates. | Pytest |
+| VS-216 | Ambiguous dialogue retains bounded candidates and a nullable/unknown effective speaker. | Pytest/UI |
+| VS-217 | Turn-taking uses a bounded documented window and never forces complete coverage. | Pytest |
+| VS-218 | Existing and new human speaker corrections remain effective over later automation. | Pytest/API |
+| VS-219 | POV modes/shifts are evidence-backed and unknown/mixed states are representable. | Pytest |
+| VS-220 | Human POV correction and lock survive restart/rerun. | Pytest/API |
+| VS-221 | Stable location entities and scene assignments require textual evidence. | Pytest |
+| VS-222 | Location aliases remain scoped and identical labels are not automatically merged. | Pytest |
+| VS-223 | Narrative sequence and story-world sequence are stored independently. | Pytest |
+| VS-224 | Flashback/flash-forward evidence creates temporal constraints rather than invented dates. | Pytest |
+| VS-225 | Unknown or contradictory temporal order remains explicit and reviewable. | Pytest/UI |
+| VS-226 | Relationship edges require evidence, direction, type, and confidence. | Pytest |
+| VS-227 | Relationship change over time creates versioned/scoped evidence rather than overwriting an edge. | Pytest |
+| VS-228 | Emotional and dramatic-intent proposals separate interpretation from evidence. | Pytest/UI |
+| VS-229 | The intentional fixture anomaly produces an evidence-backed continuity finding. | Pytest |
+| VS-230 | Human continuity dispositions are append-only and persist across rerun/restart. | Pytest/API |
+| VS-231 | Every applicable correction survives a compatible deterministic rerun. | Pytest |
+| VS-232 | Four Phase 2 gate projections begin pending for each new snapshot. | Pytest/API |
+| VS-233 | Changed evidence invalidates only approvals whose canonical evidence set changed. | Pytest |
+| VS-234 | Unrelated current evidence retains its matching approval decision. | Pytest |
+| VS-235 | Cancellation at bounded analysis stages publishes no replacement snapshot. | Pytest |
+| VS-236 | Explicit retry preserves the failed attempt and can publish one valid snapshot. | Pytest |
+| VS-237 | Restart marks abandoned work interrupted and resumes only from a compatible checkpoint. | Pytest |
+| VS-238 | A genuine frozen schema-v2 database migrates atomically to exact schema v3 with preserved Phase 0/1 history. | Pytest/migration |
+| VS-239 | Backup/migration failure leaves v2 usable and retains the verified v2 backup. | Pytest/migration |
+| VS-240 | Every Phase 2 route rejects absent/wrong launch authentication and preserves project isolation. | Pytest/security |
+| VS-241 | Collection pages default to 50, cap at 200, bind cursors to query/revision, bound excerpts, and never return the full manuscript. | Pytest/API |
+| VS-242 | Main and preload reject unknown, oversized, stale, and cross-project Phase 2 IPC payloads. | Vitest |
+| VS-243 | React Analysis workspace exposes all required paginated review views, confidence/warnings, corrections, and gates. | Vitest |
+| VS-244 | Development Electron E2E completes and restores the Phase 2 review/correction/gate flow. | Playwright Windows |
+| VS-245 | Exact CI artifact packaged E2E completes and restores the same Phase 2 flow. | Playwright/CI Windows |
+| VS-246 | Both packaged launches establish exact Electron/service ownership and leave no forced or remaining PID. | Playwright/CI Windows |
+| VS-247 | Tracked/staged policy scans reject private content, generated databases, manifests, binaries, paths, and logs. | Node/CI |
+| VS-248 | Checksum-pinned Gitleaks reports no history finding. | CI Security |
+| VS-249 | Deterministic generated 100,000-word analysis verifies bounded pages, the controlling collection index, cancellation/intermediate restart, stable IDs, non-quadratic candidate paths, and peak RSS below the 320 MiB test ceiling. | Pytest/scale |
+| VS-250 | Every Phase 0 and Phase 1 suite, development E2E, build, and exact packaged gate remains successful. | Full CI |
+
 ## Concrete service contract
 
 All routes are under `/api/v1`, require `Authorization: Bearer <launch-token>`,

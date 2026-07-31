@@ -92,6 +92,14 @@ Provider errors map to stable categories such as `unauthorized`, `rate_limited`,
 - **Bundled local speech runtime:** future production adapter with the same speech contract; models are installed/verified through an explicit managed flow, not downloaded in tests.
 - **Cloud speech/analysis adapters:** optional future implementations with disclosure, credentials, cost, and provenance.
 
+Phase 2 whole-book story intelligence uses only the deterministic local
+runtime-agent implementations. Provider-neutral analysis capability interfaces
+remain architectural extension points, but no cloud adapter, local model
+download, credential flow, network destination, or semantic-provider fallback
+is enabled by the Phase 2 composition root. A future implementation must
+preserve the exact approved-input, evidence, confidence, correction, gate,
+privacy, and provenance contracts and requires separate executable evidence.
+
 FFmpeg is a managed application tool behind `AudioToolchain`, not a creative provider, but uses the same typed health/result/error discipline.
 
 ## Adapter verification

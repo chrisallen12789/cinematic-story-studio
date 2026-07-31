@@ -1,1 +1,1 @@
-"""Deterministic local-service acceptance tests."""
+"""Local-service test package."""

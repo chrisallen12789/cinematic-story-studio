@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   createAdversarialFixture,
+  createSyntheticScaleStory,
   createSyntheticFixtures,
+  createSyntheticStoryExpectations,
   decodeBase64Fixture,
   fixtureEvidence,
 } from "../../fixtures/synthetic-story/generate-fixtures.mjs";
@@ -25,34 +27,76 @@ const fixturePath = path.join(
 );
 const syntheticFixtureDirectory = path.dirname(fixturePath);
 
-test("canonical story fixture satisfies the public Phase 0 contract", async () => {
+test("canonical story fixture satisfies the public Phase 2 story-intelligence contract", async () => {
   const bytes = await readFile(fixturePath);
   const text = bytes.toString("utf8");
 
   assert.equal(bytes[0], "#".charCodeAt(0), "fixture must not contain a byte-order mark");
-  assert.ok(bytes.length < 8 * 1024, "fixture must stay small enough for source review");
-  assert.ok((text.match(/^# Chapter /gm) ?? []).length >= 2);
-  assert.ok((text.match(/^## Scene /gm) ?? []).length >= 2);
-  assert.match(text, /^---$/m);
-  assert.match(text, /\bMira\b/);
-  assert.match(text, /\bTovin\b/);
-  assert.ok((text.match(/"/g) ?? []).length >= 8, "fixture needs at least four quoted lines");
+  assert.ok(bytes.length < 16 * 1024, "fixture must stay small enough for source review");
+  assert.equal((text.match(/^# Chapter /gmu) ?? []).length, 3);
+  assert.equal((text.match(/^## Scene /gmu) ?? []).length, 6);
+  assert.equal((text.match(/^---$/gmu) ?? []).length, 5);
+  for (const name of [
+    "Mira",
+    "Tovin",
+    "Jun",
+    "Nessa",
+    "Ilya",
+    "Orin",
+    "Elian",
+    "Sana",
+  ]) {
+    assert.match(text, new RegExp(`\\b${name}\\b`, "u"), name);
+  }
+  assert.match(text, /Captain Mira Vale/u);
+  assert.match(text, /Captain Nessa\s+Quill/u);
+  assert.match(text, /Archivist Quill/u);
+  assert.match(text, /Inspector Ilya Maren/u);
+  assert.match(text, /Keeper\s+Orin Dax/u);
+  assert.match(text, /Dr\. Elian Sorell and Dr\. Sana Vey/u);
+  assert.ok((text.match(/"/gu) ?? []).length >= 20);
   assert.match(text, /"The northern marker is awake again," Tovin said\./);
   assert.match(
     text,
-    /"We can still turn back\."(?:\r?\n){2}Neither traveler claimed/,
+    /"We can still turn back\."(?:\r?\n){2}No one claimed/,
   );
-  assert.match(text, /Neither traveler claimed the warning/);
+  assert.match(text, /Neither captain moved/u);
+  assert.match(text, /Both doctors reached for it\. The speaker remained unresolved\./u);
+  assert.match(text, /"KEEP THE LANTERN LIT\." The words were an instruction, not\s+a voice/u);
+  assert.match(text, /Six years earlier/u);
+  assert.match(text, /Back in the present, two hours before dawn/u);
+  assert.match(text, /Three minutes later/u);
+  assert.match(text, /Their strained partnership became\s+open distrust/u);
+  assert.match(text, /Their distrust eased into a cautious alliance/u);
+  assert.match(text, /anger gave way to\s+grief/u);
+  assert.match(text, /Her grief became resolve/u);
+  assert.match(text, /glass shattered on the stone/u);
+  assert.match(text, /brass lantern hung unbroken from the tower hook/u);
 
   const digest = createHash("sha256").update(bytes).digest("hex");
   assert.match(digest, /^[a-f0-9]{64}$/);
   assert.equal(Buffer.from(text, "utf8").compare(bytes), 0);
 });
 
-test("Phase 1 source fixtures regenerate byte-for-byte from public text", async () => {
+test("Phase 2 source fixtures and expected offsets regenerate byte-for-byte", async () => {
   const first = await createSyntheticFixtures();
   const second = await createSyntheticFixtures();
   assert.deepEqual(second, first);
+  const firstExpectations = await createSyntheticStoryExpectations();
+  const secondExpectations = await createSyntheticStoryExpectations();
+  assert.deepEqual(secondExpectations, firstExpectations);
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        path.join(
+          syntheticFixtureDirectory,
+          "sample-story.expected.json",
+        ),
+        "utf8",
+      ),
+    ),
+    firstExpectations,
+  );
 
   const committed = await Promise.all(
     ["docx", "epub", "pdf"].map(async (format) =>
@@ -81,6 +125,63 @@ test("Phase 1 source fixtures regenerate byte-for-byte from public text", async 
     assert.ok(bytes.length < 32 * 1024);
     assert.match(fixtureEvidence(bytes).sha256, /^[a-f0-9]{64}$/u);
   }
+
+  assert.deepEqual(firstExpectations.expectedCounts, {
+    chapters: 3,
+    scenes: 6,
+    namedCharacters: 10,
+    locations: 6,
+    dialogueLines: 10,
+    ambiguousDialogueLines: 4,
+    povShifts: 1,
+    continuityAnomalies: 1,
+  });
+  assert.equal(
+    firstExpectations.canonicalText.sha256,
+    fixtureEvidence(first.txt).sha256,
+  );
+  for (const format of ["docx", "epub", "pdf"]) {
+    assert.deepEqual(
+      firstExpectations.binaryFixtures[format],
+      {
+        encodedFileName: `sample-story.${format}.base64`,
+        decodedFileName: `sample-story.${format}`,
+        ...fixtureEvidence(first[format]),
+      },
+    );
+  }
+
+  const canonicalText = first.txt.toString("utf8");
+  const expectedSpans = collectExpectedSpans(firstExpectations);
+  assert.ok(expectedSpans.length >= 40);
+  assert.equal(
+    new Set(expectedSpans.map((span) => span.spanId)).size,
+    expectedSpans.length,
+    "expected span identifiers must be unique",
+  );
+  for (const span of expectedSpans) {
+    assertExpectedSpan(canonicalText, span);
+  }
+});
+
+test("scale story is generated at test time and exercises whole-book bounds", () => {
+  const first = createSyntheticScaleStory();
+  const second = createSyntheticScaleStory();
+
+  assert.deepEqual(second, first);
+  assert.ok(first.evidence.wordCount >= 100_000);
+  assert.ok(first.evidence.sceneCount >= 400);
+  assert.ok(first.evidence.dialogueLineCount >= 2_000);
+  assert.ok(first.evidence.namedMentionCount >= 800);
+  assert.ok(first.evidence.chapterCount >= 20);
+  assert.ok(first.evidence.byteLength < 5 * 1024 * 1024);
+  assert.equal(Buffer.byteLength(first.text, "utf8"), first.evidence.byteLength);
+  assert.equal(
+    createHash("sha256").update(first.text, "utf8").digest("hex"),
+    first.evidence.sha256,
+  );
+  assert.match(first.text, /^Chapter 1: Deterministic Scale/mu);
+  assert.match(first.text, /Scene 400: Generated Boundary/u);
 });
 
 test("synthetic adversarial packages stay compact and deterministic", () => {
@@ -173,4 +274,44 @@ function centralZipEntries(bytes) {
       nameStart + nameLength + extraLength + commentLength;
   }
   return entries;
+}
+
+function collectExpectedSpans(value, spans = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectExpectedSpans(item, spans);
+    }
+    return spans;
+  }
+  if (value !== null && typeof value === "object") {
+    if (
+      typeof value.spanId === "string" &&
+      Number.isSafeInteger(value.startOffset) &&
+      Number.isSafeInteger(value.endOffset) &&
+      typeof value.textSha256 === "string"
+    ) {
+      spans.push(value);
+      return spans;
+    }
+    for (const item of Object.values(value)) {
+      collectExpectedSpans(item, spans);
+    }
+  }
+  return spans;
+}
+
+function assertExpectedSpan(text, span) {
+  assert.ok(span.startOffset >= 0, span.spanId);
+  assert.ok(span.endOffset > span.startOffset, span.spanId);
+  const exactText = [...text]
+    .slice(span.startOffset, span.endOffset)
+    .join("");
+  if (Object.hasOwn(span, "exactText")) {
+    assert.equal(exactText, span.exactText, span.spanId);
+  }
+  assert.equal(
+    createHash("sha256").update(exactText, "utf8").digest("hex"),
+    span.textSha256,
+    span.spanId,
+  );
 }

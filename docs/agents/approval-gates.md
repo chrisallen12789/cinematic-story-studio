@@ -27,6 +27,37 @@ correction.
 | Chapter approval | Complete chapter render, transitions, QC and continuity | First scene approved; chapter QC has no open blocker | Next chapter/final assembly | Chapter timeline, constituent scene, asset, model, mix, or QC status changes |
 | Final-master approval | Full master, manifest, chapter approvals, QC report and export profile | Every chapter approved; zero open blockers; output measured | User export | Any manifest input, chapter approval, export profile, or QC result changes |
 
+## Phase 2 analysis gates
+
+Phase 2 implements these exact post-import gate IDs:
+
+| Gate ID | Evidence | Unlocks in Phase 2 | Invalidation scope |
+| --- | --- | --- | --- |
+| `story_structure_review` | Current snapshot chapters, scenes, beats, narration spans, POV segments, ordering, evidence, confidence, and warnings | An independently reviewable structure decision and one prerequisite for Whole-Book Analysis Review | Affected chapter, scene, beat, narration, POV, or approved-input evidence changes |
+| `character_registry_review` | Current characters, aliases, honorifics, mentions, relationships, merge/split state, evidence, confidence, and warnings | An independently reviewable registry decision and one prerequisite for Whole-Book Analysis Review | Affected identity, alias, mention, relationship, or evidence changes |
+| `dialogue_attribution_review` | Every current verbatim line, bounded candidates, effective speaker/authority, confidence, evidence, and unresolved warnings | Effective attribution for later performance planning | Affected line, identity, attribution, correction, or evidence changes |
+| `whole_book_analysis_review` | Every current Phase 2 entity collection, warnings, and prerequisite gate identities | Marks current story intelligence review complete only after the other three current gates are approved; does not authorize Phase 2 audio/casting | Any enumerated whole-book evidence change |
+
+The earlier architecture names `scene_segmentation_review` and
+`character_review` describe the same product review concerns but are not
+separate auto-approved Phase 2 decisions. Persisted Phase 2 decisions use the
+exact IDs above.
+
+Each decision includes decision and gate IDs, project and analysis-run IDs,
+snapshot revision, evidence fingerprint, `local_user` human actor, acknowledged
+warning IDs, nonblank rationale, timestamp, provenance, and optional superseded
+decision. Supported values are `approved`, `rejected`, and
+`changes_requested`.
+
+The first three Phase 2 gates are independently reviewable. The service does
+not impose a structure-to-character-to-dialogue approval sequence. It does
+require all three current approvals before Whole-Book Analysis Review can be
+approved.
+
+The Import Review remains a separate Phase 1 prerequisite. The Phase 2
+analyzers cannot write any gate endpoint. A correction recomputes affected gate
+fingerprints only; an unrelated matching approval remains effective.
+
 “Invalidation” is derived when current evidence no longer matches an approval's
 fingerprint. The historical decision remains intact. Import or re-extraction
 creates a separate pending review for the new current evidence; it never edits
@@ -34,9 +65,9 @@ the old decision. No separate invalidation-event record is claimed in Phase 1.
 
 ## Decision workflow
 
-1. Freeze the candidate entity ids and revisions in a deterministic order.
-2. Hash their canonical serialization, relevant warnings, and configuration to
-   obtain the evidence fingerprint.
+1. Enumerate the candidate entity IDs and revisions in a deterministic order.
+2. Hash that canonical enumeration, relevant warnings, and configuration to
+   obtain the evidence fingerprint stored with the decision.
 3. Validate the candidate against the versioned schemas.
 4. Present source-linked evidence, warnings, provider/cloud disclosure, cost,
    and downstream impact to the reviewer.

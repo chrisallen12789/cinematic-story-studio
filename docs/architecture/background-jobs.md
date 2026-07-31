@@ -127,3 +127,16 @@ publishes an extraction plus pending Import Review atomically; analysis remains
 blocked until that exact extraction is approved. Future job types include
 provider synthesis, scene render, chapter render, master render, cache
 verification, and quality-control analysis.
+
+Phase 2 adds the persisted `analyze_whole_book` job alongside the Phase 0/1
+`analyze_story` job. The whole-book pipeline is specified in
+[whole-book-story-intelligence.md](whole-book-story-intelligence.md). Its input
+freezes the exact approved extraction, Import Review decision, analysis
+profile/fingerprint, protected-correction set, and agent versions. Stage
+progress and output fingerprints are durable. Version 1 stores a resumable
+structure artifact and a separately verified complete pre-publication result
+checkpoint; other later stages rerun from the last compatible artifact. No
+per-entity or per-later-agent partial resume is claimed. Only the final
+validated synthesis transaction may publish a reviewable snapshot; failure,
+cancellation, interruption, or stale input leaves the prior effective snapshot
+unchanged.

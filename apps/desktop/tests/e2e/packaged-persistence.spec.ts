@@ -33,8 +33,16 @@ import {
   type MachineLaunchEvidence,
   type PackagedFailureCode,
   type PackagedFailureStage,
-  type PackagedImportReviewEvidence
+  type PackagedImportReviewEvidence,
+  type PackagedStoryAnalysisEvidence
 } from "../../src/verification/packaged-e2e-evidence";
+import {
+  buildPackagedStoryAnalysisEvidence,
+  expectPhase2RestartPersistence,
+  readPhase2RuntimeSnapshot,
+  runPhase2GovernanceWorkflow,
+  type Phase2WorkflowEvidence
+} from "./phase2-story-analysis";
 import {
   adoptVerifiedProcessTree,
   appExecutableName,
@@ -65,6 +73,7 @@ const monotonicNow = () => performance.now();
 const correctionReason = "packaged fixture correction";
 const ownershipSampleIntervalMs = 100;
 const ownershipSampleDeadlineMs = 10_000;
+const gracefulApplicationShutdownTimeoutMs = 30_000;
 
 test.describe("packaged desktop verification", () => {
   test.skip(
@@ -102,6 +111,8 @@ test.describe("packaged desktop verification", () => {
     let currentStage: PackagedFailureStage = "isolation_setup";
     let screenshotCaptured = false;
     let importReviewEvidence: PackagedImportReviewEvidence | null = null;
+    let storyAnalysisEvidence: PackagedStoryAnalysisEvidence | null = null;
+    let phase2Workflow: Phase2WorkflowEvidence;
     const cleanupErrors: unknown[] = [];
     const launchEvidence: MachineLaunchEvidence[] = [];
     const begunLaunches = new Set<1 | 2>();
@@ -140,6 +151,7 @@ test.describe("packaged desktop verification", () => {
           captured: screenshotCaptured
         },
         importReview: importReviewEvidence,
+        storyAnalysis: storyAnalysisEvidence,
         launches: [...launchEvidence].sort(
           (left, right) => left.launch - right.launch
         )
@@ -386,6 +398,9 @@ test.describe("packaged desktop verification", () => {
       await expect(
         firstPage.getByText("Speaker correction saved as human provenance.")
       ).toBeVisible({ timeout: 20_000 });
+      await expect(
+        firstPage.getByText("Human correction").first()
+      ).toBeVisible({ timeout: 20_000 });
       const firstSnapshot = await readPersistedImportSnapshot(
         firstPage,
         correctionReason
@@ -413,6 +428,7 @@ test.describe("packaged desktop verification", () => {
         fieldPath: "/effectiveSpeakerId",
         targetEntityType: "DialogueLine"
       });
+      phase2Workflow = await runPhase2GovernanceWorkflow(firstPage);
 
       await checkpointStage("shutdown_1");
       await firstOwnershipSampler.stop();
@@ -529,6 +545,12 @@ test.describe("packaged desktop verification", () => {
       expect(restoredSnapshot.humanCorrection).toEqual(
         firstSnapshot.humanCorrection
       );
+      const restoredPhase2 = await readPhase2RuntimeSnapshot(secondPage);
+      storyAnalysisEvidence = buildPackagedStoryAnalysisEvidence(
+        phase2Workflow,
+        restoredPhase2
+      );
+      expectPhase2RestartPersistence(storyAnalysisEvidence);
       await secondPage
         .getByRole("navigation", { name: "Scenes" })
         .getByRole("button")
@@ -548,6 +570,20 @@ test.describe("packaged desktop verification", () => {
         extractionPersistedAfterRestart,
         analysisPersistedAfterRestart
       };
+      await secondPage
+        .getByRole("button", { name: "Analysis", exact: true })
+        .click();
+      await secondPage
+        .getByRole("button", { name: "Corrections", exact: true })
+        .click();
+      await expect(
+        secondPage.locator(".correction-history article")
+      ).toHaveCount(4);
+      await expect(
+        secondPage.locator(".analysis-gate header strong", {
+          hasText: "Approved"
+        })
+      ).toHaveCount(4);
       await checkpointStage("screenshot");
       await secondPage.screenshot({
         path: evidencePath,
@@ -968,7 +1004,9 @@ async function closeOwnedElectron(
         () => "closed" as const,
         () => "failed" as const
       ),
-      delay(15_000).then(() => "timeout" as const)
+      delay(gracefulApplicationShutdownTimeoutMs).then(
+        () => "timeout" as const
+      )
     ]);
     if (
       outcome !== "closed" &&

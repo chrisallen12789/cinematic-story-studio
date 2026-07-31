@@ -26,6 +26,7 @@ from .conftest import (
     SYNTHETIC_BYTES,
     SYNTHETIC_STORY,
     TOKEN,
+    collect_concurrent_database_results,
     create_analysis_job,
     create_imported_project,
     decide_import_review,
@@ -206,7 +207,7 @@ def test_all_supported_formats_archive_exact_bytes_then_require_import_review(
     assert detail["analysisAllowed"] is False
     assert detail["story"] is None
     if document_format == "pdf":
-        assert extraction["pageCount"] == 2
+        assert extraction["pageCount"] == 3
     with app.state.database.session() as session:
         row = session.get(DocumentExtractionRow, extraction["extractionId"])
         assert row is not None
@@ -500,10 +501,8 @@ def test_concurrent_same_content_import_never_deletes_referenced_bytes(
         return response.status_code, response.json()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = [
-            future.result(timeout=5)
-            for future in (pool.submit(submit, "race-a"), pool.submit(submit, "race-b"))
-        ]
+        futures = [pool.submit(submit, "race-a"), pool.submit(submit, "race-b")]
+        outcomes = collect_concurrent_database_results(futures)
     assert all(status == 202 for status, _body in outcomes)
     source_ids = {
         str(body["sourceDocument"]["documentId"])

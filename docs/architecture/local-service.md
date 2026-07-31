@@ -43,6 +43,14 @@ Every route below is rooted at `/api/v1` and authenticated. Writes use a transac
 | `POST /jobs/{jobId}/cancel` | Idempotently request cooperative cancellation. |
 | `POST /jobs/{jobId}/retry` | Start another attempt after a recoverable failure. |
 | `POST /jobs/{jobId}/resume` | Continue compatible interrupted/paused work from checkpoint. |
+| `POST /projects/{projectId}/analysis-runs` | Recheck exact approved extraction/profile preconditions and create an immutable Phase 2 run plus durable job idempotently. |
+| `GET /projects/{projectId}/analysis-runs` | Return a stable bounded page of run summaries. |
+| `GET /projects/{projectId}/analysis-runs/{runId}` | Return one run, snapshot/gate summary, profile, progress, warnings, and provenance without full manuscript text. |
+| `GET /projects/{projectId}/analysis-runs/{runId}/entities/{collection}` | Return a bounded, filtered page of one allow-listed typed analysis collection. |
+| `GET /projects/{projectId}/analysis-runs/{runId}/corrections` | Return a bounded correction-history page. |
+| `POST /projects/{projectId}/analysis-runs/{runId}/corrections` | Append one typed human correction with revision/fingerprint preconditions. |
+| `GET /projects/{projectId}/analysis-runs/{runId}/reviews` | Return the four current Phase 2 gate projections and decision history summaries. |
+| `POST /projects/{projectId}/analysis-runs/{runId}/reviews/{gateId}/decisions` | Append an idempotent human approve/reject/changes-requested decision for exact current evidence. |
 
 Deletion/cache cleanup and approval/render routes are added behind the same boundary when their product flows are implemented; they must not be improvised as filesystem access APIs.
 
@@ -63,6 +71,13 @@ Page<T>         { items[], nextCursor? }
 `ProjectDetail` composes project/source/story metadata, ordered chapters/scenes/story content items, characters, current dialogue attributions, casting assignments, approval summaries, and relevant job summaries. Large complete source or audio bytes use dedicated streaming endpoints when introduced, not this projection.
 
 Mutation models reject unknown fields. Names and reasons are Unicode-normalized only for validation/display metadata; source text is never normalized. Empty identifiers, non-finite numbers, invalid enum values, reversed/out-of-range spans, stale revisions, and cross-project references are rejected.
+
+Phase 2 collection pages default to 50 and reject a requested limit above 200.
+Evidence excerpts are derived only for authenticated project-scoped reads and
+are capped at 512 Unicode code points. A claim carries at most 16 evidence
+spans; a dialogue line carries at most eight speaker candidates. List
+endpoints never return the complete manuscript. See
+[analysis-performance-and-pagination.md](analysis-performance-and-pagination.md).
 
 ## Error model
 

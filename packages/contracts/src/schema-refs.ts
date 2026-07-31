@@ -43,7 +43,73 @@ export const SCHEMA_REFS = {
   RuntimeAgentDefinition:
     "https://schemas.cinematic-story-studio.dev/v1/runtime-agent-definition.schema.json",
   AgentExecutionEnvelope:
-    "https://schemas.cinematic-story-studio.dev/v1/agent-execution-envelope.schema.json"
+    "https://schemas.cinematic-story-studio.dev/v1/agent-execution-envelope.schema.json",
+  AnalysisProfile:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-profile.schema.json",
+  StoryAnalysisRun:
+    "https://schemas.cinematic-story-studio.dev/v2/story-analysis-run.schema.json",
+  AnalysisAgentExecution:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-agent-execution.schema.json",
+  AnalysisSnapshot:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-snapshot.schema.json",
+  StoryStructure:
+    "https://schemas.cinematic-story-studio.dev/v2/story-structure.schema.json",
+  AnalysisChapter:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-chapter.schema.json",
+  AnalysisScene:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-scene.schema.json",
+  AnalysisBeat:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-beat.schema.json",
+  CharacterIdentity:
+    "https://schemas.cinematic-story-studio.dev/v2/character-identity.schema.json",
+  CharacterAlias:
+    "https://schemas.cinematic-story-studio.dev/v2/character-alias.schema.json",
+  CharacterMention:
+    "https://schemas.cinematic-story-studio.dev/v2/character-mention.schema.json",
+  AnalysisDialogueLine:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-dialogue-line.schema.json",
+  DialogueAttributionCandidate:
+    "https://schemas.cinematic-story-studio.dev/v2/dialogue-attribution-candidate.schema.json",
+  EffectiveDialogueAttribution:
+    "https://schemas.cinematic-story-studio.dev/v2/effective-dialogue-attribution.schema.json",
+  NarrationSpan:
+    "https://schemas.cinematic-story-studio.dev/v2/narration-span.schema.json",
+  PovSegment:
+    "https://schemas.cinematic-story-studio.dev/v2/pov-segment.schema.json",
+  StoryLocation:
+    "https://schemas.cinematic-story-studio.dev/v2/story-location.schema.json",
+  TimelineEvent:
+    "https://schemas.cinematic-story-studio.dev/v2/timeline-event.schema.json",
+  TemporalConstraint:
+    "https://schemas.cinematic-story-studio.dev/v2/temporal-constraint.schema.json",
+  CharacterRelationship:
+    "https://schemas.cinematic-story-studio.dev/v2/character-relationship.schema.json",
+  EmotionalState:
+    "https://schemas.cinematic-story-studio.dev/v2/emotional-state.schema.json",
+  DramaticIntent:
+    "https://schemas.cinematic-story-studio.dev/v2/dramatic-intent.schema.json",
+  ContinuityFinding:
+    "https://schemas.cinematic-story-studio.dev/v2/continuity-finding.schema.json",
+  AnalysisEvidenceSpan:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-evidence-span.schema.json",
+  AnalysisConfidence:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-confidence.schema.json",
+  AnalysisWarning:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-warning.schema.json",
+  AnalysisProvenance:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-provenance.schema.json",
+  CreateAnalysisCorrectionRequest:
+    "https://schemas.cinematic-story-studio.dev/v2/create-analysis-correction-request.schema.json",
+  AnalysisCorrection:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-correction.schema.json",
+  AnalysisGateReview:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-gate-review.schema.json",
+  AnalysisGateDecision:
+    "https://schemas.cinematic-story-studio.dev/v2/analysis-gate-decision.schema.json",
+  Phase2BuildEvidenceManifest:
+    "https://schemas.cinematic-story-studio.dev/v2/phase-2-build-evidence-manifest.schema.json",
+  Phase2PackagedE2eResult:
+    "https://schemas.cinematic-story-studio.dev/v2/phase-2-packaged-e2e-result.schema.json"
 } as const;
 
 export type PublicSchemaName = keyof typeof SCHEMA_REFS;

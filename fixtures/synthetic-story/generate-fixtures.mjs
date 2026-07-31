@@ -6,6 +6,11 @@ import { deflateRawSync } from "node:zlib";
 
 const fixtureDirectory = path.dirname(fileURLToPath(import.meta.url));
 const canonicalTextPath = path.join(fixtureDirectory, "sample-story.txt");
+const markdownTextPath = path.join(fixtureDirectory, "sample-story.md");
+const expectedAnalysisPath = path.join(
+  fixtureDirectory,
+  "sample-story.expected.json",
+);
 const ZIP_VERSION = 20;
 const ZIP_UTF8_FLAG = 0x0800;
 const ZIP_STORE = 0;
@@ -21,6 +26,467 @@ export async function createSyntheticFixtures() {
     docx: createDocx(canonicalText),
     epub: createEpub(canonicalText),
     pdf: createTextPdf(canonicalText),
+  };
+}
+
+export async function createSyntheticStoryExpectations() {
+  const [canonicalTextValue, markdownBytes, fixtures] = await Promise.all([
+    readFile(canonicalTextPath, "utf8"),
+    readFile(markdownTextPath),
+    createSyntheticFixtures(),
+  ]);
+  const canonicalText = normalizeText(canonicalTextValue);
+  const markdownText = normalizeText(markdownBytes.toString("utf8"));
+  const chapters = sectionSpans(canonicalText, /^Chapter /u, /^Chapter /u);
+  const scenes = sectionSpans(
+    canonicalText,
+    /^Scene /u,
+    /^(?:Chapter |Scene )/u,
+  );
+  const characters = [
+    characterExpectation(
+      canonicalText,
+      "character-mira",
+      "Mira Vale",
+      ["Mira", "Captain Mira Vale", "Captain", "Captain Vale"],
+      "Captain Mira Vale",
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-tovin",
+      "Tovin Rook",
+      ["Tovin", "Mr. Rook", "Rook"],
+      "Tovin Rook",
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-jun",
+      "Jun Pell",
+      ["Jun", "Engineer Jun Pell", "Engineer Pell"],
+      "Engineer Jun Pell",
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-nessa",
+      "Nessa Quill",
+      ["Nessa", "Captain Nessa Quill", "Archivist Quill", "Captain"],
+      "Captain Nessa\nQuill",
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-ilya",
+      "Ilya Maren",
+      ["Ilya", "Inspector Ilya Maren", "Inspector Maren"],
+      "Inspector Ilya Maren",
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-orin",
+      "Orin Dax",
+      ["Orin", "Keeper Orin Dax", "Keeper Dax"],
+      "Keeper\nOrin Dax",
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-elian",
+      "Elian Sorell",
+      ["Elian", "Dr. Elian Sorell", "Dr. Sorell", "doctor"],
+      "Dr. Elian Sorell",
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-sana",
+      "Sana Vey",
+      ["Sana", "Dr. Sana Vey", "Doctor Vey", "doctor"],
+      "Dr. Sana Vey",
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-alex-west",
+      "Alex Reed",
+      ["Alex", "Reed"],
+      "Alex Reed",
+      1,
+    ),
+    characterExpectation(
+      canonicalText,
+      "character-alex-east",
+      "Alex Reed",
+      ["Alex", "Reed"],
+      "Alex Reed",
+      2,
+    ),
+  ];
+  const dialogueLines = [
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-northern-marker",
+      '"The northern marker is awake again,"',
+      ["character-tovin"],
+      "character-tovin",
+      false,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-remembered-us",
+      '"Then it remembered us before we remembered it."',
+      ["character-mira"],
+      "character-mira",
+      false,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-turn-back",
+      '"We can still turn back."',
+      ["character-mira", "character-tovin"],
+      null,
+      true,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-first-signal",
+      '"Only one of us remembers the first signal."',
+      ["character-mira", "character-nessa"],
+      null,
+      true,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-west-dial",
+      '"The west dial is clear,"',
+      ["character-alex-west", "character-alex-east"],
+      null,
+      true,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-hide-route",
+      '"Hide the route until Mira is ready,"',
+      ["character-nessa"],
+      "character-nessa",
+      false,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-apology",
+      '"I was wrong to call you a\nliar."',
+      ["character-mira"],
+      "character-mira",
+      false,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-right-to-ask",
+      '"You were right to ask,"',
+      ["character-tovin"],
+      "character-tovin",
+      false,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-red-valve",
+      '"Close the red valve,"',
+      ["character-elian", "character-sana"],
+      null,
+      true,
+    ),
+    dialogueExpectation(
+      canonicalText,
+      "dialogue-tomorrow",
+      '"Tomorrow, the northern line will carry passengers again,"',
+      ["character-mira"],
+      "character-mira",
+      false,
+    ),
+  ];
+  const quotedMaterial = exactSpan(
+    canonicalText,
+    "quoted-plaque-instruction",
+    '"KEEP THE LANTERN LIT."',
+  );
+  return {
+    schemaVersion: "2.0.0",
+    fixtureId: "phase-2-whole-book-intelligence",
+    offsetUnit: "unicode-code-point",
+    canonicalText: textFileEvidence(
+      "sample-story.txt",
+      Buffer.from(canonicalText, "utf8"),
+      canonicalText,
+    ),
+    markdown: textFileEvidence(
+      "sample-story.md",
+      Buffer.from(markdownText, "utf8"),
+      markdownText,
+    ),
+    binaryFixtures: Object.fromEntries(
+      ["docx", "epub", "pdf"].map((format) => [
+        format,
+        {
+          encodedFileName: `sample-story.${format}.base64`,
+          decodedFileName: `sample-story.${format}`,
+          ...fixtureEvidence(fixtures[format]),
+        },
+      ]),
+    ),
+    expectedCounts: {
+      chapters: 3,
+      scenes: 6,
+      namedCharacters: 10,
+      locations: 6,
+      dialogueLines: dialogueLines.length,
+      ambiguousDialogueLines: dialogueLines.filter(
+        (line) => line.requiresHumanReview,
+      ).length,
+      povShifts: 1,
+      continuityAnomalies: 1,
+    },
+    chapters,
+    scenes,
+    characters,
+    locations: [
+      locationExpectation(
+        canonicalText,
+        "location-relay-platform",
+        "Relay Platform",
+        "crossed the Relay Platform",
+      ),
+      locationExpectation(
+        canonicalText,
+        "location-clock-room",
+        "Clock Room",
+        "into the Clock Room",
+      ),
+      locationExpectation(
+        canonicalText,
+        "location-archive-vault",
+        "Archive Vault",
+        "into the Archive Vault beneath",
+      ),
+      locationExpectation(
+        canonicalText,
+        "location-north-signal-tower",
+        "North Signal Tower",
+        "climbed the North Signal\nTower",
+      ),
+      locationExpectation(
+        canonicalText,
+        "location-flooded-concourse",
+        "Flooded Concourse",
+        "At the Flooded Concourse",
+      ),
+      locationExpectation(
+        canonicalText,
+        "location-dawn-switchyard",
+        "Dawn Switchyard",
+        "in the Dawn Switchyard",
+      ),
+    ],
+    dialogueLines,
+    narrationDistinction: {
+      quotedMaterial: {
+        ...quotedMaterial,
+        expectedClassification: "quoted_material",
+      },
+      internalThought: {
+        ...exactSpan(
+          canonicalText,
+          "internal-thought-mira",
+          "Not again, Mira thought.",
+        ),
+        expectedClassification: "internal_thought",
+        viewpointCharacterId: "character-mira",
+      },
+    },
+    pointOfView: {
+      initial: {
+        ...exactSpan(
+          canonicalText,
+          "pov-mira",
+          "Mira wished Tovin would admit why the northern marker frightened him.",
+        ),
+        viewpointCharacterId: "character-mira",
+      },
+      shifted: {
+        ...exactSpan(
+          canonicalText,
+          "pov-tovin",
+          "For the first time that night, only he noticed how every bell matched his\nheartbeat.",
+        ),
+        viewpointCharacterId: "character-tovin",
+        expectedShiftKind: "scene_boundary",
+      },
+    },
+    timeline: {
+      flashback: {
+        ...exactSpan(
+          canonicalText,
+          "timeline-flashback",
+          "Six years earlier, Tovin had followed Nessa into the Archive Vault",
+        ),
+        expectedKind: "flashback",
+      },
+      returnToPresent: {
+        ...exactSpan(
+          canonicalText,
+          "timeline-present-return",
+          "Back in the present, two hours before dawn",
+        ),
+        expectedKind: "relative_time",
+      },
+      relativeTime: exactSpan(
+        canonicalText,
+        "timeline-three-minutes-later",
+        "Three minutes later",
+      ),
+    },
+    relationshipChanges: [
+      {
+        relationshipId: "relationship-mira-tovin",
+        sourceCharacterId: "character-mira",
+        targetCharacterId: "character-tovin",
+        before: exactSpan(
+          canonicalText,
+          "relationship-distrust",
+          "Their strained partnership became\nopen distrust.",
+        ),
+        after: exactSpan(
+          canonicalText,
+          "relationship-alliance",
+          "Their distrust eased into a cautious alliance.",
+        ),
+        expectedChange: "reversed",
+      },
+      {
+        relationshipId: "relationship-mira-nessa",
+        sourceCharacterId: "character-mira",
+        targetCharacterId: "character-nessa",
+        before: exactSpan(
+          canonicalText,
+          "relationship-old-rivalry",
+          "Nessa abandoned their old rivalry to help.",
+        ),
+        after: exactSpan(
+          canonicalText,
+          "relationship-trust",
+          "What began as rivalry ended as trust.",
+        ),
+        expectedChange: "reversed",
+      },
+    ],
+    emotionalProgression: {
+      characterId: "character-mira",
+      states: [
+        {
+          emotion: "anger",
+          evidence: exactSpan(
+            canonicalText,
+            "emotion-anger",
+            "anger carried Mira through the black water",
+          ),
+        },
+        {
+          emotion: "grief",
+          evidence: exactSpan(
+            canonicalText,
+            "emotion-grief",
+            "anger gave way to\ngrief",
+          ),
+        },
+        {
+          emotion: "resolve",
+          evidence: exactSpan(
+            canonicalText,
+            "emotion-resolve",
+            "Her grief became resolve",
+          ),
+        },
+      ],
+    },
+    continuityAnomaly: {
+      findingId: "continuity-broken-lantern",
+      expectedCategory: "unexplained_object_state_change",
+      priorState: exactSpan(
+        canonicalText,
+        "lantern-broken",
+        "The brass lantern slipped from Jun's hand. Its glass shattered on the stone.\nMira left the broken frame beside the backward clock.",
+      ),
+      conflictingState: exactSpan(
+        canonicalText,
+        "lantern-unbroken",
+        "The same brass lantern hung unbroken from the tower hook, its glass clean and\nits flame steady.",
+      ),
+    },
+  };
+}
+
+export function createSyntheticScaleStory({
+  chapterCount = 20,
+  scenesPerChapter = 20,
+  dialogueLinesPerScene = 5,
+  narrationWordsPerScene = 240,
+} = {}) {
+  if (
+    !Number.isSafeInteger(chapterCount) ||
+    !Number.isSafeInteger(scenesPerChapter) ||
+    !Number.isSafeInteger(dialogueLinesPerScene) ||
+    !Number.isSafeInteger(narrationWordsPerScene) ||
+    chapterCount < 1 ||
+    scenesPerChapter < 1 ||
+    dialogueLinesPerScene < 1 ||
+    narrationWordsPerScene < 1
+  ) {
+    throw new Error("Synthetic scale-story dimensions are invalid.");
+  }
+  const names = ["Mira", "Tovin", "Jun", "Nessa", "Ilya", "Orin", "Elian", "Sana"];
+  const vocabulary = [
+    "relay",
+    "signal",
+    "lantern",
+    "platform",
+    "archive",
+    "clock",
+    "tower",
+    "route",
+    ...names,
+  ];
+  const chunks = [];
+  let sceneOrdinal = 0;
+  for (let chapter = 1; chapter <= chapterCount; chapter += 1) {
+    chunks.push(`Chapter ${chapter}: Deterministic Scale`);
+    for (let scene = 1; scene <= scenesPerChapter; scene += 1) {
+      sceneOrdinal += 1;
+      chunks.push(`Scene ${sceneOrdinal}: Generated Boundary`);
+      const narration = Array.from(
+        { length: narrationWordsPerScene },
+        (_, index) => vocabulary[(sceneOrdinal + index) % vocabulary.length],
+      ).join(" ");
+      chunks.push(`${narration}.`);
+      for (let line = 0; line < dialogueLinesPerScene; line += 1) {
+        const speaker = names[(sceneOrdinal + line) % names.length];
+        chunks.push(
+          `"Synthetic dialogue ${sceneOrdinal}-${line + 1} keeps the relay deterministic," ${speaker} said.`,
+        );
+      }
+    }
+  }
+  const text = `${chunks.join("\n\n")}\n`;
+  const wordCount = (text.match(/\b[\p{L}\p{N}-]+\b/gu) ?? []).length;
+  return {
+    text,
+    evidence: {
+      chapterCount,
+      sceneCount: chapterCount * scenesPerChapter,
+      dialogueLineCount:
+        chapterCount * scenesPerChapter * dialogueLinesPerScene,
+      namedMentionCount: names.reduce(
+        (count, name) =>
+          count + (text.match(new RegExp(`\\b${name}\\b`, "gu")) ?? []).length,
+        0,
+      ),
+      wordCount,
+      byteLength: Buffer.byteLength(text, "utf8"),
+      sha256: createHash("sha256").update(text, "utf8").digest("hex"),
+    },
   };
 }
 
@@ -128,6 +594,155 @@ export function fixtureEvidence(bytes) {
   return {
     sizeBytes: bytes.length,
     sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+function textFileEvidence(fileName, bytes, text) {
+  return {
+    fileName,
+    byteLength: bytes.length,
+    codePointLength: [...text].length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+function characterExpectation(
+  text,
+  characterId,
+  canonicalName,
+  aliases,
+  firstMention,
+  occurrence,
+) {
+  return {
+    characterId,
+    canonicalName,
+    aliases,
+    firstMention: exactSpan(
+      text,
+      `${characterId}-first-mention`,
+      firstMention,
+      occurrence ?? 1,
+      occurrence !== undefined,
+    ),
+  };
+}
+
+function locationExpectation(text, locationId, canonicalName, firstMention) {
+  return {
+    locationId,
+    canonicalName,
+    firstMention: exactSpan(
+      text,
+      `${locationId}-first-mention`,
+      firstMention,
+    ),
+  };
+}
+
+function dialogueExpectation(
+  text,
+  dialogueLineId,
+  exactText,
+  candidateCharacterIds,
+  effectiveSpeakerId,
+  requiresHumanReview,
+) {
+  return {
+    dialogueLineId,
+    exactText: exactSpan(text, dialogueLineId, exactText),
+    distinction: "spoken_dialogue",
+    candidateCharacterIds,
+    effectiveSpeakerId,
+    requiresHumanReview,
+  };
+}
+
+function sectionSpans(text, startPattern, boundaryPattern) {
+  const headings = [
+    ...text.matchAll(/^(?:Chapter |Scene ).+$/gmu),
+  ].map((match) => ({
+    index: match.index,
+    title: match[0],
+  }));
+  const starts = headings.filter((heading) =>
+    startPattern.test(heading.title),
+  );
+  return starts.map((heading, ordinal) => {
+    const nextBoundary = headings.find(
+      (candidate) =>
+        candidate.index > heading.index &&
+        boundaryPattern.test(candidate.title),
+    );
+    const endIndex = nextBoundary?.index ?? text.length;
+    const sourceText = text.slice(heading.index, endIndex);
+    const completeSpan = spanFromUtf16Offsets(
+      text,
+      `${heading.title.startsWith("Chapter ") ? "chapter" : "scene"}-${ordinal + 1}`,
+      heading.index,
+      endIndex,
+      sourceText,
+    );
+    const { exactText: _exactText, ...span } = completeSpan;
+    return {
+      [`${heading.title.startsWith("Chapter ") ? "chapter" : "scene"}Id`]:
+        span.spanId,
+      ordinal,
+      title: heading.title,
+      span,
+    };
+  });
+}
+
+function exactSpan(
+  text,
+  spanId,
+  needle,
+  occurrence = 1,
+  allowAdditional = false,
+) {
+  if (
+    typeof needle !== "string" ||
+    needle.length === 0 ||
+    !Number.isSafeInteger(occurrence) ||
+    occurrence < 1
+  ) {
+    throw new Error(`Invalid expected span ${spanId}.`);
+  }
+  let startIndex = -1;
+  let searchIndex = 0;
+  for (let index = 0; index < occurrence; index += 1) {
+    startIndex = text.indexOf(needle, searchIndex);
+    if (startIndex < 0) {
+      throw new Error(`Missing expected synthetic-story span: ${spanId}.`);
+    }
+    searchIndex = startIndex + needle.length;
+  }
+  if (
+    text.indexOf(needle, searchIndex) >= 0 &&
+    occurrence === 1 &&
+    !allowAdditional
+  ) {
+    throw new Error(`Expected synthetic-story span is not unique: ${spanId}.`);
+  }
+  return spanFromUtf16Offsets(
+    text,
+    spanId,
+    startIndex,
+    startIndex + needle.length,
+    needle,
+  );
+}
+
+function spanFromUtf16Offsets(text, spanId, startIndex, endIndex, exactText) {
+  return {
+    spanId,
+    startOffset: [...text.slice(0, startIndex)].length,
+    endOffset: [...text.slice(0, endIndex)].length,
+    exactText,
+    textSha256: createHash("sha256")
+      .update(exactText, "utf8")
+      .digest("hex"),
   };
 }
 
@@ -505,8 +1120,31 @@ async function main() {
     ]);
     return;
   }
+  if (command === "--print-expectations" && argument === undefined) {
+    const expectations = await createSyntheticStoryExpectations();
+    process.stdout.write(`${JSON.stringify(expectations, null, 2)}\n`);
+    return;
+  }
+  if (command === "--write-committed" && argument === undefined) {
+    const expectations = await createSyntheticStoryExpectations();
+    await Promise.all([
+      ...["docx", "epub", "pdf"].map((format) =>
+        writeFile(
+          path.join(fixtureDirectory, `sample-story.${format}.base64`),
+          wrapBase64(fixtures[format]),
+          "ascii",
+        ),
+      ),
+      writeFile(
+        expectedAnalysisPath,
+        `${JSON.stringify(expectations, null, 2)}\n`,
+        "utf8",
+      ),
+    ]);
+    return;
+  }
   throw new Error(
-    "Usage: node generate-fixtures.mjs --print-base64 <docx|epub|pdf> | --write-directory <path>",
+    "Usage: node generate-fixtures.mjs --print-base64 <docx|epub|pdf> | --write-directory <path> | --print-expectations | --write-committed",
   );
 }
 

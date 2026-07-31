@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v2/analysis-agent-execution.schema.json",
+  "title": "AnalysisAgentExecution",
+  "$ref": "definitions.schema.json#/$defs/AnalysisAgentExecution"
+}

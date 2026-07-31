@@ -1,0 +1,20 @@
+# Audited synthetic idempotency keys used only by Phase 2 contract tests.
+#
+# Each suppression is an exact Gitleaks fingerprint so unrelated findings,
+# including findings elsewhere in these test files, continue to fail the scan.
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:673
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:689
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:767
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:1688
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:1957
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:2121
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:2140
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:2442
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_analysis_corrections_restart.py:generic-api-key:3174
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_phase2_api.py:generic-api-key:379
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_phase2_api.py:generic-api-key:420
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_phase2_scale.py:generic-api-key:817
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_phase2_structure_graph_regressions.py:generic-api-key:1671
+4a9a1679f8482c68e1af072491e153c09206d9ab:apps/local-service/tests/test_phase2_structure_graph_regressions.py:generic-api-key:1729
+97ed709c6d27bd536b4a1dc2b642b6b9a9a8d48d:apps/desktop/src/main/analysis-validation.test.ts:generic-api-key:201
+97ed709c6d27bd536b4a1dc2b642b6b9a9a8d48d:apps/desktop/src/main/analysis-validation.test.ts:generic-api-key:392

@@ -74,5 +74,11 @@ SQLite secure delete/VACUUM and file removal cannot guarantee forensic erasure o
 - Lock dependencies and justify additions. Generate an SBOM and preserve build provenance for distributable artifacts.
 - Production installers/executables require trusted code signing and signature verification before public distribution; signing secrets live only in protected CI.
 - Security tests cover auth/binding, renderer isolation/IPC validation, traversal/archive bombs, import limits, revision conflicts, safe subprocesses, redaction, credential persistence, project deletion, and corrupted artifacts/database recovery.
+- Phase 2 story-analysis tests additionally cover approved-input and
+  fingerprint enforcement, evidence-span bounds, cross-project references,
+  cursor/query binding, correction/approval conflicts, selective invalidation,
+  bounded scale behavior, and the prohibition on manuscript/evidence text in
+  logs, job events, and build evidence. See the
+  [story-analysis threat model](../security/story-analysis-threat-model.md).
 
 Report vulnerabilities privately as described in `SECURITY.md`; never include real credentials or manuscripts in a report.

@@ -40,6 +40,15 @@ const SYNTHETIC_MARKDOWN_BYTES = await readFile(
     import.meta.url,
   ),
 );
+const SYNTHETIC_VOICE_CATALOG_BYTES = await readFile(
+  new URL(
+    "../../apps/local-service/src/cinematic_story_service/catalogs/synthetic_voice_catalog.v1.json",
+    import.meta.url,
+  ),
+);
+const SYNTHETIC_VOICE_CATALOG = JSON.parse(
+  SYNTHETIC_VOICE_CATALOG_BYTES.toString("utf8"),
+);
 const SYNTHETIC_DOCX_BYTES = SYNTHETIC_FIXTURES.docx;
 const SYNTHETIC_DOCX_SHA256 = createHash("sha256")
   .update(SYNTHETIC_DOCX_BYTES)
@@ -53,7 +62,7 @@ const RUNNER = Object.freeze({
   environment: "github-hosted",
   runId: "30478862847",
   runAttempt: "2",
-  workflow: "Phase 2 Windows CI",
+  workflow: "Phase 3A Windows CI",
   job: "verify-and-build",
 });
 const PACKAGED_FIXTURE =
@@ -86,6 +95,43 @@ const PACKAGED_FLOW = Object.freeze([
   "verify_story_analysis_persistence",
   "close",
 ]);
+const PHASE_3_PACKAGED_FLOW = Object.freeze([
+  "create_project",
+  "import_synthetic_docx",
+  "wait_for_extraction",
+  "approve_import_review",
+  "complete_phase_2_analysis",
+  "verify_four_phase_2_approvals",
+  "open_casting_workspace",
+  "load_synthetic_voice_catalog",
+  "create_production_roles",
+  "run_casting_analysis",
+  "inspect_narrator_candidates",
+  "select_narrator_voice",
+  "lock_narrator_assignment",
+  "inspect_character_candidates",
+  "select_first_character_voice",
+  "lock_first_character_assignment",
+  "select_second_character_voice",
+  "lock_second_character_assignment",
+  "surface_metadata_differentiation_conflict",
+  "disposition_casting_conflict",
+  "surface_restricted_or_ineligible_rights",
+  "reject_ineligible_final_approval",
+  "approve_narrator_casting_review",
+  "approve_character_casting_review",
+  "approve_complete_cast_review",
+  "close_application",
+  "verify_first_shutdown_owned_process_exit",
+  "restart_same_application",
+  "restore_phase_0_through_phase_2_evidence",
+  "restore_phase_3a_casting_evidence",
+  "close_restarted_application",
+  "verify_final_owned_process_exit",
+]);
+const CASTING_PROFILE_ID = "governed-voice-casting-v1@1.0.0";
+const CASTING_PROFILE_FINGERPRINT =
+  "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6";
 const PROFILE_FINGERPRINT =
   "6ae73e83e89fbcfc0261ff339950407913cd990093fa13cdcc83ce3b1da810ec";
 const CORRECTION_REASON_FINGERPRINTS = Object.freeze({
@@ -313,6 +359,235 @@ function storyAnalysisEvidence() {
   };
 }
 
+function phase3Assertions() {
+  return {
+    phase2PrerequisitesCurrent: true,
+    castingProfilePinned: true,
+    catalogFingerprintVerified: true,
+    rolesCreated: true,
+    boundedCandidatesCreated: true,
+    metadataConflictProven: true,
+    rightsGovernanceProven: true,
+    humanAssignmentsLocked: true,
+    threeGateDecisionsPersisted: true,
+    restartPersistenceProven: true,
+    processOwnershipExitProven: true,
+  };
+}
+
+function phase3PackagedResult(screenshotBytes) {
+  return {
+    schemaVersion: "5.0.0",
+    contractVersion: "3.0.0",
+    result: "passed",
+    fixture: PACKAGED_FIXTURE,
+    flow: [...PHASE_3_PACKAGED_FLOW],
+    casting: {
+      profileId: CASTING_PROFILE_ID,
+      profileFingerprint: CASTING_PROFILE_FINGERPRINT,
+      catalogRevisionId:
+        SYNTHETIC_VOICE_CATALOG.catalogRevision.catalogRevisionId,
+      catalogFingerprint: SYNTHETIC_VOICE_CATALOG.fingerprint,
+      castingRunId: "casting-run-1",
+      approvedCastSnapshotId: "approved-cast-snapshot-1",
+      approvedCastSnapshotRevision: 1,
+      narratorAssignmentId: "assignment-narrator-1",
+      characterAssignmentIds: [
+        "assignment-character-1",
+        "assignment-character-2",
+      ],
+      narratorAssignment: {
+        assignmentId: "assignment-narrator-1",
+        roleId: "role-primary-narrator",
+        roleType: "primary_narrator",
+        ...syntheticCatalogAssignmentEvidence(
+          "synthetic-narrator-02",
+        ),
+        castingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
+        phase2SnapshotFingerprint: fingerprint("analysis-snapshot-4"),
+        effectiveCorrectionSetFingerprint: fingerprint(
+          "casting-corrections-narrator",
+        ),
+        authority: "human_locked",
+        revision: 3,
+        supersedesAssignmentId: "assignment-narrator-selection",
+      },
+      characterAssignments: [
+        {
+          assignmentId: "assignment-character-1",
+          roleId: "role-character-1",
+          roleType: "named_character",
+          ...syntheticCatalogAssignmentEvidence(
+            "synthetic-character-01",
+          ),
+          castingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
+          phase2SnapshotFingerprint: fingerprint(
+            "analysis-snapshot-4",
+          ),
+          effectiveCorrectionSetFingerprint: fingerprint(
+            "casting-corrections-character-1",
+          ),
+          authority: "human_locked",
+          revision: 3,
+          supersedesAssignmentId: "assignment-character-1-selection",
+        },
+        {
+          assignmentId: "assignment-character-2",
+          roleId: "role-character-2",
+          roleType: "named_character",
+          ...syntheticCatalogAssignmentEvidence(
+            "synthetic-character-02",
+          ),
+          castingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
+          phase2SnapshotFingerprint: fingerprint(
+            "analysis-snapshot-4",
+          ),
+          effectiveCorrectionSetFingerprint: fingerprint(
+            "casting-corrections-character-2",
+          ),
+          authority: "human_locked",
+          revision: 3,
+          supersedesAssignmentId: "assignment-character-2-selection",
+        },
+      ],
+      conflictId: "casting-conflict-1",
+      conflictDispositionCorrectionId: "casting-correction-7",
+      restrictedRightsWarningId: "rights-warning-1",
+      ineligibleApprovalRejected: true,
+      gateDecisionIds: {
+        narratorCastingReview: "casting-gate-decision-1",
+        characterCastingReview: "casting-gate-decision-2",
+        completeCastReview: "casting-gate-decision-3",
+      },
+      restartRestored: true,
+    },
+    screenshot: {
+      relativePath:
+        "apps/desktop/release/0.1.0/packaged-e2e.png",
+      byteSize: screenshotBytes.length,
+      sha256: sha256(screenshotBytes),
+      captureStatus: "success",
+    },
+    processOwnership: {
+      ownershipEstablished: true,
+      electronOwnedPids: [4100, 4200],
+      serviceOwnedPids: [4101, 4201],
+      launchShutdowns: [
+        {
+          launch: 1,
+          electron: {
+            launcherPid: 5100,
+            rootPid: 4100,
+            exitCode: 0,
+            forceKillUsed: false,
+          },
+          service: {
+            pid: 4101,
+            method: "stdin_eof",
+            exitCode: 0,
+            signalCode: null,
+            forceKillUsed: false,
+          },
+        },
+        {
+          launch: 2,
+          electron: {
+            launcherPid: 5200,
+            rootPid: 4200,
+            exitCode: 0,
+            forceKillUsed: false,
+          },
+          service: {
+            pid: 4201,
+            method: "stdin_eof",
+            exitCode: 0,
+            signalCode: null,
+            forceKillUsed: false,
+          },
+        },
+      ],
+      forcedPids: [],
+      remainingOwnedPids: [],
+      unrelatedProcessesTerminated: false,
+    },
+    assertions: phase3Assertions(),
+    completedAt: COMPLETED_AT,
+  };
+}
+
+function phase3VoiceCastingEvidence(packagedResult) {
+  const analysis = storyAnalysisEvidence();
+  return {
+    castingProfile: {
+      profileId: CASTING_PROFILE_ID,
+      fingerprint: CASTING_PROFILE_FINGERPRINT,
+      producerId: "voice-casting-orchestrator@1.0.0",
+    },
+    providers: SYNTHETIC_VOICE_CATALOG.providers.map((provider) => ({
+      descriptorId: provider.providerId,
+      version: provider.providerVersion,
+    })),
+    models: SYNTHETIC_VOICE_CATALOG.models.map((model) => ({
+      descriptorId: model.modelId,
+      version: model.modelVersion,
+    })),
+    catalogRevision: {
+      catalogRevisionId:
+        SYNTHETIC_VOICE_CATALOG.catalogRevision.catalogRevisionId,
+      revision: SYNTHETIC_VOICE_CATALOG.catalogRevision.revision,
+      fingerprint: SYNTHETIC_VOICE_CATALOG.fingerprint,
+    },
+    rightsPolicyId: "voice-rights-policy-v1",
+    phase2Evidence: {
+      analysisRunId: analysis.run.runId,
+      snapshotId: analysis.run.snapshotId,
+      snapshotRevision: analysis.run.snapshotRevision,
+      snapshotFingerprint: analysis.run.snapshotFingerprint,
+      correctionSetFingerprint: analysis.run.correctionSetFingerprint,
+      gateDecisionIds: analysis.gates.map(
+        (gate) => gate.afterRestart.decisionId,
+      ),
+    },
+    counts: {
+      productionRoles: 3,
+      narratorRoles: 1,
+      characterRoles: 2,
+      preReductionCandidates: 42,
+      finalCandidates: 30,
+      conflicts: 1,
+      assignments: 3,
+      corrections: 7,
+    },
+    castingRunId: packagedResult.casting.castingRunId,
+    approvedCastSnapshot: {
+      snapshotId:
+        packagedResult.casting.approvedCastSnapshotId,
+      revision:
+        packagedResult.casting.approvedCastSnapshotRevision,
+      fingerprint: sha256(Buffer.from("approved-cast-snapshot")),
+    },
+    assignments: {
+      narratorAssignmentId:
+        packagedResult.casting.narratorAssignmentId,
+      characterAssignmentIds:
+        packagedResult.casting.characterAssignmentIds,
+      narratorAssignment:
+        packagedResult.casting.narratorAssignment,
+      characterAssignments:
+        packagedResult.casting.characterAssignments,
+    },
+    rightsEligibility: "eligible_after_required_acknowledgements",
+    correctionPersistence: true,
+    conflictDispositionPersistence: true,
+    gateDecisions: Object.values(
+      packagedResult.casting.gateDecisionIds,
+    ),
+    restartPersistence: true,
+    packagedE2e: packagedResult,
+    assertions: packagedResult.assertions,
+  };
+}
+
 test("writes stable relative-path evidence for a successful packaged gate", async (t) => {
   const fixture = await createFixture(t);
   const options = generationOptions(fixture, "success");
@@ -323,7 +598,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   const secondBytes = await readFile(second.manifestPath, "utf8");
 
   assert.equal(secondBytes, firstBytes);
-  assert.equal(first.manifest.schemaVersion, "3.0.0");
+  assert.equal(first.manifest.schemaVersion, "4.0.0");
   assert.equal(first.manifest.artifactPathScope, "repository-root");
   assert.equal(first.manifest.workflowHeadSha, WORKFLOW_HEAD_SHA);
   assert.equal(first.manifest.testedCheckoutSha, WORKFLOW_HEAD_SHA);
@@ -524,6 +799,141 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
       },
     },
   ]);
+  assert.equal(
+    first.manifest.voiceCastingContract.castingProfile.profileId,
+    CASTING_PROFILE_ID,
+  );
+  assert.equal(
+    first.manifest.voiceCastingContract.castingProfile.fingerprint,
+    CASTING_PROFILE_FINGERPRINT,
+  );
+  assert.equal(
+    first.manifest.voiceCastingContract.packagedE2e.schemaVersion,
+    "5.0.0",
+  );
+  assert.deepEqual(
+    first.manifest.voiceCastingContract.packagedE2e.flow,
+    PHASE_3_PACKAGED_FLOW,
+  );
+  assert.deepEqual(
+    first.manifest.voiceCastingContract.packagedE2e.processOwnership
+      .launchShutdowns,
+    [
+      {
+        launch: 1,
+        electron: {
+          launcherPid: 5100,
+          rootPid: 4100,
+          exitCode: 0,
+          forceKillUsed: false,
+        },
+        service: {
+          pid: 4101,
+          method: "stdin_eof",
+          exitCode: 0,
+          signalCode: null,
+          forceKillUsed: false,
+        },
+      },
+      {
+        launch: 2,
+        electron: {
+          launcherPid: 5200,
+          rootPid: 4200,
+          exitCode: 0,
+          forceKillUsed: false,
+        },
+        service: {
+          pid: 4201,
+          method: "stdin_eof",
+          exitCode: 0,
+          signalCode: null,
+          forceKillUsed: false,
+        },
+      },
+    ],
+  );
+  assert.equal(
+    first.manifest.voiceCastingContract.catalogRevision.fingerprint,
+    SYNTHETIC_VOICE_CATALOG.fingerprint,
+  );
+  assert.deepEqual(
+    first.manifest.voiceCastingContract.counts,
+    {
+      productionRoles: 3,
+      narratorRoles: 1,
+      characterRoles: 2,
+      preReductionCandidates: 42,
+      finalCandidates: 30,
+      conflicts: 1,
+      assignments: 3,
+      corrections: 7,
+    },
+  );
+  assert.deepEqual(
+    first.manifest.voiceCastingContract.assignments,
+    {
+      narratorAssignmentId: "assignment-narrator-1",
+      characterAssignmentIds: [
+        "assignment-character-1",
+        "assignment-character-2",
+      ],
+      narratorAssignment: {
+        assignmentId: "assignment-narrator-1",
+        roleId: "role-primary-narrator",
+        roleType: "primary_narrator",
+        ...syntheticCatalogAssignmentEvidence(
+          "synthetic-narrator-02",
+        ),
+        castingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
+        phase2SnapshotFingerprint: fingerprint("analysis-snapshot-4"),
+        effectiveCorrectionSetFingerprint: fingerprint(
+          "casting-corrections-narrator",
+        ),
+        authority: "human_locked",
+        revision: 3,
+        supersedesAssignmentId: "assignment-narrator-selection",
+      },
+      characterAssignments: [
+        {
+          assignmentId: "assignment-character-1",
+          roleId: "role-character-1",
+          roleType: "named_character",
+          ...syntheticCatalogAssignmentEvidence(
+            "synthetic-character-01",
+          ),
+          castingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
+          phase2SnapshotFingerprint: fingerprint(
+            "analysis-snapshot-4",
+          ),
+          effectiveCorrectionSetFingerprint: fingerprint(
+            "casting-corrections-character-1",
+          ),
+          authority: "human_locked",
+          revision: 3,
+          supersedesAssignmentId: "assignment-character-1-selection",
+        },
+        {
+          assignmentId: "assignment-character-2",
+          roleId: "role-character-2",
+          roleType: "named_character",
+          ...syntheticCatalogAssignmentEvidence(
+            "synthetic-character-02",
+          ),
+          castingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
+          phase2SnapshotFingerprint: fingerprint(
+            "analysis-snapshot-4",
+          ),
+          effectiveCorrectionSetFingerprint: fingerprint(
+            "casting-corrections-character-2",
+          ),
+          authority: "human_locked",
+          revision: 3,
+          supersedesAssignmentId: "assignment-character-2-selection",
+        },
+      ],
+    },
+  );
   assert.equal(first.manifest.testTimestamp, COMPLETED_AT);
   assert.deepEqual(first.manifest.runner, RUNNER);
   assert.equal(firstBytes.endsWith("\n"), true);
@@ -548,6 +958,20 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     ),
     "utf8",
   );
+  const phase3DesktopEvidenceSource = await readFile(
+    new URL(
+      "../../apps/desktop/src/verification/phase3-packaged-e2e-evidence.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const packagedRunnerSource = await readFile(
+    new URL(
+      "../../apps/desktop/scripts/run-packaged-e2e.mjs",
+      import.meta.url,
+    ),
+    "utf8",
+  );
   const desktopFlowStart = desktopEvidenceSource.indexOf(
     "export const packagedFlow",
   );
@@ -564,6 +988,23 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
         .matchAll(/"([a-z][a-z0-9_]*)"/gu),
     ].map((match) => match[1]),
     PACKAGED_FLOW,
+  );
+  const phase3FlowStart = phase3DesktopEvidenceSource.indexOf(
+    "export const phase3PackagedFlow",
+  );
+  const phase3FlowEnd = phase3DesktopEvidenceSource.indexOf(
+    "] as const",
+    phase3FlowStart,
+  );
+  assert.notEqual(phase3FlowStart, -1);
+  assert.notEqual(phase3FlowEnd, -1);
+  assert.deepEqual(
+    [
+      ...phase3DesktopEvidenceSource
+        .slice(phase3FlowStart, phase3FlowEnd)
+        .matchAll(/"([a-z][a-z0-9_]*)"/gu),
+    ].map((match) => match[1]),
+    PHASE_3_PACKAGED_FLOW,
   );
   const workflowStep = (name) => {
     const marker = `      - name: ${name}`;
@@ -598,8 +1039,14 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     "CSS_PACKAGED_E2E_EXECUTABLE",
     "CSS_PACKAGED_E2E_EVIDENCE_PATH",
     "CSS_PACKAGED_E2E_RESULT_PATH",
+    "CSS_PHASE3_PACKAGED_E2E_RESULT_PATH",
+    "CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH",
   ]) {
     assert.match(workflow, new RegExp(environmentName, "u"));
+    assert.match(
+      packagedRunnerSource,
+      new RegExp(environmentName, "u"),
+    );
   }
   assert.match(
     workflow,
@@ -610,8 +1057,8 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     /win-unpacked\/Cinematic Story Studio\.exe/u,
   );
   assert.match(workflow, /node scripts\/ci\/build-evidence\.mjs/u);
-  assert.match(workflow, /name: Phase 2 Windows CI/u);
-  assert.match(workflow, /group: phase-2-windows-/u);
+  assert.match(workflow, /name: Phase 3A Windows CI/u);
+  assert.match(workflow, /group: phase-3a-windows-/u);
   assert.match(
     workflow,
     /--validate-manifest \$env:CSS_BUILD_EVIDENCE_MANIFEST_PATH/u,
@@ -624,20 +1071,50 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     "test_phase2_correction_scope_regressions.py",
     "test_phase2_structure_graph_regressions.py",
     "test_phase2_scale.py",
+    "test_database_v4_migration.py",
+    "test_phase3a_casting.py",
+    "test_phase3a_custom_roles.py",
+    "test_phase3a_assignment_invalidation.py",
+    "test_phase3a_governance.py",
+    "test_phase3a_jobs.py",
+    "test_phase3a_scale.py",
   ]) {
     assert.match(workflow, new RegExp(focusedTest, "u"));
   }
   assert.match(
     workflow,
-    /cinematic-story-studio-phase-2-windows-unpacked-/u,
+    /cinematic-story-studio-phase-3a-windows-unpacked-/u,
+  );
+  assert.match(
+    workflow,
+    /phase-3-packaged-e2e-result\.json/u,
+  );
+  assert.match(
+    workflow,
+    /phase-3-voice-casting-evidence\.json/u,
+  );
+  assert.match(workflow, /id: resolve_evidence/u);
+  assert.match(
+    workflow,
+    /"version=\$version".*\$env:GITHUB_OUTPUT/u,
   );
   assert.match(
     workflow,
     /github\.event\.pull_request\.head\.sha \|\| github\.sha/u,
   );
   assert.match(
-    workflowStep("Run development whole-book analysis Electron E2E"),
+    workflowStep("Run development governed voice-casting Electron E2E"),
     /CSS_E2E: "1"/u,
+  );
+  assert.match(
+    workflowStep("Run development governed voice-casting Electron E2E"),
+    /playwright test tests\/e2e\/persistence\.spec\.ts/u,
+  );
+  assert.match(
+    workflowStep(
+      "Run exact packaged governed voice-casting persistence E2E",
+    ),
+    /run test:e2e:packaged/u,
   );
   const printEvidenceStep = workflowStep(
     "Print sanitized build evidence",
@@ -648,17 +1125,17 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   );
   assert.doesNotMatch(
     printEvidenceStep,
-    /CSS_PACKAGED_E2E_RESULT_PATH/u,
+    /CSS_(?:PACKAGED_E2E_RESULT|PHASE3_PACKAGED_E2E_RESULT|PHASE3_VOICE_CASTING_EVIDENCE)_PATH/u,
     "raw packaged results must not be echoed into CI logs",
   );
   for (const [gateName, gateId, enforcementName] of [
     [
-      "Run development whole-book analysis Electron E2E",
+      "Run development governed voice-casting Electron E2E",
       "development_e2e",
       "Enforce development Electron E2E result",
     ],
     [
-      "Run exact packaged whole-book analysis persistence E2E",
+      "Run exact packaged governed voice-casting persistence E2E",
       "packaged_e2e",
       "Enforce packaged E2E result",
     ],
@@ -668,9 +1145,14 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
       "Enforce build-evidence generation",
     ],
     [
-      "Validate schema-v4 packaged result and Phase 2 build manifest",
+      "Validate schema-v5 Phase 3A result and schema-v4 build manifest",
       "manifest_validation",
       "Enforce build-evidence manifest validation",
+    ],
+    [
+      "Revalidate exact artifact bytes immediately before upload",
+      "artifact_revalidation",
+      "Enforce exact artifact revalidation",
     ],
   ]) {
     assert.match(
@@ -687,10 +1169,134 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   const uploadIndex = workflow.indexOf(
     "- name: Upload short-lived development artifact",
   );
+  const uploadStep = workflowStep(
+    "Upload short-lived development artifact",
+  );
+  for (const prerequisiteGate of [
+    "development_e2e",
+    "packaged_e2e",
+    "build_evidence",
+    "manifest_validation",
+    "tracked_scan",
+    "clean_check",
+    "artifact_revalidation",
+  ]) {
+    assert.match(
+      uploadStep,
+      new RegExp(
+        `steps\\.${prerequisiteGate}\\.outcome == 'success'`,
+        "u",
+      ),
+      `artifact upload must require successful ${prerequisiteGate}`,
+    );
+  }
+  assert.match(uploadStep, /retention-days: 7/u);
+  assert.match(uploadStep, /compression-level: 0/u);
+  assert.match(uploadStep, /if-no-files-found: error/u);
+  assert.match(
+    uploadStep,
+    /steps\.resolve_evidence\.outputs\.version/u,
+  );
+  assert.match(
+    uploadStep,
+    /win-unpacked\/\*\*/u,
+  );
+  assert.match(
+    uploadStep,
+    /apps\/desktop\/build-resources\/service\/cinematic-story-service\.exe/u,
+  );
+  assert.doesNotMatch(
+    uploadStep,
+    /release\/\*\/|build-resources\/service\/\*\*/u,
+    "success artifacts must not include unvalidated release versions or the whole staging tree",
+  );
+  const diagnosticsIndex = workflow.indexOf(
+    "- name: Upload failure diagnostics without application binaries",
+  );
+  const diagnosticsStep = workflowStep(
+    "Upload failure diagnostics without application binaries",
+  );
+  assert.equal(
+    diagnosticsIndex < uploadIndex,
+    true,
+    "failure diagnostics must be retained before the success-only artifact gate",
+  );
+  assert.match(
+    diagnosticsStep,
+    /always\(\) && !cancelled\(\)/u,
+  );
+  for (const failedGate of [
+    "development_e2e",
+    "packaged_e2e",
+    "build_evidence",
+    "manifest_validation",
+    "tracked_scan",
+    "clean_check",
+    "artifact_revalidation",
+  ]) {
+    assert.match(
+      diagnosticsStep,
+      new RegExp(
+        `steps\\.${failedGate}\\.outcome != 'success'`,
+        "u",
+      ),
+      `diagnostics upload must cover failed ${failedGate}`,
+    );
+  }
+  assert.match(
+    diagnosticsStep,
+    /phase-3a-ci-diagnostics-/u,
+  );
+  assert.match(
+    diagnosticsStep,
+    /apps\/desktop\/test-results\/\*\*/u,
+  );
+  assert.match(
+    diagnosticsStep,
+    /phase-3-packaged-e2e-result\.json/u,
+  );
+  assert.match(
+    diagnosticsStep,
+    /phase-3-voice-casting-evidence\.json/u,
+  );
+  assert.match(
+    diagnosticsStep,
+    /if-no-files-found: warn/u,
+  );
+  assert.match(diagnosticsStep, /retention-days: 7/u);
+  assert.match(
+    diagnosticsStep,
+    /steps\.resolve_evidence\.outputs\.version/u,
+  );
+  assert.doesNotMatch(
+    diagnosticsStep,
+    /release\/\*\//u,
+    "diagnostics must remain scoped to the validated application version",
+  );
+  assert.doesNotMatch(
+    diagnosticsStep,
+    /win-unpacked|build-resources\/service|\.exe\b|cinematic-story-service/u,
+    "failure diagnostics must exclude packaged application and service binaries",
+  );
+  const artifactRevalidationIndex = workflow.indexOf(
+    "- name: Revalidate exact artifact bytes immediately before upload",
+  );
+  assert.equal(
+    artifactRevalidationIndex >
+      workflow.indexOf("- name: Verify checks did not modify tracked files"),
+    true,
+    "artifact bytes must be revalidated after all post-build checks",
+  );
+  assert.equal(
+    artifactRevalidationIndex < diagnosticsIndex,
+    true,
+    "artifact byte revalidation must be the final read gate before upload",
+  );
   for (const enforcementName of [
     "Enforce packaged E2E result",
     "Enforce build-evidence generation",
     "Enforce build-evidence manifest validation",
+    "Enforce exact artifact revalidation",
     "Enforce development Electron E2E result",
   ]) {
     assert.equal(
@@ -718,11 +1324,11 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
         os: "Linux",
       },
     }),
-    /runner does not match the Phase 2 Windows CI job/u,
+    /runner does not match the Phase 3A Windows CI job/u,
   );
 });
 
-test("validates a complete Phase 2 manifest and rejects tampering", async (t) => {
+test("validates a complete Phase 3A manifest and rejects tampering", async (t) => {
   const fixture = await createFixture(t);
   const generated = await generateBuildEvidence(
     generationOptions(fixture, "success"),
@@ -734,7 +1340,7 @@ test("validates a complete Phase 2 manifest and rejects tampering", async (t) =>
   });
 
   assert.equal(validated.manifestPath, generated.manifestPath);
-  assert.equal(validated.manifest.schemaVersion, "3.0.0");
+  assert.equal(validated.manifest.schemaVersion, "4.0.0");
   assert.match(validated.manifestSha256, /^[a-f0-9]{64}$/u);
 
   const leakTamper = structuredClone(generated.manifest);
@@ -788,6 +1394,160 @@ test("validates a complete Phase 2 manifest and rejects tampering", async (t) =>
   );
 });
 
+test("rejects stale or contradictory Phase 3A packaged evidence", async (t) => {
+  const fixture = await createFixture(t);
+  const phase3Result = JSON.parse(
+    await readFile(fixture.phase3ResultPath, "utf8"),
+  );
+  phase3Result.processOwnership.serviceOwnedPids = [4101];
+  await writeFile(
+    fixture.phase3ResultPath,
+    `${JSON.stringify(phase3Result)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+
+  const nonzeroElectronExitResult = phase3PackagedResult(
+    Buffer.from("png-evidence", "utf8"),
+  );
+  nonzeroElectronExitResult.processOwnership.launchShutdowns[0].electron.exitCode =
+    1;
+  await writeFile(
+    fixture.phase3ResultPath,
+    `${JSON.stringify(nonzeroElectronExitResult)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+
+  const forcedShutdownResult = phase3PackagedResult(
+    Buffer.from("png-evidence", "utf8"),
+  );
+  forcedShutdownResult.processOwnership.launchShutdowns[0].service.method =
+    "force_kill";
+  forcedShutdownResult.processOwnership.launchShutdowns[0].service.forceKillUsed =
+    true;
+  await writeFile(
+    fixture.phase3ResultPath,
+    `${JSON.stringify(forcedShutdownResult)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+
+  const detachedServiceResult = phase3PackagedResult(
+    Buffer.from("png-evidence", "utf8"),
+  );
+  detachedServiceResult.processOwnership.launchShutdowns[0].service.pid =
+    4201;
+  await writeFile(
+    fixture.phase3ResultPath,
+    `${JSON.stringify(detachedServiceResult)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+
+  const invalidAssignmentResult = phase3PackagedResult(
+    Buffer.from("png-evidence", "utf8"),
+  );
+  invalidAssignmentResult.casting.narratorAssignment.roleType =
+    "named_character";
+  await writeFile(
+    fixture.phase3ResultPath,
+    `${JSON.stringify(invalidAssignmentResult)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+
+  const catalogDetachedAssignmentResult = phase3PackagedResult(
+    Buffer.from("png-evidence", "utf8"),
+  );
+  catalogDetachedAssignmentResult.casting.narratorAssignment.voiceEvidenceFingerprint =
+    "0".repeat(64);
+  await Promise.all([
+    writeFile(
+      fixture.phase3ResultPath,
+      `${JSON.stringify(catalogDetachedAssignmentResult)}\n`,
+      "utf8",
+    ),
+    writeFile(
+      fixture.phase3VoiceCastingEvidencePath,
+      `${JSON.stringify(
+        phase3VoiceCastingEvidence(catalogDetachedAssignmentResult),
+      )}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+
+  const repairedResult = phase3PackagedResult(
+    Buffer.from("png-evidence", "utf8"),
+  );
+  await writeFile(
+    fixture.phase3ResultPath,
+    `${JSON.stringify(repairedResult)}\n`,
+    "utf8",
+  );
+  const staleCastingEvidence = phase3VoiceCastingEvidence(
+    repairedResult,
+  );
+  staleCastingEvidence.assignments.characterAssignments[0].voiceProfileId =
+    "synthetic-character-03";
+  await writeFile(
+    fixture.phase3VoiceCastingEvidencePath,
+    `${JSON.stringify(staleCastingEvidence)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+
+  const staleCatalogEvidence = phase3VoiceCastingEvidence(
+    repairedResult,
+  );
+  staleCatalogEvidence.catalogRevision.fingerprint = "0".repeat(64);
+  await writeFile(
+    fixture.phase3VoiceCastingEvidencePath,
+    `${JSON.stringify(staleCatalogEvidence)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+
+  const unboundedCorrectionEvidence = phase3VoiceCastingEvidence(
+    repairedResult,
+  );
+  unboundedCorrectionEvidence.counts.corrections = 201;
+  await writeFile(
+    fixture.phase3VoiceCastingEvidencePath,
+    `${JSON.stringify(unboundedCorrectionEvidence)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /success without complete, valid machine evidence/u,
+  );
+});
+
 test("build evidence matches the canonical Python parser profile and fingerprint", async () => {
   const python = [
     "import json",
@@ -811,6 +1571,51 @@ test("build evidence matches the canonical Python parser profile and fingerprint
   });
 });
 
+test("build evidence matches Python voice and rights fingerprints", async () => {
+  const voiceProfileIds = [
+    "synthetic-narrator-02",
+    "synthetic-character-01",
+    "synthetic-character-02",
+  ];
+  const python = [
+    "import json",
+    "from cinematic_story_service.casting import load_synthetic_catalog",
+    "from cinematic_story_service.util import request_fingerprint",
+    `ids = ${JSON.stringify(voiceProfileIds)}`,
+    "catalog = load_synthetic_catalog()",
+    "voices = {value['voiceProfileId']: value for value in catalog.voices}",
+    "rights = {value['voiceProfileId']: value for value in catalog.rights}",
+    "result = {value: {'voiceEvidenceFingerprint': request_fingerprint(voices[value]), 'rightsEvidenceFingerprint': request_fingerprint(rights[value])} for value in ids}",
+    "print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(',', ':')))",
+  ].join("; ");
+  const result = await capture(servicePython, ["-c", python], {
+    cwd: repositoryRoot,
+    label: "Python voice-evidence fingerprint parity check",
+    maxBytes: 4096,
+    timeoutMs: 10_000,
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+  assert.deepEqual(
+    JSON.parse(result.stdout),
+    Object.fromEntries(
+      voiceProfileIds.map((voiceProfileId) => {
+        const evidence =
+          syntheticCatalogAssignmentEvidence(voiceProfileId);
+        return [
+          voiceProfileId,
+          {
+            voiceEvidenceFingerprint:
+              evidence.voiceEvidenceFingerprint,
+            rightsEvidenceFingerprint:
+              evidence.rightsEvidenceFingerprint,
+          },
+        ];
+      }),
+    ),
+  );
+});
+
 test("accepts an accumulated transient service descendant when identity and exit proof agree", async (t) => {
   const fixture = await createFixture(t);
   const value = JSON.parse(await readFile(fixture.resultPath, "utf8"));
@@ -825,6 +1630,24 @@ test("accepts an accumulated transient service descendant when identity and exit
   await writeFile(
     fixture.resultPath,
     `${JSON.stringify(value)}\n`,
+    "utf8",
+  );
+  const phase3Result = JSON.parse(
+    await readFile(fixture.phase3ResultPath, "utf8"),
+  );
+  phase3Result.processOwnership.serviceOwnedPids.splice(1, 0, 4102);
+  await writeFile(
+    fixture.phase3ResultPath,
+    `${JSON.stringify(phase3Result)}\n`,
+    "utf8",
+  );
+  const castingEvidence = JSON.parse(
+    await readFile(fixture.phase3VoiceCastingEvidencePath, "utf8"),
+  );
+  castingEvidence.packagedE2e = phase3Result;
+  await writeFile(
+    fixture.phase3VoiceCastingEvidencePath,
+    `${JSON.stringify(castingEvidence)}\n`,
     "utf8",
   );
 
@@ -1218,6 +2041,19 @@ test("validates exact failed progress and rejects contradictory v4 evidence", as
       }),
       ownershipExitProven: true,
     },
+    {
+      name: "evidence generation failed after cleanup and both ownership exits",
+      value: failedMachineResult({
+        failureStage: "evidence_generation",
+        failureCode: "EVIDENCE_GENERATION_FAILED",
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+        completedLaunches: [1, 2],
+        screenshotCaptured: true,
+        launches: [firstLaunch, secondLaunch],
+      }),
+      ownershipExitProven: true,
+    },
   ];
 
   for (const candidate of validFailures) {
@@ -1319,6 +2155,19 @@ test("validates exact failed progress and rejects contradictory v4 evidence", as
         launches: [firstLaunch, secondLaunch],
       }),
     },
+    {
+      name: "evidence generation claims incomplete cleanup",
+      value: failedMachineResult({
+        failureStage: "evidence_generation",
+        failureCode: "EVIDENCE_GENERATION_FAILED",
+        applicationLaunchBegan: true,
+        ownershipEstablished: true,
+        cleanupCompleted: false,
+        completedLaunches: [1, 2],
+        screenshotCaptured: true,
+        launches: [firstLaunch, secondLaunch],
+      }),
+    },
   ];
 
   for (const candidate of invalidFailures) {
@@ -1407,6 +2256,14 @@ async function createFixture(t) {
   );
   const screenshotPath = path.join(releaseRoot, "packaged-e2e.png");
   const resultPath = path.join(releaseRoot, "packaged-e2e-result.json");
+  const phase3ResultPath = path.join(
+    releaseRoot,
+    "phase-3-packaged-e2e-result.json",
+  );
+  const phase3VoiceCastingEvidencePath = path.join(
+    releaseRoot,
+    "phase-3-voice-casting-evidence.json",
+  );
   const manifestPath = path.join(releaseRoot, "build-evidence.json");
   const requirementsDirectory = path.join(
     root,
@@ -1418,8 +2275,18 @@ async function createFixture(t) {
     "fixtures",
     "synthetic-story",
   );
+  const syntheticVoiceCatalogDirectory = path.join(
+    root,
+    "apps",
+    "local-service",
+    "src",
+    "cinematic_story_service",
+    "catalogs",
+  );
   const appBytes = Buffer.from("desktop-application", "utf8");
   const serviceBytes = Buffer.from("packaged-service", "utf8");
+  const screenshotBytes = Buffer.from("png-evidence", "utf8");
+  const phase3Result = phase3PackagedResult(screenshotBytes);
 
   await Promise.all([
     mkdir(path.dirname(executablePath), { recursive: true }),
@@ -1428,6 +2295,7 @@ async function createFixture(t) {
     mkdir(path.dirname(screenshotPath), { recursive: true }),
     mkdir(requirementsDirectory, { recursive: true }),
     mkdir(syntheticFixtureDirectory, { recursive: true }),
+    mkdir(syntheticVoiceCatalogDirectory, { recursive: true }),
   ]);
   await Promise.all([
     writeFile(
@@ -1438,7 +2306,7 @@ async function createFixture(t) {
     writeFile(executablePath, appBytes),
     writeFile(stagedServicePath, serviceBytes),
     writeFile(embeddedServicePath, serviceBytes),
-    writeFile(screenshotPath, "png-evidence", "utf8"),
+    writeFile(screenshotPath, screenshotBytes),
     writeFile(
       path.join(requirementsDirectory, "requirements.in"),
       "lxml==6.1.1\npypdf==6.14.2\n",
@@ -1516,6 +2384,25 @@ async function createFixture(t) {
       })}\n`,
       "utf8",
     ),
+    writeFile(
+      phase3ResultPath,
+      `${JSON.stringify(phase3Result)}\n`,
+      "utf8",
+    ),
+    writeFile(
+      phase3VoiceCastingEvidencePath,
+      `${JSON.stringify(
+        phase3VoiceCastingEvidence(phase3Result),
+      )}\n`,
+      "utf8",
+    ),
+    writeFile(
+      path.join(
+        syntheticVoiceCatalogDirectory,
+        "synthetic_voice_catalog.v1.json",
+      ),
+      SYNTHETIC_VOICE_CATALOG_BYTES,
+    ),
   ]);
 
   return {
@@ -1527,6 +2414,8 @@ async function createFixture(t) {
     embeddedServicePath,
     screenshotPath,
     resultPath,
+    phase3ResultPath,
+    phase3VoiceCastingEvidencePath,
     manifestPath,
   };
 }
@@ -1543,6 +2432,9 @@ function generationOptions(fixture, stepOutcome) {
       executablePath: fixture.executablePath,
       screenshotPath: fixture.screenshotPath,
       resultPath: fixture.resultPath,
+      phase3ResultPath: fixture.phase3ResultPath,
+      phase3VoiceCastingEvidencePath:
+        fixture.phase3VoiceCastingEvidencePath,
       stepOutcome,
     },
     manifestPath: fixture.manifestPath,
@@ -1551,6 +2443,59 @@ function generationOptions(fixture, stepOutcome) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function fingerprint(value) {
+  return sha256(Buffer.from(value, "utf8"));
+}
+
+function syntheticCatalogAssignmentEvidence(voiceProfileId) {
+  const voice = SYNTHETIC_VOICE_CATALOG.voices.find(
+    (item) => item.voiceProfileId === voiceProfileId,
+  );
+  const rights = SYNTHETIC_VOICE_CATALOG.rights.find(
+    (item) => item.voiceProfileId === voiceProfileId,
+  );
+  assert.notEqual(voice, undefined);
+  assert.notEqual(rights, undefined);
+  return {
+    voiceProfileId,
+    voiceProfileVersion: voice.version,
+    voiceEvidenceFingerprint: sha256(
+      Buffer.from(
+        JSON.stringify(canonicalizeTestJson(voice)),
+        "utf8",
+      ),
+    ),
+    rightsRecordId: rights.rightsRecordId,
+    rightsRecordRevision: rights.revision,
+    rightsEvidenceFingerprint: sha256(
+      Buffer.from(
+        JSON.stringify(canonicalizeTestJson(rights)),
+        "utf8",
+      ),
+    ),
+    catalogRevisionId:
+      SYNTHETIC_VOICE_CATALOG.catalogRevision.catalogRevisionId,
+    rightsState: rights.state,
+  };
+}
+
+function canonicalizeTestJson(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeTestJson);
+  }
+  if (
+    value !== null &&
+    typeof value === "object"
+  ) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizeTestJson(value[key])]),
+    );
+  }
+  return value;
 }
 
 function collectExactStoryText(value, excerpts = new Set()) {

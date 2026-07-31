@@ -1,4 +1,4 @@
-name: Phase 2 Windows CI
+name: Phase 3A Windows CI
 
 on:
   push:
@@ -9,14 +9,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: phase-2-windows-${{ github.workflow }}-${{ github.ref }}
+  group: phase-3a-windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify-and-build:
-    name: Lint, test, build, and Phase 2 packaged E2E
+    name: Lint, test, build, and Phase 3A packaged E2E
     runs-on: windows-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     env:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PYTHONDONTWRITEBYTECODE: "1"
@@ -56,7 +56,7 @@ jobs:
       - name: Verify locked secure-ingest parsers and deterministic public fixtures
         run: |
           node scripts/python.mjs exec -c "from importlib.metadata import version; assert version('lxml') == '6.1.1'; assert version('pypdf') == '6.14.2'"
-          node --test schemas/tests/schema-structure.test.mjs tests/tooling/synthetic-fixture.test.mjs tests/tooling/build-evidence.test.mjs
+          node --test schemas/tests/schema-structure.test.mjs tests/tooling/synthetic-fixture.test.mjs tests/tooling/synthetic-voice-catalog.test.mjs tests/tooling/build-evidence.test.mjs
 
       - name: Lint TypeScript, Python, and repository content
         run: pnpm lint
@@ -71,12 +71,16 @@ jobs:
         run: |
           node scripts/python.mjs exec -m pytest -q apps/local-service/tests/test_database_v3_migration.py apps/local-service/tests/test_whole_book_analysis.py apps/local-service/tests/test_phase2_api.py apps/local-service/tests/test_analysis_corrections_restart.py apps/local-service/tests/test_phase2_correction_scope_regressions.py apps/local-service/tests/test_phase2_structure_graph_regressions.py apps/local-service/tests/test_phase2_scale.py
 
+      - name: Run focused Phase 3A migration, casting, rights-governance, and scale suites
+        run: |
+          node scripts/python.mjs exec -m pytest -q apps/local-service/tests/test_database_v4_migration.py apps/local-service/tests/test_phase3a_casting.py apps/local-service/tests/test_phase3a_custom_roles.py apps/local-service/tests/test_phase3a_assignment_invalidation.py apps/local-service/tests/test_phase3a_governance.py apps/local-service/tests/test_phase3a_jobs.py apps/local-service/tests/test_phase3a_scale.py
+
       - name: Prepare development Electron assets
         run: |
           pnpm --filter @cinematic-story-studio/contracts run build
           pnpm --filter @cinematic-story-studio/desktop run build
 
-      - name: Run development whole-book analysis Electron E2E
+      - name: Run development governed voice-casting Electron E2E
         id: development_e2e
         continue-on-error: true
         env:
@@ -88,6 +92,7 @@ jobs:
         run: pnpm build
 
       - name: Resolve packaged E2E evidence paths
+        id: resolve_evidence
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -119,8 +124,16 @@ jobs:
 
           $screenshotPath = Join-Path $releaseRoot "packaged-e2e.png"
           $resultPath = Join-Path $releaseRoot "packaged-e2e-result.json"
+          $phase3ResultPath = Join-Path $releaseRoot "phase-3-packaged-e2e-result.json"
+          $phase3VoiceCastingEvidencePath = Join-Path $releaseRoot "phase-3-voice-casting-evidence.json"
           $manifestPath = Join-Path $releaseRoot "build-evidence.json"
-          foreach ($generatedEvidence in @($screenshotPath, $resultPath, $manifestPath)) {
+          foreach ($generatedEvidence in @(
+            $screenshotPath,
+            $resultPath,
+            $phase3ResultPath,
+            $phase3VoiceCastingEvidencePath,
+            $manifestPath
+          )) {
             if (Test-Path -LiteralPath $generatedEvidence) {
               if (-not (Test-Path -LiteralPath $generatedEvidence -PathType Leaf)) {
                 throw "A generated evidence target was not a file."
@@ -132,9 +145,12 @@ jobs:
           "CSS_PACKAGED_E2E_EXECUTABLE=$executable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CSS_PACKAGED_E2E_EVIDENCE_PATH=$screenshotPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CSS_PACKAGED_E2E_RESULT_PATH=$resultPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CSS_PHASE3_PACKAGED_E2E_RESULT_PATH=$phase3ResultPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH=$phase3VoiceCastingEvidencePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CSS_BUILD_EVIDENCE_MANIFEST_PATH=$manifestPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Run exact packaged whole-book analysis persistence E2E
+      - name: Run exact packaged governed voice-casting persistence E2E
         id: packaged_e2e
         continue-on-error: true
         run: pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged
@@ -171,7 +187,7 @@ jobs:
           )
           node scripts/ci/build-evidence.mjs
 
-      - name: Validate schema-v4 packaged result and Phase 2 build manifest
+      - name: Validate schema-v5 Phase 3A result and schema-v4 build manifest
         id: manifest_validation
         continue-on-error: true
         if: ${{ always() && !cancelled() && steps.build_evidence.outcome == 'success' }}
@@ -198,17 +214,43 @@ jobs:
         id: clean_check
         run: node scripts/git-check.mjs --clean
 
-      - name: Upload short-lived development artifact
-        if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' }}
+      - name: Revalidate exact artifact bytes immediately before upload
+        id: artifact_revalidation
+        continue-on-error: true
+        if: ${{ always() && !cancelled() && steps.manifest_validation.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          node scripts/ci/build-evidence.mjs --validate-manifest $env:CSS_BUILD_EVIDENCE_MANIFEST_PATH
+
+      - name: Upload failure diagnostics without application binaries
+        if: ${{ always() && !cancelled() && (steps.development_e2e.outcome != 'success' || steps.packaged_e2e.outcome != 'success' || steps.build_evidence.outcome != 'success' || steps.manifest_validation.outcome != 'success' || steps.tracked_scan.outcome != 'success' || steps.clean_check.outcome != 'success' || steps.artifact_revalidation.outcome != 'success') }}
         uses: actions/upload-artifact@v6
         with:
-          name: cinematic-story-studio-phase-2-windows-unpacked-${{ github.event.pull_request.head.sha || github.sha }}
+          name: cinematic-story-studio-phase-3a-ci-diagnostics-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
-            apps/desktop/release/*/win-unpacked/**
-            apps/desktop/build-resources/service/**
-            apps/desktop/release/*/build-evidence.json
-            apps/desktop/release/*/packaged-e2e-result.json
-            apps/desktop/release/*/packaged-e2e.png
+            apps/desktop/test-results/**
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/build-evidence.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/packaged-e2e-result.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3-packaged-e2e-result.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3-voice-casting-evidence.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/packaged-e2e.png
+          if-no-files-found: warn
+          compression-level: 6
+          retention-days: 7
+
+      - name: Upload short-lived development artifact
+        if: ${{ always() && !cancelled() && steps.development_e2e.outcome == 'success' && steps.build.outcome == 'success' && steps.packaged_e2e.outcome == 'success' && steps.build_evidence.outcome == 'success' && steps.manifest_validation.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' && steps.artifact_revalidation.outcome == 'success' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: cinematic-story-studio-phase-3a-windows-unpacked-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/win-unpacked/**
+            apps/desktop/build-resources/service/cinematic-story-service.exe
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/build-evidence.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/packaged-e2e-result.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3-packaged-e2e-result.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3-voice-casting-evidence.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/packaged-e2e.png
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -216,17 +258,22 @@ jobs:
       - name: Enforce packaged E2E result
         if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.packaged_e2e.outcome != 'success' }}
         shell: pwsh
-        run: throw "The packaged whole-book analysis persistence E2E gate failed. Inspect the uploaded evidence."
+        run: throw "The packaged governed voice-casting persistence E2E gate failed. Inspect the uploaded evidence."
 
       - name: Enforce build-evidence generation
         if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.build_evidence.outcome != 'success' }}
         shell: pwsh
-        run: throw "The Phase 2 build-evidence generator rejected the packaged proof."
+        run: throw "The Phase 3A build-evidence generator rejected the packaged proof."
 
       - name: Enforce build-evidence manifest validation
         if: ${{ always() && !cancelled() && steps.build_evidence.outcome == 'success' && steps.manifest_validation.outcome != 'success' }}
         shell: pwsh
-        run: throw "The schema-v4 packaged result or Phase 2 build manifest failed validation."
+        run: throw "The schema-v5 Phase 3A result or schema-v4 build manifest failed validation."
+
+      - name: Enforce exact artifact revalidation
+        if: ${{ always() && !cancelled() && steps.manifest_validation.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' && steps.artifact_revalidation.outcome != 'success' }}
+        shell: pwsh
+        run: throw "The exact application or evidence bytes changed after initial manifest validation."
 
       - name: Enforce development Electron E2E result
         if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.development_e2e.outcome != 'success' }}

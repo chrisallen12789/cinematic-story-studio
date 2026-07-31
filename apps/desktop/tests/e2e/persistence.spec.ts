@@ -20,6 +20,11 @@ import {
   readPhase2RuntimeSnapshot,
   runPhase2GovernanceWorkflow
 } from "./phase2-story-analysis";
+import {
+  expectPhase3RestartPersistence,
+  readPhase3RuntimeSnapshot,
+  runPhase3GovernanceWorkflow
+} from "./phase3-voice-casting";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -38,7 +43,7 @@ test.describe("desktop persistence", () => {
   );
 
   test("restores the most recent project after a real service restart", async () => {
-    test.setTimeout(240_000);
+    test.setTimeout(600_000);
     const isolationRoot = await mkdtemp(
       path.join(tmpdir(), "css-desktop-e2e-")
     );
@@ -244,7 +249,13 @@ test.describe("desktop persistence", () => {
         targetEntityType: "DialogueLine"
       });
       const phase2Workflow = await runPhase2GovernanceWorkflow(firstPage);
-      await first.close();
+      const phase3Workflow = await runPhase3GovernanceWorkflow(
+        firstPage,
+        phase2Workflow.governed
+      );
+      const firstExit = await closeElectron(first);
+      expect(firstExit.graceful).toBe(true);
+      expect(firstExit.forced).toBe(false);
       first = null;
 
       second = await launch(dataDirectory);
@@ -311,7 +322,26 @@ test.describe("desktop persistence", () => {
       await expect(
         secondPage.locator(".correction-history article")
       ).toHaveCount(4);
-      await second.close();
+      await secondPage
+        .getByRole("button", { name: "Casting", exact: true })
+        .click();
+      await expect(
+        secondPage.getByRole("heading", {
+          name: "Casting workspace",
+          exact: true
+        })
+      ).toBeVisible({ timeout: 30_000 });
+      const restoredPhase3 =
+        await readPhase3RuntimeSnapshot(secondPage);
+      expectPhase3RestartPersistence(phase3Workflow, restoredPhase3);
+      await expect(
+        secondPage.locator(".review-card .review-state", {
+          hasText: "Approved"
+        })
+      ).toHaveCount(3);
+      const secondExit = await closeElectron(second);
+      expect(secondExit.graceful).toBe(true);
+      expect(secondExit.forced).toBe(false);
       second = null;
     } finally {
       await closeElectron(second);
@@ -535,9 +565,12 @@ function reviewEvidence(card: Locator, label: string): Locator {
 
 async function closeElectron(
   application: ElectronApplication | null
-): Promise<void> {
+): Promise<{
+  readonly graceful: boolean;
+  readonly forced: boolean;
+}> {
   if (application === null) {
-    return;
+    return { graceful: true, forced: false };
   }
   const child = application.process();
   const outcome = await Promise.race([
@@ -547,14 +580,23 @@ async function closeElectron(
     ),
     delay(12_000).then(() => "timeout" as const)
   ]);
+  let forced = false;
   if (
     outcome !== "closed" &&
     child.exitCode === null &&
     child.signalCode === null
   ) {
     child.kill();
+    forced = true;
     await Promise.race([once(child, "exit"), delay(3_000)]);
   }
+  return {
+    graceful:
+      outcome === "closed" &&
+      child.exitCode !== null &&
+      child.signalCode === null,
+    forced
+  };
 }
 
 function delay(milliseconds: number): Promise<void> {

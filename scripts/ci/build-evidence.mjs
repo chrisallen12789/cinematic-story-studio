@@ -20,6 +20,9 @@ export const BUILD_EVIDENCE_ENVIRONMENT = Object.freeze({
   executablePath: "CSS_PACKAGED_E2E_EXECUTABLE",
   screenshotPath: "CSS_PACKAGED_E2E_EVIDENCE_PATH",
   resultPath: "CSS_PACKAGED_E2E_RESULT_PATH",
+  phase3ResultPath: "CSS_PHASE3_PACKAGED_E2E_RESULT_PATH",
+  phase3VoiceCastingEvidencePath:
+    "CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH",
   stepOutcome: "CSS_PACKAGED_E2E_STEP_OUTCOME",
   runnerName: "CSS_BUILD_EVIDENCE_RUNNER_NAME",
   runnerOs: "CSS_BUILD_EVIDENCE_RUNNER_OS",
@@ -35,8 +38,22 @@ const APP_EXECUTABLE_NAME = "Cinematic Story Studio.exe";
 const SERVICE_EXECUTABLE_NAME = "cinematic-story-service.exe";
 const MAX_HARNESS_RESULT_BYTES = 1024 * 1024;
 const MAX_SECURITY_INPUT_BYTES = 5 * 1024 * 1024;
-const BUILD_EVIDENCE_SCHEMA_VERSION = "3.0.0";
+const BUILD_EVIDENCE_SCHEMA_VERSION = "4.0.0";
 const PACKAGED_E2E_RESULT_SCHEMA_VERSION = "4.0.0";
+const PHASE_3_PACKAGED_E2E_RESULT_SCHEMA_VERSION = "5.0.0";
+const VOICE_CASTING_CONTRACT_VERSION = "3.0.0";
+const GOVERNED_VOICE_CASTING_PROFILE_ID =
+  "governed-voice-casting-v1@1.0.0";
+const GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT =
+  "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6";
+const VOICE_CASTING_PRODUCER_ID =
+  "voice-casting-orchestrator@1.0.0";
+const VOICE_RIGHTS_POLICY_ID = "voice-rights-policy-v1";
+const MAX_CASTING_CORRECTIONS_PER_RUN = 200;
+const SYNTHETIC_VOICE_CATALOG_REVISION_ID =
+  "synthetic-voice-catalog-v1@1.0.0";
+const SYNTHETIC_VOICE_CATALOG_FINGERPRINT =
+  "68d116d1f66e4ea4bcceabfd0520fd889cf9da3074ee1b9186c43c285575c25f";
 const ANALYSIS_CONTRACT_VERSION = "2.0.0";
 const WHOLE_BOOK_ANALYSIS_PROFILE_ID = "whole-book-intelligence-v1";
 const WHOLE_BOOK_ANALYSIS_PROFILE_VERSION = "1.0.0";
@@ -118,6 +135,69 @@ const PHASE_2_PACKAGED_FLOW = Object.freeze([
   "verify_story_analysis_persistence",
   "close",
 ]);
+const PHASE_3_PACKAGED_FLOW = Object.freeze([
+  "create_project",
+  "import_synthetic_docx",
+  "wait_for_extraction",
+  "approve_import_review",
+  "complete_phase_2_analysis",
+  "verify_four_phase_2_approvals",
+  "open_casting_workspace",
+  "load_synthetic_voice_catalog",
+  "create_production_roles",
+  "run_casting_analysis",
+  "inspect_narrator_candidates",
+  "select_narrator_voice",
+  "lock_narrator_assignment",
+  "inspect_character_candidates",
+  "select_first_character_voice",
+  "lock_first_character_assignment",
+  "select_second_character_voice",
+  "lock_second_character_assignment",
+  "surface_metadata_differentiation_conflict",
+  "disposition_casting_conflict",
+  "surface_restricted_or_ineligible_rights",
+  "reject_ineligible_final_approval",
+  "approve_narrator_casting_review",
+  "approve_character_casting_review",
+  "approve_complete_cast_review",
+  "close_application",
+  "verify_first_shutdown_owned_process_exit",
+  "restart_same_application",
+  "restore_phase_0_through_phase_2_evidence",
+  "restore_phase_3a_casting_evidence",
+  "close_restarted_application",
+  "verify_final_owned_process_exit",
+]);
+const PHASE_3_ASSERTION_KEYS = Object.freeze([
+  "phase2PrerequisitesCurrent",
+  "castingProfilePinned",
+  "catalogFingerprintVerified",
+  "rolesCreated",
+  "boundedCandidatesCreated",
+  "metadataConflictProven",
+  "rightsGovernanceProven",
+  "humanAssignmentsLocked",
+  "threeGateDecisionsPersisted",
+  "restartPersistenceProven",
+  "processOwnershipExitProven",
+]);
+const PHASE_3_NARRATOR_ROLE_TYPES = Object.freeze([
+  "primary_narrator",
+  "secondary_narrator",
+]);
+const PHASE_3_CHARACTER_ROLE_TYPES = Object.freeze([
+  "named_character",
+  "unresolved_speaker",
+  "group_or_crowd",
+  "quoted_document_or_announcement",
+  "internal_thought",
+  "custom",
+]);
+const PHASE_3_APPROVED_ASSIGNMENT_RIGHTS_STATES = Object.freeze([
+  "verified",
+  "restricted",
+]);
 const SECURE_INGEST_DEPENDENCIES = Object.freeze([
   Object.freeze({
     name: "lxml",
@@ -161,6 +241,7 @@ const PACKAGED_FAILURE_STAGES = new Set([
   "restore_2",
   "screenshot",
   "shutdown_2",
+  "evidence_generation",
   "cleanup",
 ]);
 const PACKAGED_FAILURE_CODES = new Set([
@@ -182,6 +263,7 @@ const PACKAGED_FAILURE_CODES = new Set([
   "APPLICATION_WORKFLOW_FAILED",
   "SHUTDOWN_VERIFICATION_FAILED",
   "SCREENSHOT_CAPTURE_FAILED",
+  "EVIDENCE_GENERATION_FAILED",
   "CLEANUP_FAILED",
 ]);
 const PACKAGED_INVENTORY_FAILURE_CODES = new Set([
@@ -239,6 +321,14 @@ export async function generateBuildEvidence({
   );
   const expectedScreenshot = path.join(releaseRoot, "packaged-e2e.png");
   const expectedResult = path.join(releaseRoot, "packaged-e2e-result.json");
+  const expectedPhase3Result = path.join(
+    releaseRoot,
+    "phase-3-packaged-e2e-result.json",
+  );
+  const expectedPhase3VoiceCastingEvidence = path.join(
+    releaseRoot,
+    "phase-3-voice-casting-evidence.json",
+  );
   const outputPath =
     manifestPath ?? path.join(releaseRoot, "build-evidence.json");
 
@@ -257,6 +347,16 @@ export async function generateBuildEvidence({
     expectedResult,
     "packaged E2E result",
   );
+  assertExactPath(
+    packagedE2e.phase3ResultPath,
+    expectedPhase3Result,
+    "Phase 3A packaged E2E result",
+  );
+  assertExactPath(
+    packagedE2e.phase3VoiceCastingEvidencePath,
+    expectedPhase3VoiceCastingEvidence,
+    "Phase 3A voice-casting evidence",
+  );
   assertRepositoryChild(root, outputPath, "build-evidence manifest");
 
   const [
@@ -265,16 +365,32 @@ export async function generateBuildEvidence({
     embeddedServiceEvidence,
     screenshotEvidence,
     resultEvidence,
+    phase3ResultEvidence,
+    phase3VoiceCastingEvidenceFile,
     secureIngestEvidence,
     storyAnalysisContractEvidence,
+    voiceCatalogEvidence,
   ] = await Promise.all([
     requiredFileEvidence(canonicalRoot, root, expectedExecutable, "desktop application"),
     requiredFileEvidence(canonicalRoot, root, stagedService, "staged service"),
     requiredFileEvidence(canonicalRoot, root, embeddedService, "embedded service"),
     optionalFileEvidence(canonicalRoot, root, expectedScreenshot, "packaged E2E screenshot"),
     optionalFileEvidence(canonicalRoot, root, expectedResult, "packaged E2E result"),
+    optionalFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPhase3Result,
+      "Phase 3A packaged E2E result",
+    ),
+    optionalFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPhase3VoiceCastingEvidence,
+      "Phase 3A voice-casting evidence",
+    ),
     collectSecureIngestEvidence(canonicalRoot, root),
     collectStoryAnalysisContractEvidence(canonicalRoot, root),
+    collectSyntheticVoiceCatalogEvidence(canonicalRoot, root),
   ]);
 
   const stagedServiceMatchesEmbeddedService =
@@ -287,6 +403,19 @@ export async function generateBuildEvidence({
     expectedResult,
     resultEvidence,
     appVersion,
+  );
+  const phase3HarnessResult = await inspectPhase3HarnessResult(
+    expectedPhase3Result,
+    phase3ResultEvidence,
+    screenshotEvidence,
+    harnessResult,
+  );
+  const voiceCastingContract = await inspectPhase3VoiceCastingEvidence(
+    expectedPhase3VoiceCastingEvidence,
+    phase3VoiceCastingEvidenceFile,
+    phase3HarnessResult,
+    harnessResult,
+    voiceCatalogEvidence,
   );
   const harnessResultMatchesStepOutcome =
     harnessResult.contractValid &&
@@ -393,6 +522,9 @@ export async function generateBuildEvidence({
     phase2FourGateDecisionsProven &&
     phase2DecisionRecordsPersisted &&
     phase2RestartDurabilityProven;
+  const phase3VoiceCastingProven =
+    phase3HarnessResult.contractValid &&
+    voiceCastingContract !== null;
   const packagedE2eEvidenceComplete =
     normalizedStepOutcome === "success" &&
     harnessResultMatchesStepOutcome &&
@@ -401,7 +533,8 @@ export async function generateBuildEvidence({
     harnessResult.screenshotCaptured === true &&
     packagedE2eOwnershipExitProven &&
     phase1DocxImportReviewProven &&
-    phase2WholeBookAnalysisProven;
+    phase2WholeBookAnalysisProven &&
+    phase3VoiceCastingProven;
   const normalizedWorkflowHeadSha = normalizeHeadSha(workflowHeadSha);
   const normalizedTestedCheckoutSha = normalizeHeadSha(
     testedCheckoutSha,
@@ -464,8 +597,11 @@ export async function generateBuildEvidence({
       flow: harnessResult.flow,
       launches: harnessResult.launches,
     },
+    voiceCastingContract,
     testTimestamp:
-      harnessResult.completedAt ?? normalizeTimestamp(timestamp),
+      phase3HarnessResult.completedAt ??
+      harnessResult.completedAt ??
+      normalizeTimestamp(timestamp),
     runner: normalizeRunner(runner),
   };
 
@@ -481,7 +617,9 @@ export async function generateBuildEvidence({
   }
   if (
     normalizedStepOutcome === "success" &&
-    (!harnessResultMatchesStepOutcome || !packagedE2eEvidenceComplete)
+    (!harnessResultMatchesStepOutcome ||
+      !packagedE2eEvidenceComplete ||
+      voiceCastingContract === null)
   ) {
     throw new Error(
       "The packaged E2E step reported success without complete, valid machine evidence.",
@@ -543,6 +681,7 @@ export async function validateBuildEvidenceManifest({
     "secureIngest",
     "storyAnalysisContract",
     "packagedE2e",
+    "voiceCastingContract",
     "testTimestamp",
     "runner",
   ];
@@ -603,6 +742,14 @@ export async function validateBuildEvidenceManifest({
     ),
     screenshot: path.join(releaseRoot, "packaged-e2e.png"),
     result: path.join(releaseRoot, "packaged-e2e-result.json"),
+    phase3Result: path.join(
+      releaseRoot,
+      "phase-3-packaged-e2e-result.json",
+    ),
+    phase3VoiceCastingEvidence: path.join(
+      releaseRoot,
+      "phase-3-voice-casting-evidence.json",
+    ),
   };
   if (
     !isPlainObject(manifest.artifacts) ||
@@ -622,8 +769,11 @@ export async function validateBuildEvidenceManifest({
     embeddedService,
     screenshot,
     resultEvidence,
+    phase3ResultEvidence,
+    phase3VoiceCastingEvidenceFile,
     secureIngest,
     storyAnalysisContract,
+    voiceCatalogEvidence,
   ] = await Promise.all([
     requiredFileEvidence(
       canonicalRoot,
@@ -655,8 +805,21 @@ export async function validateBuildEvidenceManifest({
       expectedPaths.result,
       "packaged E2E result",
     ),
+    optionalFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.phase3Result,
+      "Phase 3A packaged E2E result",
+    ),
+    optionalFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.phase3VoiceCastingEvidence,
+      "Phase 3A voice-casting evidence",
+    ),
     collectSecureIngestEvidence(canonicalRoot, root),
     collectStoryAnalysisContractEvidence(canonicalRoot, root),
+    collectSyntheticVoiceCatalogEvidence(canonicalRoot, root),
   ]);
   const expectedArtifacts = {
     desktopApplication,
@@ -845,6 +1008,32 @@ export async function validateBuildEvidenceManifest({
   ) {
     throw new Error(
       "The build-evidence packaged E2E proof is invalid or stale.",
+    );
+  }
+  const phase3HarnessResult = await inspectPhase3HarnessResult(
+    expectedPaths.phase3Result,
+    phase3ResultEvidence,
+    screenshot,
+    harnessResult,
+  );
+  const voiceCastingContract = await inspectPhase3VoiceCastingEvidence(
+    expectedPaths.phase3VoiceCastingEvidence,
+    phase3VoiceCastingEvidenceFile,
+    phase3HarnessResult,
+    harnessResult,
+    voiceCatalogEvidence,
+  );
+  if (
+    !phase3HarnessResult.contractValid ||
+    voiceCastingContract === null ||
+    !jsonValuesEqual(
+      manifest.voiceCastingContract,
+      voiceCastingContract,
+    ) ||
+    phase3HarnessResult.completedAt !== manifest.testTimestamp
+  ) {
+    throw new Error(
+      "The Phase 3A voice-casting evidence is invalid or stale.",
     );
   }
   if (
@@ -1696,6 +1885,1057 @@ async function inspectHarnessResult(
   }
 }
 
+async function collectSyntheticVoiceCatalogEvidence(
+  canonicalRoot,
+  repositoryRoot,
+) {
+  const catalogPath = path.join(
+    repositoryRoot,
+    "apps",
+    "local-service",
+    "src",
+    "cinematic_story_service",
+    "catalogs",
+    "synthetic_voice_catalog.v1.json",
+  );
+  await requiredFileEvidence(
+    canonicalRoot,
+    repositoryRoot,
+    catalogPath,
+    "synthetic voice catalog",
+  );
+  let catalog;
+  try {
+    catalog = JSON.parse(
+      await readBoundedUtf8(catalogPath, "synthetic voice catalog"),
+    );
+  } catch {
+    throw new Error("The synthetic voice catalog is invalid JSON.");
+  }
+  if (
+    !isPlainObject(catalog) ||
+    !hasExactKeys(catalog, [
+      "contractVersion",
+      "catalogRevision",
+      "providers",
+      "models",
+      "voices",
+      "rights",
+      "fingerprint",
+    ]) ||
+    catalog.contractVersion !== VOICE_CASTING_CONTRACT_VERSION ||
+    !isPlainObject(catalog.catalogRevision) ||
+    catalog.catalogRevision.catalogRevisionId !==
+      SYNTHETIC_VOICE_CATALOG_REVISION_ID ||
+    catalog.catalogRevision.revision !== 1 ||
+    catalog.catalogRevision.rightsPolicyId !==
+      VOICE_RIGHTS_POLICY_ID ||
+    catalog.catalogRevision.catalogFingerprint !==
+      SYNTHETIC_VOICE_CATALOG_FINGERPRINT ||
+    catalog.fingerprint !== SYNTHETIC_VOICE_CATALOG_FINGERPRINT ||
+    !Array.isArray(catalog.providers) ||
+    catalog.providers.length < 1 ||
+    catalog.providers.length > 100 ||
+    !Array.isArray(catalog.models) ||
+    catalog.models.length < 1 ||
+    catalog.models.length > 500 ||
+    !Array.isArray(catalog.voices) ||
+    catalog.voices.length < 14 ||
+    catalog.voices.length > 5_000 ||
+    !Array.isArray(catalog.rights) ||
+    catalog.rights.length !== catalog.voices.length
+  ) {
+    throw new Error("The synthetic voice catalog envelope is invalid.");
+  }
+
+  const fingerprintInput = structuredClone(catalog);
+  delete fingerprintInput.fingerprint;
+  delete fingerprintInput.catalogRevision.catalogFingerprint;
+  const computedFingerprint = sha256Bytes(
+    Buffer.from(
+      JSON.stringify(canonicalizeJsonValue(fingerprintInput)),
+      "utf8",
+    ),
+  );
+  if (computedFingerprint !== catalog.fingerprint) {
+    throw new Error("The synthetic voice catalog fingerprint is invalid.");
+  }
+
+  const providers = catalog.providers.map((provider) => {
+    if (
+      !isPlainObject(provider) ||
+      !isPhase3Id(provider.providerId) ||
+      !isPhase3Id(provider.providerVersion)
+    ) {
+      throw new Error(
+        "The synthetic voice provider descriptor evidence is invalid.",
+      );
+    }
+    return {
+      descriptorId: provider.providerId,
+      version: provider.providerVersion,
+    };
+  });
+  const models = catalog.models.map((model) => {
+    if (
+      !isPlainObject(model) ||
+      !isPhase3Id(model.modelId) ||
+      !isPhase3Id(model.modelVersion)
+    ) {
+      throw new Error(
+        "The synthetic voice model descriptor evidence is invalid.",
+      );
+    }
+    return {
+      descriptorId: model.modelId,
+      version: model.modelVersion,
+    };
+  });
+  if (
+    new Set(providers.map((item) => item.descriptorId)).size !==
+      providers.length ||
+    new Set(models.map((item) => item.descriptorId)).size !==
+      models.length ||
+    !equalStringArrays(
+      catalog.catalogRevision.providerDescriptorIds,
+      providers.map((item) => item.descriptorId),
+    ) ||
+    !equalStringArrays(
+      catalog.catalogRevision.modelDescriptorIds,
+      models.map((item) => item.descriptorId),
+    )
+  ) {
+    throw new Error(
+      "The synthetic voice catalog descriptor inventory is invalid.",
+    );
+  }
+  const rightsByVoiceId = new Map();
+  for (const rights of catalog.rights) {
+    if (
+      !isPlainObject(rights) ||
+      !isPhase3Id(rights.voiceProfileId) ||
+      !isPhase3Id(rights.rightsRecordId) ||
+      !Number.isSafeInteger(rights.revision) ||
+      rights.revision < 1 ||
+      rightsByVoiceId.has(rights.voiceProfileId)
+    ) {
+      throw new Error(
+        "The synthetic voice rights evidence is invalid.",
+      );
+    }
+    rightsByVoiceId.set(rights.voiceProfileId, rights);
+  }
+  const assignmentEvidenceByVoiceId = new Map();
+  for (const voice of catalog.voices) {
+    const rights = rightsByVoiceId.get(voice?.voiceProfileId);
+    if (
+      !isPlainObject(voice) ||
+      !isPhase3Id(voice.voiceProfileId) ||
+      !isBoundedEvidenceText(voice.version, 80) ||
+      !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,79}$/u.test(voice.version) ||
+      voice.catalogRevisionId !==
+        catalog.catalogRevision.catalogRevisionId ||
+      !isPlainObject(rights) ||
+      rights.rightsRecordId !== voice.rightsRecordId ||
+      rights.state !== voice.rightsState ||
+      assignmentEvidenceByVoiceId.has(voice.voiceProfileId)
+    ) {
+      throw new Error(
+        "The synthetic voice assignment evidence is invalid.",
+      );
+    }
+    assignmentEvidenceByVoiceId.set(voice.voiceProfileId, {
+      voiceProfileVersion: voice.version,
+      voiceEvidenceFingerprint: sha256Bytes(
+        Buffer.from(
+          JSON.stringify(canonicalizeJsonValue(voice)),
+          "utf8",
+        ),
+      ),
+      rightsRecordId: rights.rightsRecordId,
+      rightsRecordRevision: rights.revision,
+      rightsEvidenceFingerprint: sha256Bytes(
+        Buffer.from(
+          JSON.stringify(canonicalizeJsonValue(rights)),
+          "utf8",
+        ),
+      ),
+      rightsState: rights.state,
+    });
+  }
+  if (
+    assignmentEvidenceByVoiceId.size !== catalog.voices.length ||
+    rightsByVoiceId.size !== catalog.voices.length
+  ) {
+    throw new Error(
+      "The synthetic voice assignment inventory is incomplete.",
+    );
+  }
+  return {
+    providers,
+    models,
+    catalogRevision: {
+      catalogRevisionId: catalog.catalogRevision.catalogRevisionId,
+      revision: catalog.catalogRevision.revision,
+      fingerprint: catalog.fingerprint,
+    },
+    rightsPolicyId: catalog.catalogRevision.rightsPolicyId,
+    assignmentEvidenceByVoiceId,
+  };
+}
+
+async function inspectPhase3HarnessResult(
+  resultPath,
+  resultEvidence,
+  screenshotEvidence,
+  phase2HarnessResult,
+) {
+  const invalid = invalidPhase3HarnessResult();
+  if (
+    !resultEvidence.exists ||
+    typeof resultEvidence.sizeBytes !== "number" ||
+    resultEvidence.sizeBytes <= 0 ||
+    resultEvidence.sizeBytes > MAX_HARNESS_RESULT_BYTES
+  ) {
+    return invalid;
+  }
+  try {
+    const value = JSON.parse(await readFile(resultPath, "utf8"));
+    if (
+      !isPlainObject(value) ||
+      !hasExactKeys(value, [
+        "schemaVersion",
+        "contractVersion",
+        "result",
+        "fixture",
+        "flow",
+        "casting",
+        "screenshot",
+        "processOwnership",
+        "assertions",
+        "completedAt",
+      ]) ||
+      value.schemaVersion !==
+        PHASE_3_PACKAGED_E2E_RESULT_SCHEMA_VERSION ||
+      value.contractVersion !== VOICE_CASTING_CONTRACT_VERSION ||
+      value.result !== "passed" ||
+      value.fixture !==
+        "fixtures/synthetic-story/sample-story.docx.base64" ||
+      !equalStringArrays(value.flow, PHASE_3_PACKAGED_FLOW)
+    ) {
+      return invalid;
+    }
+    const casting = sanitizePhase3CastingProof(value.casting);
+    const screenshot = sanitizePhase3Screenshot(value.screenshot);
+    const processOwnership = sanitizePhase3ProcessOwnership(
+      value.processOwnership,
+    );
+    const assertions = sanitizePhase3Assertions(value.assertions);
+    const completedAt = normalizeUtcTimestamp(value.completedAt);
+    const expectedElectronPids = sortedUniquePids(
+      phase2HarnessResult.launches.flatMap((launch) =>
+        launch.ownership.processes
+          .filter((process) => process.kind === "app")
+          .map((process) => process.pid),
+      ),
+    );
+    const expectedServicePids = sortedUniquePids(
+      phase2HarnessResult.launches.flatMap((launch) =>
+        launch.ownership.processes
+          .filter((process) => process.kind === "service")
+          .map((process) => process.pid),
+      ),
+    );
+    const contractValid =
+      casting !== null &&
+      screenshot !== null &&
+      processOwnership !== null &&
+      assertions !== null &&
+      phase2HarnessResult.contractValid === true &&
+      phase2HarnessResult.reportedStatus === "passed" &&
+      phase2HarnessResult.ownershipExitProven === true &&
+      phase2HarnessResult.completedAt === completedAt &&
+      screenshotEvidence.exists === true &&
+      screenshot.relativePath === screenshotEvidence.path &&
+      screenshot.byteSize === screenshotEvidence.sizeBytes &&
+      screenshot.sha256 === screenshotEvidence.sha256 &&
+      Array.isArray(expectedElectronPids) &&
+      expectedElectronPids.length > 0 &&
+      equalNumberArrays(
+        processOwnership.electronOwnedPids,
+        expectedElectronPids,
+      ) &&
+      Array.isArray(expectedServicePids) &&
+      expectedServicePids.length > 0 &&
+      equalNumberArrays(
+        processOwnership.serviceOwnedPids,
+        expectedServicePids,
+      ) &&
+      phase3LaunchShutdownsMatch(
+        processOwnership,
+        phase2HarnessResult.launches,
+      );
+    if (!contractValid) {
+      return invalid;
+    }
+    return {
+      contractValid: true,
+      completedAt,
+      value: {
+        schemaVersion: value.schemaVersion,
+        contractVersion: value.contractVersion,
+        result: value.result,
+        fixture: value.fixture,
+        flow: [...PHASE_3_PACKAGED_FLOW],
+        casting,
+        screenshot,
+        processOwnership,
+        assertions,
+        completedAt,
+      },
+    };
+  } catch {
+    return invalid;
+  }
+}
+
+function invalidPhase3HarnessResult() {
+  return {
+    contractValid: false,
+    completedAt: null,
+    value: null,
+  };
+}
+
+function sanitizePhase3CastingProof(value) {
+  const narratorAssignment = sanitizePhase3RoleVoiceAssignment(
+    value?.narratorAssignment,
+    PHASE_3_NARRATOR_ROLE_TYPES,
+  );
+  const characterAssignments = sanitizePhase3RoleVoiceAssignments(
+    value?.characterAssignments,
+    PHASE_3_CHARACTER_ROLE_TYPES,
+    2,
+    300,
+  );
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "profileId",
+      "profileFingerprint",
+      "catalogRevisionId",
+      "catalogFingerprint",
+      "castingRunId",
+      "approvedCastSnapshotId",
+      "approvedCastSnapshotRevision",
+      "narratorAssignmentId",
+      "characterAssignmentIds",
+      "narratorAssignment",
+      "characterAssignments",
+      "conflictId",
+      "conflictDispositionCorrectionId",
+      "restrictedRightsWarningId",
+      "ineligibleApprovalRejected",
+      "gateDecisionIds",
+      "restartRestored",
+    ]) ||
+    value.profileId !== GOVERNED_VOICE_CASTING_PROFILE_ID ||
+    value.profileFingerprint !==
+      GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT ||
+    value.catalogRevisionId !== SYNTHETIC_VOICE_CATALOG_REVISION_ID ||
+    value.catalogFingerprint !==
+      SYNTHETIC_VOICE_CATALOG_FINGERPRINT ||
+    !isPhase3Id(value.castingRunId) ||
+    !isPhase3Id(value.approvedCastSnapshotId) ||
+    !Number.isSafeInteger(value.approvedCastSnapshotRevision) ||
+    value.approvedCastSnapshotRevision < 1 ||
+    !isPhase3Id(value.narratorAssignmentId) ||
+    !isUniquePhase3IdArray(value.characterAssignmentIds, 2, 300) ||
+    value.characterAssignmentIds.includes(value.narratorAssignmentId) ||
+    narratorAssignment === null ||
+    characterAssignments === null ||
+    narratorAssignment.assignmentId !== value.narratorAssignmentId ||
+    !equalStringArrays(
+      characterAssignments.map(
+        (assignment) => assignment.assignmentId,
+      ),
+      value.characterAssignmentIds,
+    ) ||
+    narratorAssignment.rightsState !== "restricted" ||
+    new Set([
+      narratorAssignment.roleId,
+      ...characterAssignments.map(
+        (assignment) => assignment.roleId,
+      ),
+    ]).size !==
+      1 + characterAssignments.length ||
+    !isPhase3Id(value.conflictId) ||
+    !isPhase3Id(value.conflictDispositionCorrectionId) ||
+    !isPhase3Id(value.restrictedRightsWarningId) ||
+    value.ineligibleApprovalRejected !== true ||
+    value.restartRestored !== true ||
+    !isPlainObject(value.gateDecisionIds) ||
+    !hasExactKeys(value.gateDecisionIds, [
+      "narratorCastingReview",
+      "characterCastingReview",
+      "completeCastReview",
+    ]) ||
+    !Object.values(value.gateDecisionIds).every(isPhase3Id) ||
+    new Set(Object.values(value.gateDecisionIds)).size !== 3
+  ) {
+    return null;
+  }
+  return {
+    profileId: value.profileId,
+    profileFingerprint: value.profileFingerprint,
+    catalogRevisionId: value.catalogRevisionId,
+    catalogFingerprint: value.catalogFingerprint,
+    castingRunId: value.castingRunId,
+    approvedCastSnapshotId: value.approvedCastSnapshotId,
+    approvedCastSnapshotRevision: value.approvedCastSnapshotRevision,
+    narratorAssignmentId: value.narratorAssignmentId,
+    characterAssignmentIds: [...value.characterAssignmentIds],
+    narratorAssignment,
+    characterAssignments,
+    conflictId: value.conflictId,
+    conflictDispositionCorrectionId:
+      value.conflictDispositionCorrectionId,
+    restrictedRightsWarningId: value.restrictedRightsWarningId,
+    ineligibleApprovalRejected: true,
+    gateDecisionIds: {
+      narratorCastingReview:
+        value.gateDecisionIds.narratorCastingReview,
+      characterCastingReview:
+        value.gateDecisionIds.characterCastingReview,
+      completeCastReview: value.gateDecisionIds.completeCastReview,
+    },
+    restartRestored: true,
+  };
+}
+
+function sanitizePhase3RoleVoiceAssignments(
+  value,
+  allowedRoleTypes,
+  minimum,
+  maximum,
+) {
+  if (
+    !Array.isArray(value) ||
+    value.length < minimum ||
+    value.length > maximum
+  ) {
+    return null;
+  }
+  const assignments = value.map((assignment) =>
+    sanitizePhase3RoleVoiceAssignment(
+      assignment,
+      allowedRoleTypes,
+    ),
+  );
+  if (
+    assignments.some((assignment) => assignment === null) ||
+    new Set(
+      assignments.map((assignment) => assignment.assignmentId),
+    ).size !== assignments.length ||
+    new Set(
+      assignments.map((assignment) => assignment.roleId),
+    ).size !== assignments.length
+  ) {
+    return null;
+  }
+  return assignments;
+}
+
+function sanitizePhase3RoleVoiceAssignment(
+  value,
+  allowedRoleTypes,
+) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "assignmentId",
+      "roleId",
+      "roleType",
+      "voiceProfileId",
+      "voiceProfileVersion",
+      "voiceEvidenceFingerprint",
+      "rightsRecordId",
+      "rightsRecordRevision",
+      "rightsEvidenceFingerprint",
+      "catalogRevisionId",
+      "castingProfileFingerprint",
+      "phase2SnapshotFingerprint",
+      "effectiveCorrectionSetFingerprint",
+      "authority",
+      "rightsState",
+      "revision",
+      "supersedesAssignmentId",
+    ]) ||
+    !isPhase3Id(value.assignmentId) ||
+    !isPhase3Id(value.roleId) ||
+    !allowedRoleTypes.includes(value.roleType) ||
+    !isPhase3Id(value.voiceProfileId) ||
+    !isBoundedEvidenceText(value.voiceProfileVersion, 80) ||
+    !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,79}$/u.test(
+      value.voiceProfileVersion,
+    ) ||
+    !isSha256(value.voiceEvidenceFingerprint) ||
+    !isPhase3Id(value.rightsRecordId) ||
+    !Number.isSafeInteger(value.rightsRecordRevision) ||
+    value.rightsRecordRevision < 1 ||
+    !isSha256(value.rightsEvidenceFingerprint) ||
+    value.catalogRevisionId !== SYNTHETIC_VOICE_CATALOG_REVISION_ID ||
+    value.castingProfileFingerprint !==
+      GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT ||
+    !isSha256(value.phase2SnapshotFingerprint) ||
+    !isSha256(value.effectiveCorrectionSetFingerprint) ||
+    value.authority !== "human_locked" ||
+    !PHASE_3_APPROVED_ASSIGNMENT_RIGHTS_STATES.includes(
+      value.rightsState,
+    ) ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 1 ||
+    !isPhase3Id(value.supersedesAssignmentId) ||
+    value.supersedesAssignmentId === value.assignmentId
+  ) {
+    return null;
+  }
+  return {
+    assignmentId: value.assignmentId,
+    roleId: value.roleId,
+    roleType: value.roleType,
+    voiceProfileId: value.voiceProfileId,
+    voiceProfileVersion: value.voiceProfileVersion,
+    voiceEvidenceFingerprint: value.voiceEvidenceFingerprint,
+    rightsRecordId: value.rightsRecordId,
+    rightsRecordRevision: value.rightsRecordRevision,
+    rightsEvidenceFingerprint: value.rightsEvidenceFingerprint,
+    catalogRevisionId: value.catalogRevisionId,
+    castingProfileFingerprint: value.castingProfileFingerprint,
+    phase2SnapshotFingerprint: value.phase2SnapshotFingerprint,
+    effectiveCorrectionSetFingerprint:
+      value.effectiveCorrectionSetFingerprint,
+    authority: "human_locked",
+    rightsState: value.rightsState,
+    revision: value.revision,
+    supersedesAssignmentId: value.supersedesAssignmentId,
+  };
+}
+
+function sanitizePhase3Screenshot(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "relativePath",
+      "byteSize",
+      "sha256",
+      "captureStatus",
+    ]) ||
+    !isBoundedEvidenceText(value.relativePath, 2_000) ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize < 1 ||
+    !isSha256(value.sha256) ||
+    value.captureStatus !== "success"
+  ) {
+    return null;
+  }
+  return {
+    relativePath: value.relativePath,
+    byteSize: value.byteSize,
+    sha256: value.sha256,
+    captureStatus: "success",
+  };
+}
+
+function sanitizePhase3ProcessOwnership(value) {
+  const launchShutdowns = sanitizePhase3LaunchShutdowns(
+    value?.launchShutdowns,
+  );
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "ownershipEstablished",
+      "electronOwnedPids",
+      "serviceOwnedPids",
+      "launchShutdowns",
+      "forcedPids",
+      "remainingOwnedPids",
+      "unrelatedProcessesTerminated",
+    ]) ||
+    value.ownershipEstablished !== true ||
+    !isOrderedUniquePidArray(value.electronOwnedPids, 1, 100) ||
+    !isOrderedUniquePidArray(value.serviceOwnedPids, 1, 20) ||
+    launchShutdowns === null ||
+    !Array.isArray(value.forcedPids) ||
+    value.forcedPids.length !== 0 ||
+    !Array.isArray(value.remainingOwnedPids) ||
+    value.remainingOwnedPids.length !== 0 ||
+    value.unrelatedProcessesTerminated !== false
+  ) {
+    return null;
+  }
+  return {
+    ownershipEstablished: true,
+    electronOwnedPids: [...value.electronOwnedPids],
+    serviceOwnedPids: [...value.serviceOwnedPids],
+    launchShutdowns,
+    forcedPids: [],
+    remainingOwnedPids: [],
+    unrelatedProcessesTerminated: false,
+  };
+}
+
+function sanitizePhase3LaunchShutdowns(value) {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return null;
+  }
+  const shutdowns = [];
+  for (const [index, shutdown] of value.entries()) {
+    if (
+      !isPlainObject(shutdown) ||
+      !hasExactKeys(shutdown, ["launch", "electron", "service"]) ||
+      shutdown.launch !== index + 1 ||
+      !isPlainObject(shutdown.electron) ||
+      !hasExactKeys(shutdown.electron, [
+        "launcherPid",
+        "rootPid",
+        "exitCode",
+        "forceKillUsed",
+      ]) ||
+      !isPositivePid(shutdown.electron.launcherPid) ||
+      !isPositivePid(shutdown.electron.rootPid) ||
+      shutdown.electron.exitCode !== 0 ||
+      shutdown.electron.forceKillUsed !== false ||
+      !isPlainObject(shutdown.service) ||
+      !hasExactKeys(shutdown.service, [
+        "pid",
+        "method",
+        "exitCode",
+        "signalCode",
+        "forceKillUsed",
+      ]) ||
+      !isPositivePid(shutdown.service.pid) ||
+      shutdown.service.method !== "stdin_eof" ||
+      shutdown.service.exitCode !== 0 ||
+      shutdown.service.signalCode !== null ||
+      shutdown.service.forceKillUsed !== false
+    ) {
+      return null;
+    }
+    shutdowns.push({
+      launch: shutdown.launch,
+      electron: {
+        launcherPid: shutdown.electron.launcherPid,
+        rootPid: shutdown.electron.rootPid,
+        exitCode: 0,
+        forceKillUsed: false,
+      },
+      service: {
+        pid: shutdown.service.pid,
+        method: "stdin_eof",
+        exitCode: 0,
+        signalCode: null,
+        forceKillUsed: false,
+      },
+    });
+  }
+  return shutdowns;
+}
+
+function phase3LaunchShutdownsMatch(processOwnership, launches) {
+  return (
+    Array.isArray(launches) &&
+    launches.length === 2 &&
+    processOwnership.launchShutdowns.every((shutdown, index) => {
+      const launch = launches[index];
+      if (
+        launch === undefined ||
+        shutdown.launch !== launch.launch ||
+        shutdown.electron.launcherPid !==
+          launch.ownership.launcherPid ||
+        shutdown.electron.rootPid !== launch.ownership.rootPid ||
+        !launch.exitProof.ownedPids.includes(
+          shutdown.electron.rootPid,
+        ) ||
+        !launch.exitProof.ownedPids.includes(shutdown.service.pid)
+      ) {
+        return false;
+      }
+      const serviceRoots = launch.ownership.processes.filter(
+        (process) =>
+          process.kind === "service" &&
+          process.parentPid === launch.ownership.rootPid,
+      );
+      return (
+        serviceRoots.length === 1 &&
+        serviceRoots[0].pid === shutdown.service.pid
+      );
+    })
+  );
+}
+
+function sanitizePhase3Assertions(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, PHASE_3_ASSERTION_KEYS) ||
+    !PHASE_3_ASSERTION_KEYS.every((key) => value[key] === true)
+  ) {
+    return null;
+  }
+  return Object.fromEntries(
+    PHASE_3_ASSERTION_KEYS.map((key) => [key, true]),
+  );
+}
+
+async function inspectPhase3VoiceCastingEvidence(
+  evidencePath,
+  evidenceFile,
+  phase3HarnessResult,
+  phase2HarnessResult,
+  voiceCatalogEvidence,
+) {
+  if (
+    !evidenceFile.exists ||
+    typeof evidenceFile.sizeBytes !== "number" ||
+    evidenceFile.sizeBytes <= 0 ||
+    evidenceFile.sizeBytes > MAX_HARNESS_RESULT_BYTES ||
+    !phase3HarnessResult.contractValid ||
+    phase3HarnessResult.value === null ||
+    phase2HarnessResult.storyAnalysis === null
+  ) {
+    return null;
+  }
+  try {
+    const value = JSON.parse(await readFile(evidencePath, "utf8"));
+    if (
+      !isPlainObject(value) ||
+      !hasExactKeys(value, [
+        "castingProfile",
+        "providers",
+        "models",
+        "catalogRevision",
+        "rightsPolicyId",
+        "phase2Evidence",
+        "counts",
+        "castingRunId",
+        "approvedCastSnapshot",
+        "assignments",
+        "rightsEligibility",
+        "correctionPersistence",
+        "conflictDispositionPersistence",
+        "gateDecisions",
+        "restartPersistence",
+        "packagedE2e",
+        "assertions",
+      ])
+    ) {
+      return null;
+    }
+    const profile = sanitizePhase3CastingProfileEvidence(
+      value.castingProfile,
+    );
+    const phase2Evidence = sanitizePhase3Phase2Evidence(
+      value.phase2Evidence,
+    );
+    const counts = sanitizePhase3Counts(value.counts);
+    const snapshot = sanitizePhase3SnapshotEvidence(
+      value.approvedCastSnapshot,
+    );
+    const assignments = sanitizePhase3AssignmentEvidence(
+      value.assignments,
+    );
+    const gateDecisions = isUniquePhase3IdArray(
+      value.gateDecisions,
+      3,
+      3,
+    )
+      ? [...value.gateDecisions]
+      : null;
+    const assertions = sanitizePhase3Assertions(value.assertions);
+    const castingProof = phase3HarnessResult.value.casting;
+    const storyAnalysis = phase2HarnessResult.storyAnalysis;
+    const expectedPhase2GateDecisions = storyAnalysis.gates.map(
+      (gate) => gate.afterRestart.decisionId,
+    );
+    const expectedCastingGateDecisions = [
+      castingProof.gateDecisionIds.narratorCastingReview,
+      castingProof.gateDecisionIds.characterCastingReview,
+      castingProof.gateDecisionIds.completeCastReview,
+    ];
+    if (
+      profile === null ||
+      phase2Evidence === null ||
+      counts === null ||
+      snapshot === null ||
+      assignments === null ||
+      gateDecisions === null ||
+      assertions === null ||
+      !jsonValuesEqual(value.providers, voiceCatalogEvidence.providers) ||
+      !jsonValuesEqual(value.models, voiceCatalogEvidence.models) ||
+      !jsonValuesEqual(
+        value.catalogRevision,
+        voiceCatalogEvidence.catalogRevision,
+      ) ||
+      value.rightsPolicyId !== voiceCatalogEvidence.rightsPolicyId ||
+      phase2Evidence.analysisRunId !== storyAnalysis.run.runId ||
+      phase2Evidence.snapshotId !== storyAnalysis.run.snapshotId ||
+      phase2Evidence.snapshotRevision !==
+        storyAnalysis.run.snapshotRevision ||
+      phase2Evidence.snapshotFingerprint !==
+        storyAnalysis.run.snapshotFingerprint ||
+      phase2Evidence.correctionSetFingerprint !==
+        storyAnalysis.run.correctionSetFingerprint ||
+      !equalStringArrays(
+        phase2Evidence.gateDecisionIds,
+        expectedPhase2GateDecisions,
+      ) ||
+      value.castingRunId !== castingProof.castingRunId ||
+      snapshot.snapshotId !== castingProof.approvedCastSnapshotId ||
+      snapshot.revision !== castingProof.approvedCastSnapshotRevision ||
+      assignments.narratorAssignmentId !==
+        castingProof.narratorAssignmentId ||
+      !equalStringArrays(
+        assignments.characterAssignmentIds,
+        castingProof.characterAssignmentIds,
+      ) ||
+      !jsonValuesEqual(
+        assignments.narratorAssignment,
+        castingProof.narratorAssignment,
+      ) ||
+      !jsonValuesEqual(
+        assignments.characterAssignments,
+        castingProof.characterAssignments,
+      ) ||
+      [
+        assignments.narratorAssignment,
+        ...assignments.characterAssignments,
+      ].some(
+        (assignment) => {
+          const expected =
+            voiceCatalogEvidence.assignmentEvidenceByVoiceId.get(
+              assignment.voiceProfileId,
+            );
+          return (
+            expected === undefined ||
+            assignment.voiceProfileVersion !==
+              expected.voiceProfileVersion ||
+            assignment.voiceEvidenceFingerprint !==
+              expected.voiceEvidenceFingerprint ||
+            assignment.rightsRecordId !== expected.rightsRecordId ||
+            assignment.rightsRecordRevision !==
+              expected.rightsRecordRevision ||
+            assignment.rightsEvidenceFingerprint !==
+              expected.rightsEvidenceFingerprint ||
+            assignment.rightsState !== expected.rightsState ||
+            assignment.catalogRevisionId !==
+            voiceCatalogEvidence.catalogRevision.catalogRevisionId ||
+            assignment.castingProfileFingerprint !==
+              profile.fingerprint ||
+            assignment.phase2SnapshotFingerprint !==
+              phase2Evidence.snapshotFingerprint
+          );
+        },
+      ) ||
+      counts.productionRoles !==
+        counts.narratorRoles + counts.characterRoles ||
+      counts.narratorRoles < 1 ||
+      counts.characterRoles < 2 ||
+      counts.preReductionCandidates < counts.finalCandidates ||
+      counts.preReductionCandidates >
+        counts.productionRoles * 50 ||
+      counts.finalCandidates > counts.productionRoles * 12 ||
+      counts.finalCandidates < counts.productionRoles ||
+      counts.conflicts < 1 ||
+      counts.assignments !==
+        1 + assignments.characterAssignmentIds.length ||
+      counts.corrections < 7 ||
+      value.rightsEligibility !==
+        "eligible_after_required_acknowledgements" ||
+      value.correctionPersistence !== true ||
+      value.conflictDispositionPersistence !== true ||
+      !equalStringArrays(
+        gateDecisions,
+        expectedCastingGateDecisions,
+      ) ||
+      value.restartPersistence !== true ||
+      !jsonValuesEqual(
+        value.packagedE2e,
+        phase3HarnessResult.value,
+      ) ||
+      !jsonValuesEqual(assertions, phase3HarnessResult.value.assertions)
+    ) {
+      return null;
+    }
+    return {
+      castingProfile: profile,
+      providers: voiceCatalogEvidence.providers,
+      models: voiceCatalogEvidence.models,
+      catalogRevision: voiceCatalogEvidence.catalogRevision,
+      rightsPolicyId: voiceCatalogEvidence.rightsPolicyId,
+      phase2Evidence,
+      counts,
+      castingRunId: value.castingRunId,
+      approvedCastSnapshot: snapshot,
+      assignments,
+      rightsEligibility: value.rightsEligibility,
+      correctionPersistence: true,
+      conflictDispositionPersistence: true,
+      gateDecisions,
+      restartPersistence: true,
+      packagedE2e: phase3HarnessResult.value,
+      assertions,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sanitizePhase3CastingProfileEvidence(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "profileId",
+      "fingerprint",
+      "producerId",
+    ]) ||
+    value.profileId !== GOVERNED_VOICE_CASTING_PROFILE_ID ||
+    value.fingerprint !==
+      GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT ||
+    value.producerId !== VOICE_CASTING_PRODUCER_ID
+  ) {
+    return null;
+  }
+  return {
+    profileId: value.profileId,
+    fingerprint: value.fingerprint,
+    producerId: value.producerId,
+  };
+}
+
+function sanitizePhase3Phase2Evidence(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "analysisRunId",
+      "snapshotId",
+      "snapshotRevision",
+      "snapshotFingerprint",
+      "correctionSetFingerprint",
+      "gateDecisionIds",
+    ]) ||
+    !isPhase3Id(value.analysisRunId) ||
+    !isPhase3Id(value.snapshotId) ||
+    !Number.isSafeInteger(value.snapshotRevision) ||
+    value.snapshotRevision < 1 ||
+    !isSha256(value.snapshotFingerprint) ||
+    !isSha256(value.correctionSetFingerprint) ||
+    !isUniquePhase3IdArray(value.gateDecisionIds, 4, 4)
+  ) {
+    return null;
+  }
+  return {
+    analysisRunId: value.analysisRunId,
+    snapshotId: value.snapshotId,
+    snapshotRevision: value.snapshotRevision,
+    snapshotFingerprint: value.snapshotFingerprint,
+    correctionSetFingerprint: value.correctionSetFingerprint,
+    gateDecisionIds: [...value.gateDecisionIds],
+  };
+}
+
+function sanitizePhase3Counts(value) {
+  const bounds = {
+    productionRoles: 300,
+    narratorRoles: 300,
+    characterRoles: 300,
+    preReductionCandidates: 15_000,
+    finalCandidates: 3_600,
+    conflicts: 10_000,
+    assignments: 300,
+    corrections: MAX_CASTING_CORRECTIONS_PER_RUN,
+  };
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, Object.keys(bounds)) ||
+    !Object.entries(bounds).every(
+      ([key, maximum]) =>
+        Number.isSafeInteger(value[key]) &&
+        value[key] >= 0 &&
+        value[key] <= maximum,
+    )
+  ) {
+    return null;
+  }
+  return Object.fromEntries(
+    Object.keys(bounds).map((key) => [key, value[key]]),
+  );
+}
+
+function sanitizePhase3SnapshotEvidence(value) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "snapshotId",
+      "revision",
+      "fingerprint",
+    ]) ||
+    !isPhase3Id(value.snapshotId) ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 1 ||
+    !isSha256(value.fingerprint)
+  ) {
+    return null;
+  }
+  return {
+    snapshotId: value.snapshotId,
+    revision: value.revision,
+    fingerprint: value.fingerprint,
+  };
+}
+
+function sanitizePhase3AssignmentEvidence(value) {
+  const narratorAssignment = sanitizePhase3RoleVoiceAssignment(
+    value?.narratorAssignment,
+    PHASE_3_NARRATOR_ROLE_TYPES,
+  );
+  const characterAssignments = sanitizePhase3RoleVoiceAssignments(
+    value?.characterAssignments,
+    PHASE_3_CHARACTER_ROLE_TYPES,
+    2,
+    300,
+  );
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "narratorAssignmentId",
+      "characterAssignmentIds",
+      "narratorAssignment",
+      "characterAssignments",
+    ]) ||
+    !isPhase3Id(value.narratorAssignmentId) ||
+    !isUniquePhase3IdArray(value.characterAssignmentIds, 2, 300) ||
+    value.characterAssignmentIds.includes(value.narratorAssignmentId) ||
+    narratorAssignment === null ||
+    characterAssignments === null ||
+    narratorAssignment.assignmentId !== value.narratorAssignmentId ||
+    !equalStringArrays(
+      characterAssignments.map(
+        (assignment) => assignment.assignmentId,
+      ),
+      value.characterAssignmentIds,
+    ) ||
+    narratorAssignment.rightsState !== "restricted"
+  ) {
+    return null;
+  }
+  return {
+    narratorAssignmentId: value.narratorAssignmentId,
+    characterAssignmentIds: [...value.characterAssignmentIds],
+    narratorAssignment,
+    characterAssignments,
+  };
+}
+
 function sanitizeImportReviewEvidence(value) {
   if (
     !isPlainObject(value) ||
@@ -2242,6 +3482,7 @@ function validFailureCodeForStage(stage, code) {
     restore_2: "APPLICATION_WORKFLOW_FAILED",
     screenshot: "SCREENSHOT_CAPTURE_FAILED",
     shutdown_2: "SHUTDOWN_VERIFICATION_FAILED",
+    evidence_generation: "EVIDENCE_GENERATION_FAILED",
     cleanup: "CLEANUP_FAILED",
   }[stage];
   return code === expectedCode;
@@ -2366,6 +3607,17 @@ function validFailedProgress({
         screenshotCaptured &&
         launchCount === 1 &&
         firstLaunchExitProven
+      );
+    case "evidence_generation":
+      return (
+        !preexistingRelevantProcessesWereUnavailable &&
+        Array.isArray(preexistingRelevantProcesses) &&
+        applicationLaunchBegan &&
+        ownershipEstablished &&
+        cleanupCompleted &&
+        screenshotCaptured &&
+        launchCount === 2 &&
+        actualOwnershipExitProof
       );
     case "cleanup":
       return (
@@ -2712,6 +3964,58 @@ function isPublicId(value) {
   );
 }
 
+function isPhase3Id(value) {
+  return (
+    typeof value === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9@._:-]{0,199}$/u.test(value)
+  );
+}
+
+function isBoundedEvidenceText(value, maximumLength) {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= maximumLength &&
+    /\S/u.test(value) &&
+    !value.includes("\0") &&
+    !/[\r\n]/u.test(value)
+  );
+}
+
+function isUniquePhase3IdArray(value, minimum, maximum) {
+  return (
+    Array.isArray(value) &&
+    value.length >= minimum &&
+    value.length <= maximum &&
+    value.every(isPhase3Id) &&
+    new Set(value).size === value.length
+  );
+}
+
+function isOrderedUniquePidArray(value, minimum, maximum) {
+  const normalized = sortedUniquePids(value);
+  return (
+    Array.isArray(normalized) &&
+    normalized.length >= minimum &&
+    normalized.length <= maximum &&
+    equalNumberArrays(value, normalized)
+  );
+}
+
+function canonicalizeJsonValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeJsonValue);
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizeJsonValue(value[key])]),
+    );
+  }
+  return value;
+}
+
 function equalStringArrays(value, expected) {
   return (
     Array.isArray(value) &&
@@ -2868,11 +4172,11 @@ function normalizeRunner(value) {
     runner.os !== "Windows" ||
     runner.architecture !== "X64" ||
     runner.environment !== "github-hosted" ||
-    runner.workflow !== "Phase 2 Windows CI" ||
+    runner.workflow !== "Phase 3A Windows CI" ||
     runner.job !== "verify-and-build"
   ) {
     throw new Error(
-      "The build-evidence runner does not match the Phase 2 Windows CI job.",
+      "The build-evidence runner does not match the Phase 3A Windows CI job.",
     );
   }
   return runner;
@@ -3061,6 +4365,13 @@ async function main() {
       ),
       resultPath: environmentValue(
         BUILD_EVIDENCE_ENVIRONMENT.resultPath,
+      ),
+      phase3ResultPath: environmentValue(
+        BUILD_EVIDENCE_ENVIRONMENT.phase3ResultPath,
+      ),
+      phase3VoiceCastingEvidencePath: environmentValue(
+        BUILD_EVIDENCE_ENVIRONMENT
+          .phase3VoiceCastingEvidencePath,
       ),
       stepOutcome: environmentValue(
         BUILD_EVIDENCE_ENVIRONMENT.stepOutcome,

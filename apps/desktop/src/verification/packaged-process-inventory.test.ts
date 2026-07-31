@@ -731,6 +731,38 @@ describe("packaged process inventory", () => {
     );
   });
 
+  it("fails closed on a launch-window orphan whose path is unavailable", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      creationDate: "2026-07-29T18:15:20.0000000Z",
+      kind: "app"
+    });
+    const orphanedService = processIdentity({
+      pid: 4102,
+      parentPid: 4101,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:22.0000000Z"
+    });
+
+    expect(() =>
+      adoptVerifiedProcessTree({
+        current: [orphanedService],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
+      })
+    );
+  });
+
   it("does not adopt an older exact-path identity outside the launch window", () => {
     const root = ownedProcess({
       pid: 4100,

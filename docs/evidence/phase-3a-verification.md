@@ -1,6 +1,6 @@
 # Phase 3A verification record
 
-## Evidence policy and current status
+## Evidence policy and closure model
 
 This record defines the Phase 3A evidence boundary. Dated run IDs, test counts,
 artifact identities, hashes, process IDs, timestamps, and observed scale
@@ -23,11 +23,17 @@ content, bearer tokens, credentials, personal paths, databases, audio, models,
 license or identity documents, provider payloads, or real-person voice data.
 Fixed repository-relative labels for the public synthetic fixture are allowed.
 
-Phase 3A evidence is not closed until the final branch head passes all required
-local gates and all final-head GitHub workflows. Generated evidence manifests,
-screenshots, unpacked applications, service binaries, databases, and temporary
-app-data directories remain ignored workflow/local artifacts and are never
-committed.
+The canonical implementation artifact below was produced and exercised from
+code/artifact source commit
+`e46137d5b0b5761b3b0954474899d8fc00c68a3b`. The evidence-closure commit
+containing this record changes only this document. Its own push and
+pull-request workflows must also pass before handoff; those final-head run
+identities belong in the handoff report because writing them back here would
+create another untested head.
+
+Generated evidence manifests, screenshots, unpacked applications, service
+binaries, databases, and temporary app-data directories remain ignored
+workflow/local artifacts and are never committed.
 
 ## Canonical controls under test
 
@@ -313,27 +319,302 @@ Manual verification supplements but does not replace executable E2E:
 | 20. Backup and rollback | [Migration 0004 downgrade and recovery](../migrations/0004-phase-3a-voice-casting.md#downgrade-and-recovery) |
 | 21. Known limitations | [Phase 3A known limitations](../architecture/phase-3a-known-limitations.md) |
 
-## Evidence-closure fields
+## Evidence closure
 
-Before handoff, replace this section with dated, final-head observations:
+### Revision and evidence layers
 
-- branch, head SHA, draft PR number/title/state;
-- local environment and exact results/counts;
-- Windows CI, Security, and Dependency review run/job IDs and results;
-- exact artifact ID/size/digest/expiry;
-- executable and staged/embedded service sizes/SHA-256;
-- packaged result/screenshot/manifest sizes/SHA-256;
-- exact manifest contents/assertion summary;
-- casting run/profile/catalog/role/candidate/conflict/assignment/gate evidence;
-- custom-role preconditions/idempotency/content-free projection and snapshot/review invalidation;
-- semantic correction lineage, exact rejection/lock successors, reusable-category enforcement, and bounded gate-warning overflow;
-- exact owned Electron/service PID creation and exit proof, including each
-  Electron exit code and each ServiceManager termination method/exit
-  code/signal/force-kill result;
-- migration fixture/signatures and scale observations;
-- repository and secret-scan file/commit counts; and
-- every skip, warning, unverified behavior, and known limitation.
+| Field | Exact observation |
+| --- | --- |
+| Branch | `codex/phase-3a-voice-casting` |
+| Base | `main` at `6ac75d9ba9b3c486e410d620888b1521c6b18105` |
+| Code/artifact source commit | `e46137d5b0b5761b3b0954474899d8fc00c68a3b` |
+| Draft pull request | #5, `Phase 3A: add governed voice profiles and casting`, open, draft, unmerged |
+| Application version | `0.1.0` |
+| Verification date | 2026-07-31 UTC |
+| Canonical push Windows run/job | `30626073328` / `91141552276`, attempt 1, successful |
+| Code-head PR Windows run/job | `30626076163` / `91141560705`, attempt 1, successful |
+| Push Security run/job | `30626073097` / `91141531900`, successful |
+| PR Security run/job | `30626076105` / `91141542196`, successful |
+| Dependency Review run/job | `30626076109` / `91141541962`, successful |
 
-Until those values are populated from successful final-head executions, this
-document is a verification specification and does not claim Phase 3A evidence
-closure.
+The canonical artifact is the push-run artifact because its workflow head and
+tested checkout both equal the code/artifact source commit and its
+`pullRequestHeadSha` is correctly null. The pull-request run checked out merge
+commit `fe6af9509a81ff074bfcbc542d15f5a07d2853d9` and separately bound
+`pullRequestHeadSha` to the exact code/artifact source commit. Both exact
+artifacts passed their own packaged E2E.
+
+### Local final-head verification
+
+The documentation-only closure tree was verified on Microsoft Windows
+`10.0.26100` with Node.js `24.14.0`, pnpm `11.9.0`, CPython `3.14.6`, and
+FFmpeg `8.1.2`. FFmpeg was present locally, so the local and hosted backend
+counts are intentionally different.
+
+| Local gate | Exact closure-tree result |
+| --- | --- |
+| Frozen installation | `pnpm install --frozen-lockfile` passed; the hash-locked Python environment was already exact; editable install reconstruction and `pip check` passed with no broken requirement |
+| Lint and policy | `pnpm lint` passed TypeScript/Python lint plus tracked-file and diff policy checks |
+| Type checks | Both TypeScript projects passed; strict mypy passed all 22 service source files |
+| Full repository tests | 51 schema/tooling tests passed in 9.294 seconds; 301 backend tests passed, 0 skipped, and 1 warning in 982.08 seconds; 14 desktop files and 199 tests passed in 31.13 seconds |
+| Focused Phase 2 suite | 90 passed with the same warning in 360.20 seconds; repeated subset, not additive |
+| Focused Phase 3A suite | 64 passed with the same warning in 399.05 seconds; repeated subset, not additive |
+| Development Electron E2E | 1 passed in 5.7 minutes, including real service restart and restoration |
+| Build | `pnpm build` passed contracts, service build/smoke/staging, desktop build, and unpacked Electron packaging |
+| Exact local packaged E2E | 1 passed in 8.3 minutes against `apps/desktop/release/0.1.0/win-unpacked/Cinematic Story Studio.exe`; both launches, Phase 0-3A restoration, and owned-process exit passed |
+| Repository safeguards | Final `pnpm lint`, 319-file tracked scan, one-file staged scan, `pnpm precommit`, and staged diff check all passed without findings |
+
+The full backend warning was the same upstream
+`StarletteDeprecationWarning` repeated by each focused subset. No local test
+was skipped. The first packaged-harness invocation failed closed before
+application launch because the required evidence-path environment variables
+were absent; after those variables were bound to the exact local release
+paths, the committed harness passed. This configuration failure created no
+application or service process and is not counted as an executed packaged
+scenario.
+
+The successful local packaged run regenerated these ignored artifacts:
+
+| Local file | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `release/0.1.0/win-unpacked/Cinematic Story Studio.exe` | 225,613,824 | `b6756f1d6cd5041def6d737422971205b22e366b0755373330aaca3750da4912` |
+| `build-resources/service/cinematic-story-service.exe` | 28,669,659 | `27f2db80cf2416cb7acf353e434046144f8f37352344fea9fd57aa2da64ff30e` |
+| `release/0.1.0/win-unpacked/resources/service/cinematic-story-service.exe` | 28,669,659 | `27f2db80cf2416cb7acf353e434046144f8f37352344fea9fd57aa2da64ff30e` |
+| `release/0.1.0/packaged-e2e-result.json` | 22,940 | `05108c11f0b4ad511ef0bd7940a8fb76eadee3617304e4ffca5534a28541a290` |
+| `release/0.1.0/phase-3-packaged-e2e-result.json` | 9,002 | `b4349be690365fe0acd2af19e113f1db333837c46e333092d062184523f5cd98` |
+| `release/0.1.0/phase-3-voice-casting-evidence.json` | 17,208 | `8c49eb5eb718e90144a25000e8b20da69a2ae257e452312f6e4eaba33eb8998d` |
+| `release/0.1.0/packaged-e2e.png` | 200,276 | `e7b2cb44de62054255bc54c3f09c3c4358be9f8e38c23388624f225e36e60a3a` |
+
+The local staged and embedded services matched exactly. No local
+cross-environment reproducibility is claimed, and the locally present
+`build-evidence.json` was not regenerated by this run and is not cited.
+
+The successful local packaged proof recorded no preexisting relevant process
+for either launch. Launch 1 bound launcher/root `12048/17928` to owned
+Electron PIDs `1964,5440,8016,17928,19672` and owned service PIDs
+`7992,14076,21392`; Electron exited `0` without force and direct service
+`21392` exited `0` by `stdin_eof`, without signal or force. Launch 2 bound
+launcher/root `15912/2948` to owned Electron PIDs
+`2948,16164,17480,20204` and owned service PIDs `5152,13668`; Electron
+exited `0` without force and direct service `13668` exited `0` by
+`stdin_eof`, without signal or force. Aggregate
+`forcedPids=[]`, `remainingOwnedPids=[]`, and
+`unrelatedProcessesTerminated=false`; no process was killed or adopted by
+name.
+
+### Canonical code-head GitHub Actions
+
+The canonical push job used runner `2.336.0`, hosted-agent provisioner
+`20260707.563`, Microsoft Windows Server 2025 Datacenter `10.0.26100`, image
+`windows-2025-vs2026` version `20260728.188.1`, Node.js `24.18.0`, pnpm
+`11.9.0`, and CPython `3.12.10`.
+
+Every positive step succeeded: credential-free checkout; Python, pnpm, and
+Node setup; frozen Node and hash-locked Python installation with `pip check`;
+exact parser/catalog/fixture verification; lint; type checks; full tests;
+focused Phase 2 and Phase 3A suites; development assets and mandatory Electron
+E2E; service/application build; exact packaged E2E; manifest generation,
+validation, and final exact-byte revalidation; tracked rescan; clean-tree
+verification; and the short-lived upload. Failure diagnostics and the five
+failure-enforcement steps were skipped because their failure predicates were
+false.
+
+| GitHub check | Push result | PR result |
+| --- | --- | --- |
+| Locked schema/tooling/parser/fixture tests | 51 passed | 51 passed |
+| Full backend | 300 passed, 1 skipped, 1 warning in 621.48 seconds | 300 passed, 1 skipped, 1 warning in 691.68 seconds |
+| Desktop | 14 files, 199 passed | 14 files, 199 passed |
+| Focused Phase 2 | 90 passed, 1 warning in 206.01 seconds | 90 passed, 1 warning |
+| Focused Phase 3A | 64 passed, 1 warning in 214.48 seconds | 64 passed, 1 warning |
+| Development Electron E2E | 1 passed in 3.7 minutes | 1 passed in 4.2 minutes |
+| Exact-artifact packaged E2E | 1 passed in 4.0 minutes | 1 passed in 4.7 minutes |
+| Manifest/scan/clean tree/upload | All successful | All successful |
+
+Hosted FFmpeg was absent. Exactly
+`apps/local-service/tests/test_audio_qc.py:254` skipped for that reason; the
+other 300 backend tests passed. The warning was the upstream
+`StarletteDeprecationWarning` for the current `httpx`/TestClient path and was
+repeated by each focused subset rather than representing additional findings.
+
+### Artifact identities and independently rehashed files
+
+| Run | Artifact ID | Compressed bytes | Digest | Expiry |
+| --- | ---: | ---: | --- | --- |
+| Push `30626073328` | `8792069223` | 427,673,146 | `sha256:2bf89250017d22d5a16090c066ad1f1b6c7e84c9c4f1684de145ca8d55b89c9d` | `2026-08-07T11:39:30Z` |
+| PR `30626076163` | `8792186169` | 427,667,392 | `sha256:0a5be03a053517fbac99324e56dd6b2d420534f98f19cb2a1669b4af73c6b97e` | `2026-08-07T11:44:29Z` |
+
+Both artifact names are
+`cinematic-story-studio-phase-3a-windows-unpacked-e46137d5b0b5761b3b0954474899d8fc00c68a3b`
+and have seven-day retention. No failure-diagnostics artifact was created.
+The canonical push artifact was downloaded outside the repository and these
+exact files were independently rehashed:
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `release/0.1.0/win-unpacked/Cinematic Story Studio.exe` | 225,613,824 | `b6756f1d6cd5041def6d737422971205b22e366b0755373330aaca3750da4912` |
+| `build-resources/service/cinematic-story-service.exe` | 27,315,238 | `64a3b91f421f931db7e50832df4d0064ec7aaae7fb791ff2ce82a241093245bf` |
+| `release/0.1.0/win-unpacked/resources/service/cinematic-story-service.exe` | 27,315,238 | `64a3b91f421f931db7e50832df4d0064ec7aaae7fb791ff2ce82a241093245bf` |
+| `release/0.1.0/packaged-e2e-result.json` | 22,912 | `cb3d417ec7b8c30c6412f15735532a742f71d9bcf04f08df9958fd310c8c87e7` |
+| `release/0.1.0/phase-3-packaged-e2e-result.json` | 8,989 | `f97133931badd69b95efc380dd4932efcaf4f157dc519e3c28cf78691a903dc2` |
+| `release/0.1.0/phase-3-voice-casting-evidence.json` | 17,195 | `098d653ca610dba0601f6e0cc335bb9ed3b2ab77ad7e457909919573d4b5067e` |
+| `release/0.1.0/packaged-e2e.png` | 157,432 | `826de05fac636712c85c8c6ca731be8ef223d1c7d7cbdfb5ffb4a0ed8a2bf712` |
+| `release/0.1.0/build-evidence.json` | 53,193 | `89870c04d8d4bd2d9dbaec3a94dd198623615e51444242cd01871968c0131506` |
+
+The concurrently produced PR service was 27,312,706 bytes with SHA-256
+`03562cb2f0563d3cc7d2c93b5defd2e0119c7ba1d8e28e1bd37b113e63451d3f`.
+Its staged and embedded copies matched exactly and that exact embedded service
+passed the PR packaged E2E. The differing push and PR service bytes are
+PyInstaller run/environment nondeterminism; no cross-run byte reproducibility
+is claimed.
+
+### Canonical manifest and casting proof
+
+The canonical manifest is schema `4.0.0`, uses repository-root-relative paths,
+records application version `0.1.0`, timestamp
+`2026-07-31T11:39:24.758Z`, and runner `GitHub Actions 1000001530`, Windows
+X64, GitHub-hosted, run `30626073328`, attempt 1, job
+`verify-and-build`. Its retained top-level Phase 2 packaged proof is schema
+`4.0.0`; `voiceCastingContract.packagedE2e` is schema `5.0.0` under casting
+contract `3.0.0`.
+
+All 14 top-level manifest assertions were true:
+`stagedServiceMatchesEmbeddedService`,
+`packagedE2eHarnessResultMatchesStepOutcome`,
+`packagedE2eOwnershipExitProven`, `phase1DocxImportReviewProven`,
+`phase2ProfileAndAgentsProven`, `phase2ApprovedInputProven`,
+`phase2RunSnapshotAndStagesProven`, `phase2StoryAssertionsProven`,
+`phase2CorrectionsProven`, `phase2FourGateDecisionsProven`,
+`phase2DecisionRecordsPersisted`, `phase2RestartDurabilityProven`,
+`phase2WholeBookAnalysisProven`, and `packagedE2eEvidenceComplete`.
+
+All 11 Phase 3A assertions were also true:
+`phase2PrerequisitesCurrent`, `castingProfilePinned`,
+`catalogFingerprintVerified`, `rolesCreated`,
+`boundedCandidatesCreated`, `metadataConflictProven`,
+`rightsGovernanceProven`, `humanAssignmentsLocked`,
+`threeGateDecisionsPersisted`, `restartPersistenceProven`, and
+`processOwnershipExitProven`.
+
+| Casting evidence | Canonical value |
+| --- | --- |
+| Phase 2 run/snapshot | `80e15f85-b025-44f2-ac24-de3c291cd4e5`; `0dc2b24f-c76a-4b6d-ae9c-03210be2f5ca` revision 1 |
+| Phase 2 snapshot fingerprint | `4466789efda5fcc7278b2e34086436b3694ed6196f9da203400bba7758b0fbeb` |
+| Phase 2 correction-set fingerprint | `67c2182c9209984296cd9c2412dc606b18b2cc4a62c8a1f1350c15bb48b043f7` |
+| Casting run | `99732ac3-574e-4f63-80aa-614741128e59` |
+| Reviewable cast snapshot | `c354db98-5fc6-44a0-90bf-09c52869654f`, revision 22, fingerprint `5fa845da0723b096d786b9d48b6b8bbdaad150db4b34c44b554edd875b02acc7` |
+| Counts | 7 roles; 1 narrator; 6 characters; 98 pre-reduction; 84 final candidates; 36 active conflicts; 4 assignments; 21 corrections |
+| Narrator assignment | `b6a78226-7444-4703-8087-47ce49933e86`, `synthetic-narrator-02`, human-locked, restricted rights acknowledged |
+| Character assignments | `d47b9fd3-ce68-4256-ae26-9ef40abc8a54`, `5b1a432d-5912-49ef-95af-d54b3dd71534`, `e38db189-c96f-4ee5-8d1b-7a4a0f9fa22b`, all human-locked |
+| Conflict/disposition | `6e37a649-e33c-5bd8-82c0-b8a4115b949b` / `51d12ba7-e796-4b2e-9638-76485fa24d61` |
+| Casting decisions | `7904610b-2310-4adf-819e-cfdfae0d92ce`, `9e5e6542-0529-4c8f-b0e9-1a93e74c0dc2`, `58412ce8-38bd-4e20-bb27-b72e7262a663` |
+| Rights result | `eligible_after_required_acknowledgements`; ineligible final approval was rejected |
+| Restart | corrections, conflict disposition, assignments, snapshot, and all three decisions restored |
+
+The exact Phase 3A flow was: create project; import the synthetic DOCX; wait
+for extraction; approve Import Review; complete Phase 2 and verify four
+approvals; open Casting; load the synthetic catalog; create roles; run
+casting; inspect, select, and lock narrator and character voices; surface and
+disposition a metadata-only conflict; surface restricted/ineligible rights;
+reject ineligible final approval; approve all three casting gates; close and
+prove owned-process exit; restart the same application; restore Phase 0-3A
+evidence; close; and prove final owned-process exit.
+
+### Canonical owned-process termination
+
+Both launch inventories recorded no preexisting relevant process. Ownership
+was established only from the exact executable identity, creation identity,
+ancestry rooted at the test launcher, and the owned service handshake.
+
+| Launch | Launcher/root | Owned app PIDs | Owned service PIDs | Direct shutdown proof |
+| --- | --- | --- | --- | --- |
+| 1 | 4352 / 8828 | 1820, 2128, 4988, 8092, 8828 | 6560, 7000, 7948 | Electron exit 0, no force; service 7948, `stdin_eof`, exit 0, no signal, no force |
+| 2 | 1484 / 4976 | 1932, 3588, 4976, 6236 | 2640, 8572 | Electron exit 0, no force; service 2640, `stdin_eof`, exit 0, no signal, no force |
+
+The aggregate proof recorded Electron PIDs
+`[1820,1932,2128,3588,4976,4988,6236,8092,8828]`, service PIDs
+`[2640,6560,7000,7948,8572]`, `forcedPids=[]`,
+`remainingOwnedPids=[]`, and `unrelatedProcessesTerminated=false`. No process
+was killed or adopted by name.
+
+### Governance, migration, and scale regressions
+
+Executable governance tests passed the custom-role succeeded-run and exact
+fingerprint preconditions, content-free/zero-workload projection, exact
+idempotent replay, changed-material rejection, immutable snapshot/review
+append, semantic correction domains, one-successor constraint, exact
+rejection and unlock successors, four-category reuse disposition restriction,
+candidate-only warning exclusion, and fail-closed 32-warning overflow.
+
+The frozen v3 SQL fixture is 41,242 bytes with SHA-256
+`13bc84c31745933f14a4b128e502d78d6ad31cd6657b1a4d57fa7fb2cdd359b6`.
+Migration tests passed exact v3 signature/ledger validation, verified
+logical-digest-equal backup, atomic v4 publication, complete Phase 0-2
+preservation, empty initial Phase 3A tables, injected rollback with backup
+retention, drift/future/downgrade rejection, integrity checks, and controlling
+index/query-plan checks.
+
+The frozen v4 fingerprints are: fresh table metadata
+`b6614c36b0eca6e77d8de0c5c120ac5bb05cc054496a52f8c5ea68f64faf0f3b`;
+migrated table metadata
+`0e4c66c6fe855e1eedc7d2e1ef687e2e49c9d0c505c58a0e66fff34e5389d122`;
+indexes
+`fa5c2efb6de3c7c7c6f22dc99572e8e8318663499c22ba6ed294975286460360`;
+fresh SQL
+`f633a359fb0e1068f6638d3856e04764a8749c64b29d956e73af28fd97f1750d`;
+and migrated SQL
+`5eea446d0c1aefce883468880dd647494cd3ffe5292b713b02375632a907048a`.
+
+The dedicated maximum-scale candidate-reduction invocation passed in 10.13
+seconds. An external descendant-only sampler observed 14.106 seconds of wall
+time and a peak owned-process-tree working set of 205,303,808 bytes
+(195.793 MiB) across the exact owned Python launcher, console host, and Python
+worker PIDs `19212,13872,4032`. The sampler neither inspected nor terminated
+unrelated process trees.
+
+The executable bound remains 300 roles, 5,000 profiles, 15,000 pre-reduction
+assessments, no more than 3,600 published candidates, deterministic rerun
+fingerprints, conflict evaluation, indexed pagination, cancellation, retry,
+checkpoint recovery, and atomic publication. The time and owned-tree working
+set are workstation observations for regression evidence, not universal
+latency or memory SLAs.
+
+### Security, dependency scope, warnings, and limitations
+
+Both code-head Security jobs scanned 319 tracked files and 43 commits
+(approximately 5.79 MB) with checksum-pinned Gitleaks `8.30.1` archive SHA-256
+`551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb`.
+Repository policy and full-history secret scanning passed with no leak. The
+exact historical synthetic-test fingerprints in `.gitleaksignore` are narrow
+audited suppressions; unrelated findings still fail.
+
+Dependency Review used `fail-on-severity: moderate`, found no
+moderate-or-higher vulnerable dependency, no denied package, and no dependency
+change. This is pull-request delta evidence. Frozen pnpm installation,
+hash-locked Python installation, and `pip check` are integrity evidence. Phase
+3A does not add or claim comprehensive `pnpm audit` or `pip-audit` CI coverage.
+
+Non-failing hosted notices remain: the single repeated Starlette/TestClient
+deprecation; Node `DEP0190` and pnpm-layout messages from the pnpm action
+bootstrap; that action's own transient one-tool-package npm audit message;
+electron-builder's future implicit-publish behavior notice, missing package
+author, and package-manager detection fallback. The successful job's failure
+diagnostics and five failure-enforcement controls skipped by design. Earlier
+Security failures and Windows cancellations were superseded by the exact-head
+fixes and successful runs above.
+
+The verification does not relax the documented limitations: the catalog is
+synthetic descriptor metadata; there is no executable provider, synthesis,
+audio, cloud, model-download, credential, audition, or export path; metadata
+scores do not establish artistic correctness or acoustic similarity; rights
+records and acknowledgement do not provide legal certainty; role inference
+and workload are bounded approximations; invalidated assignments require
+human remapping; checkpoint resume is staged rather than arbitrary per-role;
+bounded list paging is not claimed as runtime keyset SQL; the project database
+is not application-encrypted; v4 has no in-place downgrade; and the unpacked
+artifact is unsigned verification evidence, not a release.
+
+The executable evidence maps VS-301 through VS-326 to the service,
+API/tooling, desktop, migration, governance, and scale suites; VS-327 to
+development Electron E2E; VS-328 to exact-artifact packaged E2E; VS-329 to
+owned-process termination; VS-330 to manifest/artifact/security proof; and
+VS-331 to the complete Phase 0-2 regression gate.

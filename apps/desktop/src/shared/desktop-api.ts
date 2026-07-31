@@ -1,5 +1,6 @@
 import type {
   CorrectDialogueSpeakerResponse,
+  CreateJobRequest,
   CreateProjectResponse,
   DecideImportReviewResponse,
   FfmpegCapabilityResponse,
@@ -9,7 +10,6 @@ import type {
   ImportStoryResponse,
   JobEventsResponse,
   JobResponse,
-  JobType,
   ProjectDetail,
   ProjectPageResponse,
   ProviderHealthResponse
@@ -33,6 +33,34 @@ import type {
   ListAnalysisReviewsInput,
   ListAnalysisRunsInput
 } from "./analysis-api.js";
+import type {
+  AppendCastingCorrectionInput,
+  AppendCastingCorrectionResponse,
+  CastAssignmentsResponse,
+  CastingCandidatesResponse,
+  CastingConflictsResponse,
+  CastingCorrectionsResponse,
+  CastingRunInput,
+  CastingRunResponse,
+  CastingRunsResponse,
+  CastingReviewsResponse,
+  CreateCustomProductionRoleInput,
+  CreateCustomProductionRoleResponse,
+  CreateCastingRunInput,
+  CreateCastingRunResponse,
+  DecideCastingReviewInput,
+  DecideCastingReviewResponse,
+  ListCastAssignmentsInput,
+  ListCastingCandidatesInput,
+  ListCastingConflictsInput,
+  ListCastingCorrectionsInput,
+  ListCastingReviewsInput,
+  ListCastingRunsInput,
+  ListProductionRolesInput,
+  ListVoiceCatalogInput,
+  ProductionRolesResponse,
+  VoiceCatalogResponse
+} from "./casting-api.js";
 
 export type {
   AnalysisProjectInput,
@@ -60,6 +88,19 @@ export const IPC_CHANNELS = {
   analysisAppendCorrection: "css:analysis:append-correction",
   analysisListReviews: "css:analysis:list-reviews",
   analysisDecideReview: "css:analysis:decide-review",
+  castingGetCatalog: "css:casting:get-catalog",
+  castingCreateRun: "css:casting:create-run",
+  castingListRuns: "css:casting:list-runs",
+  castingGetRun: "css:casting:get-run",
+  castingListRoles: "css:casting:list-roles",
+  castingCreateCustomRole: "css:casting:create-custom-role",
+  castingListCandidates: "css:casting:list-candidates",
+  castingListConflicts: "css:casting:list-conflicts",
+  castingListAssignments: "css:casting:list-assignments",
+  castingListCorrections: "css:casting:list-corrections",
+  castingAppendCorrection: "css:casting:append-correction",
+  castingListReviews: "css:casting:list-reviews",
+  castingDecideReview: "css:casting:decide-review",
   dialogueCorrectSpeaker: "css:dialogue:correct-speaker",
   jobsCreate: "css:jobs:create",
   jobsGet: "css:jobs:get",
@@ -140,7 +181,7 @@ export interface CorrectSpeakerInput {
 
 export interface CreateJobInput {
   readonly projectId: string;
-  readonly type: JobType;
+  readonly type: CreateJobRequest["type"];
   readonly inputRevision: number;
   readonly idempotencyKey: string;
 }
@@ -211,6 +252,47 @@ export interface CinematicStoryDesktopApi {
     readonly decideReview: (
       input: DecideAnalysisReviewInput
     ) => Promise<DesktopResult<DecideAnalysisReviewResponse>>;
+  };
+  readonly casting: {
+    readonly getCatalog: (
+      input: ListVoiceCatalogInput
+    ) => Promise<DesktopResult<VoiceCatalogResponse>>;
+    readonly createRun: (
+      input: CreateCastingRunInput
+    ) => Promise<DesktopResult<CreateCastingRunResponse>>;
+    readonly listRuns: (
+      input: ListCastingRunsInput
+    ) => Promise<DesktopResult<CastingRunsResponse>>;
+    readonly getRun: (
+      input: CastingRunInput
+    ) => Promise<DesktopResult<CastingRunResponse>>;
+    readonly listRoles: (
+      input: ListProductionRolesInput
+    ) => Promise<DesktopResult<ProductionRolesResponse>>;
+    readonly createCustomRole: (
+      input: CreateCustomProductionRoleInput
+    ) => Promise<DesktopResult<CreateCustomProductionRoleResponse>>;
+    readonly listCandidates: (
+      input: ListCastingCandidatesInput
+    ) => Promise<DesktopResult<CastingCandidatesResponse>>;
+    readonly listConflicts: (
+      input: ListCastingConflictsInput
+    ) => Promise<DesktopResult<CastingConflictsResponse>>;
+    readonly listAssignments: (
+      input: ListCastAssignmentsInput
+    ) => Promise<DesktopResult<CastAssignmentsResponse>>;
+    readonly listCorrections: (
+      input: ListCastingCorrectionsInput
+    ) => Promise<DesktopResult<CastingCorrectionsResponse>>;
+    readonly appendCorrection: (
+      input: AppendCastingCorrectionInput
+    ) => Promise<DesktopResult<AppendCastingCorrectionResponse>>;
+    readonly listReviews: (
+      input: ListCastingReviewsInput
+    ) => Promise<DesktopResult<CastingReviewsResponse>>;
+    readonly decideReview: (
+      input: DecideCastingReviewInput
+    ) => Promise<DesktopResult<DecideCastingReviewResponse>>;
   };
   readonly jobs: {
     readonly create: (

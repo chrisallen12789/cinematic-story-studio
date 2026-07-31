@@ -112,6 +112,7 @@ export interface AnalysisWorkspaceProps {
   readonly onNotice: (message: string) => void;
   readonly onError: (error: DesktopError) => void;
   readonly onRunChange?: (run: AnalysisRun, job?: Job) => void;
+  readonly onProjectRefresh?: () => Promise<void> | void;
 }
 
 export function AnalysisWorkspace({
@@ -120,7 +121,8 @@ export function AnalysisWorkspace({
   connected,
   onNotice,
   onError,
-  onRunChange
+  onRunChange,
+  onProjectRefresh
 }: AnalysisWorkspaceProps) {
   const projectId = project.project.projectId;
   const [runs, setRuns] = useState<readonly AnalysisRun[]>([]);
@@ -920,8 +922,8 @@ export function AnalysisWorkspace({
     ) {
       return;
     }
-    setBusyAction(null);
     if (!result.ok) {
+      setBusyAction(null);
       onError(result.error);
       return;
     }
@@ -929,6 +931,7 @@ export function AnalysisWorkspace({
       propagate:
         project.currentAnalysisRun?.runId === result.value.run.runId
     });
+    await onProjectRefresh?.();
     setReviews(orderReviews(result.value.reviews));
     setCorrections((current) => [
       result.value.correction,
@@ -944,6 +947,7 @@ export function AnalysisWorkspace({
     setCorrectionTarget(null);
     setCorrectionDraft(null);
     await loadCorrections(result.value.run);
+    setBusyAction(null);
     onNotice(
       `Human correction saved; ${result.value.invalidatedGateIds.length} review gate${
         result.value.invalidatedGateIds.length === 1 ? "" : "s"
@@ -991,8 +995,8 @@ export function AnalysisWorkspace({
     ) {
       return;
     }
-    setBusyAction(null);
     if (!result.ok) {
+      setBusyAction(null);
       onError(result.error);
       return;
     }
@@ -1000,6 +1004,7 @@ export function AnalysisWorkspace({
       propagate:
         project.currentAnalysisRun?.runId === result.value.run.runId
     });
+    await onProjectRefresh?.();
     setReviews((current) =>
       orderReviews([
         result.value.review,
@@ -1015,6 +1020,7 @@ export function AnalysisWorkspace({
       [review.gateId]: false
     }));
     await loadReviews(result.value.run);
+    setBusyAction(null);
     onNotice(
       `${gateTitle(review.gateId)} recorded as ${decisionTitle(decision)}.`
     );

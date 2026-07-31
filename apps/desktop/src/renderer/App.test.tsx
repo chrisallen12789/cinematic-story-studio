@@ -817,18 +817,22 @@ describe("Phase 0 desktop workspace", () => {
     });
   });
 
-  it("renders one typed unassigned casting row per detected character", async () => {
+  it("mounts the governed casting workspace without falling back to placeholders", async () => {
     const api = createApi({ project: createProjectDetail() });
     const user = userEvent.setup();
     render(<App api={api} />);
 
     await screen.findByText('"We should go."');
     await user.click(screen.getByRole("button", { name: "Casting" }));
-    expect(screen.getByRole("heading", { name: "Alice" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Bob" })).toBeVisible();
-    expect(screen.getAllByText("Unassigned")).toHaveLength(2);
-    expect(screen.getAllByText("No provider or voice selected.")).toHaveLength(
-      2
+    expect(
+      await screen.findByRole("heading", { name: "Casting workspace" })
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Phase 2 prerequisite status" })
+    ).toBeVisible();
+    expect(screen.getByText("governed-voice-casting-v1@1.0.0")).toBeVisible();
+    expect(api.casting.getCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "project-1", limit: 50 })
     );
   });
 
@@ -1035,6 +1039,47 @@ function createApi(options?: {
       ),
       decideReview: vi.fn(async () =>
         fail<never>("ANALYSIS_NOT_CONFIGURED")
+      )
+    },
+    casting: {
+      getCatalog: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      createRun: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      listRuns: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      getRun: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      listRoles: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      createCustomRole: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      listCandidates: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      listConflicts: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      listAssignments: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      listCorrections: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      appendCorrection: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      listReviews: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
+      ),
+      decideReview: vi.fn(async () =>
+        fail<never>("CASTING_NOT_CONFIGURED")
       )
     },
     jobs: {
@@ -1311,6 +1356,16 @@ function createProjectDetail(options?: {
       }
     ],
     approvals: [],
+    voiceCasting: {
+      contractVersion: "3.0.0",
+      currentRun: null,
+      catalogRevision: {},
+      catalogFingerprint: "e".repeat(64),
+      profile: {},
+      gateReviews: []
+    } as unknown as ProjectDetail["voiceCasting"],
+    currentCastingRun: null,
+    castingGateReviews: [],
     jobs: options?.jobs ?? []
   };
 }
@@ -1323,6 +1378,10 @@ function createJob(
     projectId: "project-1",
     type: "analyze_story",
     state: "queued",
+    target: {
+      type: "story",
+      id: "story-1"
+    },
     inputRevision: 3,
     inputFingerprint: "d".repeat(64),
     attempt: 1,

@@ -40,6 +40,34 @@ import type {
   ListAnalysisRunsInput
 } from "../shared/analysis-api.js";
 import type {
+  AppendCastingCorrectionInput,
+  AppendCastingCorrectionResponse,
+  CastAssignmentsResponse,
+  CastingCandidatesResponse,
+  CastingConflictsResponse,
+  CastingCorrectionsResponse,
+  CastingRunInput,
+  CastingRunResponse,
+  CastingRunsResponse,
+  CastingReviewsResponse,
+  CreateCustomProductionRoleInput,
+  CreateCustomProductionRoleResponse,
+  CreateCastingRunInput,
+  CreateCastingRunResponse,
+  DecideCastingReviewInput,
+  DecideCastingReviewResponse,
+  ListCastAssignmentsInput,
+  ListCastingCandidatesInput,
+  ListCastingConflictsInput,
+  ListCastingCorrectionsInput,
+  ListCastingReviewsInput,
+  ListCastingRunsInput,
+  ListProductionRolesInput,
+  ListVoiceCatalogInput,
+  ProductionRolesResponse,
+  VoiceCatalogResponse
+} from "../shared/casting-api.js";
+import type {
   AnalysisRunInput,
   CorrectSpeakerInput,
   CreateJobInput,
@@ -58,6 +86,21 @@ import {
   validateDecideAnalysisReviewResponse,
   validateProjectAnalysisProjection
 } from "./analysis-validation.js";
+import {
+  validateAppendCastingCorrectionResponse,
+  validateCastAssignmentsResponse,
+  validateCastingCandidatesResponse,
+  validateCastingConflictsResponse,
+  validateCastingCorrectionsResponse,
+  validateCastingRunResponse,
+  validateCastingRunsResponse,
+  validateCastingReviewsResponse,
+  validateCreateCustomProductionRoleResponse,
+  validateCreateCastingRunResponse,
+  validateDecideCastingReviewResponse,
+  validateProductionRolesResponse,
+  validateVoiceCatalogResponse
+} from "./casting-validation.js";
 import { BackendUnavailableError, DesktopMainError } from "./errors.js";
 import type { ServiceManager } from "./service-manager.js";
 import {
@@ -78,6 +121,7 @@ export const IMPORT_LIMIT_BYTES = 8 * 1024 * 1024;
 // three projections plus bounded entity metadata; other routes stay at 16 MiB.
 export const PROJECT_RESPONSE_LIMIT_BYTES = IMPORT_LIMIT_BYTES * 24;
 const JSON_REQUEST_LIMIT_BYTES = 64 * 1024;
+const MAX_API_ROUTE_LENGTH = 2_048;
 const REQUEST_TIMEOUT_MS = 12_000;
 const IMPORT_TIMEOUT_MS = 45_000;
 
@@ -372,6 +416,273 @@ export class BackendApiClient {
           expectedArtifactFingerprint: input.expectedArtifactFingerprint,
           expectedEvidenceFingerprint: input.expectedEvidenceFingerprint,
           acknowledgedWarningIds: input.acknowledgedWarningIds,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async getVoiceCatalog(
+    input: ListVoiceCatalogInput
+  ): Promise<VoiceCatalogResponse> {
+    const query = castingCatalogPageQuery(input);
+    return validateVoiceCatalogResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/casting/catalog?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async createCastingRun(
+    input: CreateCastingRunInput
+  ): Promise<CreateCastingRunResponse> {
+    return validateCreateCastingRunResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/casting-runs`,
+        {
+          expectedAnalysisRunId: input.expectedAnalysisRunId,
+          expectedSnapshotId: input.expectedSnapshotId,
+          expectedSnapshotRevision: input.expectedSnapshotRevision,
+          expectedSnapshotFingerprint: input.expectedSnapshotFingerprint,
+          expectedCorrectionSetFingerprint:
+            input.expectedCorrectionSetFingerprint,
+          expectedImportReviewDecisionId:
+            input.expectedImportReviewDecisionId,
+          expectedAnalysisGateDecisionIds:
+            input.expectedAnalysisGateDecisionIds,
+          expectedCatalogRevisionId: input.expectedCatalogRevisionId,
+          expectedCatalogFingerprint: input.expectedCatalogFingerprint,
+          expectedCastingProfileFingerprint:
+            input.expectedCastingProfileFingerprint,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async listCastingRuns(
+    input: ListCastingRunsInput
+  ): Promise<CastingRunsResponse> {
+    const query = cursorPageQuery(input);
+    return validateCastingRunsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/casting-runs?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async getCastingRun(
+    input: CastingRunInput
+  ): Promise<CastingRunResponse> {
+    return validateCastingRunResponse(
+      await this.#jsonRequest(
+        "GET",
+        castingRunRoute(input.projectId, input.runId)
+      ),
+      input
+    );
+  }
+
+  async listProductionRoles(
+    input: ListProductionRolesInput
+  ): Promise<ProductionRolesResponse> {
+    const query = castingEvidencePageQuery(input);
+    return validateProductionRolesResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${castingRunRoute(input.projectId, input.runId)}/roles?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async createCustomProductionRole(
+    input: CreateCustomProductionRoleInput
+  ): Promise<CreateCustomProductionRoleResponse> {
+    return validateCreateCustomProductionRoleResponse(
+      await this.#jsonRequest(
+        "POST",
+        `${castingRunRoute(input.projectId, input.runId)}/roles`,
+        {
+          definitionId: input.definitionId,
+          label: input.label,
+          performanceRequirements: input.performanceRequirements,
+          reason: input.reason,
+          expectedRunFingerprint: input.expectedRunFingerprint,
+          expectedCatalogRevisionId: input.expectedCatalogRevisionId,
+          expectedCatalogFingerprint: input.expectedCatalogFingerprint,
+          expectedSnapshotId: input.expectedSnapshotId,
+          expectedSnapshotRevision: input.expectedSnapshotRevision,
+          expectedSnapshotFingerprint: input.expectedSnapshotFingerprint,
+          expectedCorrectionSetFingerprint:
+            input.expectedCorrectionSetFingerprint,
+          expectedCastingProfileFingerprint:
+            input.expectedCastingProfileFingerprint,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async listCastingCandidates(
+    input: ListCastingCandidatesInput
+  ): Promise<CastingCandidatesResponse> {
+    const query = castingEvidencePageQuery(input);
+    query.set("expectedRoleRevision", String(input.expectedRoleRevision));
+    return validateCastingCandidatesResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${castingRunRoute(
+          input.projectId,
+          input.runId
+        )}/roles/${encodeURIComponent(
+          input.roleId
+        )}/candidates?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async listCastingConflicts(
+    input: ListCastingConflictsInput
+  ): Promise<CastingConflictsResponse> {
+    const query = castingEvidencePageQuery(input);
+    return validateCastingConflictsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${castingRunRoute(
+          input.projectId,
+          input.runId
+        )}/conflicts?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async listCastAssignments(
+    input: ListCastAssignmentsInput
+  ): Promise<CastAssignmentsResponse> {
+    const query = castingEvidencePageQuery(input);
+    return validateCastAssignmentsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${castingRunRoute(
+          input.projectId,
+          input.runId
+        )}/assignments?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async listCastingCorrections(
+    input: ListCastingCorrectionsInput
+  ): Promise<CastingCorrectionsResponse> {
+    const query = castingEvidencePageQuery(input);
+    return validateCastingCorrectionsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${castingRunRoute(
+          input.projectId,
+          input.runId
+        )}/corrections?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async appendCastingCorrection(
+    input: AppendCastingCorrectionInput
+  ): Promise<AppendCastingCorrectionResponse> {
+    return validateAppendCastingCorrectionResponse(
+      await this.#jsonRequest(
+        "POST",
+        `${castingRunRoute(input.projectId, input.runId)}/corrections`,
+        {
+          operation: input.operation,
+          targetRoleId: input.targetRoleId,
+          expectedRoleRevision: input.expectedRoleRevision,
+          expectedRunFingerprint: input.expectedRunFingerprint,
+          expectedCatalogFingerprint: input.expectedCatalogFingerprint,
+          expectedSnapshotFingerprint: input.expectedSnapshotFingerprint,
+          expectedCorrectionSetFingerprint:
+            input.expectedCorrectionSetFingerprint,
+          previousEffectiveFingerprint: input.previousEffectiveFingerprint,
+          voiceProfileId: input.voiceProfileId,
+          correctedValue: input.correctedValue,
+          reason: input.reason,
+          supersedesCorrectionId: input.supersedesCorrectionId,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async listCastingReviews(
+    input: ListCastingReviewsInput
+  ): Promise<CastingReviewsResponse> {
+    const query = castingEvidenceQuery(input);
+    query.set(
+      "expectedApprovedCastSnapshotId",
+      input.expectedApprovedCastSnapshotId
+    );
+    query.set(
+      "expectedApprovedCastSnapshotRevision",
+      String(input.expectedApprovedCastSnapshotRevision)
+    );
+    return validateCastingReviewsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `${castingRunRoute(
+          input.projectId,
+          input.runId
+        )}/reviews?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async decideCastingReview(
+    input: DecideCastingReviewInput
+  ): Promise<DecideCastingReviewResponse> {
+    return validateDecideCastingReviewResponse(
+      await this.#jsonRequest(
+        "POST",
+        `${castingRunRoute(
+          input.projectId,
+          input.runId
+        )}/reviews/${encodeURIComponent(input.gateId)}/decisions`,
+        {
+          decision: input.decision,
+          expectedRevision: input.expectedRevision,
+          expectedEvidenceFingerprint: input.expectedEvidenceFingerprint,
+          expectedRunFingerprint: input.expectedRunFingerprint,
+          expectedApprovedCastSnapshotId:
+            input.expectedApprovedCastSnapshotId,
+          expectedApprovedCastSnapshotRevision:
+            input.expectedApprovedCastSnapshotRevision,
+          warningAcknowledgementIds: input.warningAcknowledgementIds,
+          rationale: input.rationale,
+          supersedesDecisionId: input.supersedesDecisionId,
           idempotencyKey: input.idempotencyKey
         },
         input.idempotencyKey
@@ -713,6 +1024,12 @@ function analysisRunRoute(projectId: string, runId: string): string {
   )}/analysis-runs/${encodeURIComponent(runId)}`;
 }
 
+function castingRunRoute(projectId: string, runId: string): string {
+  return `/api/v1/projects/${encodeURIComponent(
+    projectId
+  )}/casting-runs/${encodeURIComponent(runId)}`;
+}
+
 function cursorPageQuery(input: {
   readonly cursor?: string;
   readonly limit?: number;
@@ -722,6 +1039,63 @@ function cursorPageQuery(input: {
     query.set("cursor", input.cursor);
   }
   query.set("limit", String(input.limit ?? 50));
+  return query;
+}
+
+function castingCatalogPageQuery(input: {
+  readonly cursor?: string;
+  readonly limit?: number;
+  readonly expectedCatalogRevisionId?: string;
+  readonly expectedCatalogFingerprint?: string;
+}): URLSearchParams {
+  const query = cursorPageQuery(input);
+  if (input.expectedCatalogRevisionId !== undefined) {
+    query.set(
+      "expectedCatalogRevisionId",
+      input.expectedCatalogRevisionId
+    );
+  }
+  if (input.expectedCatalogFingerprint !== undefined) {
+    query.set(
+      "expectedCatalogFingerprint",
+      input.expectedCatalogFingerprint
+    );
+  }
+  return query;
+}
+
+function castingEvidenceQuery(input: {
+  readonly expectedRunFingerprint: string;
+  readonly expectedCatalogRevisionId: string;
+  readonly expectedCatalogFingerprint: string;
+  readonly expectedSnapshotId: string;
+  readonly expectedSnapshotRevision: number;
+  readonly expectedSnapshotFingerprint: string;
+}): URLSearchParams {
+  return new URLSearchParams({
+    expectedRunFingerprint: input.expectedRunFingerprint,
+    expectedCatalogRevisionId: input.expectedCatalogRevisionId,
+    expectedCatalogFingerprint: input.expectedCatalogFingerprint,
+    expectedSnapshotId: input.expectedSnapshotId,
+    expectedSnapshotRevision: String(input.expectedSnapshotRevision),
+    expectedSnapshotFingerprint: input.expectedSnapshotFingerprint
+  });
+}
+
+function castingEvidencePageQuery(input: {
+  readonly cursor?: string;
+  readonly limit?: number;
+  readonly expectedRunFingerprint: string;
+  readonly expectedCatalogRevisionId: string;
+  readonly expectedCatalogFingerprint: string;
+  readonly expectedSnapshotId: string;
+  readonly expectedSnapshotRevision: number;
+  readonly expectedSnapshotFingerprint: string;
+}): URLSearchParams {
+  const query = cursorPageQuery(input);
+  for (const [key, value] of castingEvidenceQuery(input)) {
+    query.set(key, value);
+  }
   return query;
 }
 
@@ -877,7 +1251,7 @@ function safeIdentifier(value: unknown): string | undefined {
 function ensureFixedApiRoute(route: string): void {
   if (
     !route.startsWith("/api/v1/") ||
-    route.length > 512 ||
+    route.length > MAX_API_ROUTE_LENGTH ||
     route.includes("\\") ||
     route.includes("\0") ||
     route.includes("..")
@@ -1444,7 +1818,12 @@ function validateJobResponse(
   const projectId = requireIdentifier(job.projectId, "projectId");
   const type = requireOneOf(
     job.type,
-    ["extract_document", "analyze_story", "analyze_whole_book"],
+    [
+      "extract_document",
+      "analyze_story",
+      "analyze_whole_book",
+      "analyze_casting"
+    ],
     "job type"
   );
   requireOneOf(
@@ -1465,14 +1844,15 @@ function validateJobResponse(
   rejectUnknownResponseFields(target, ["type", "id"], "job target");
   const targetType = requireOneOf(
     target.type,
-    ["document_extraction", "story", "analysis_run"],
+    ["document_extraction", "story", "analysis_run", "casting_run"],
     "job target type"
   );
   requireIdentifier(target.id, "job target id");
   const expectedTargetType = {
     extract_document: "document_extraction",
     analyze_story: "story",
-    analyze_whole_book: "analysis_run"
+    analyze_whole_book: "analysis_run",
+    analyze_casting: "casting_run"
   }[type];
   if (targetType !== expectedTargetType) {
     throw new ValidationError("The job target type is inconsistent.");

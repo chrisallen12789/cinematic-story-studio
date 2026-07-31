@@ -103,6 +103,67 @@ describe("preload active project session", () => {
         payload: exactEntityRequest
       }
     );
+    const exactCastingRequest = {
+      projectId: "project-a",
+      runId: "casting-run-a",
+      expectedRunFingerprint: "a".repeat(64),
+      expectedCatalogRevisionId: "catalog-a",
+      expectedCatalogFingerprint: "b".repeat(64),
+      expectedSnapshotId: "snapshot-a",
+      expectedSnapshotRevision: 3,
+      expectedSnapshotFingerprint: "c".repeat(64),
+      roleId: "role-a",
+      expectedRoleRevision: 2,
+      limit: 12
+    };
+    expect(
+      await api.casting.listCandidates(exactCastingRequest)
+    ).toMatchObject({ ok: true });
+    expect(electron.invoke).toHaveBeenCalledWith(
+      IPC_CHANNELS.castingListCandidates,
+      {
+        contractVersion: "1.0.0",
+        payload: exactCastingRequest
+      }
+    );
+    const exactCustomRoleRequest = {
+      projectId: "project-a",
+      runId: "casting-run-a",
+      definitionId: "custom-role-a",
+      label: "Festival announcer",
+      performanceRequirements: {
+        language: "en",
+        locales: ["en-US"],
+        agePresentationRange: null,
+        vocalPresentations: ["neutral"] as const,
+        preferredTextures: ["clear"] as const,
+        speakingRateRange: null,
+        requiredExpressiveRange: ["authoritative"],
+        longFormRequired: false
+      },
+      reason: "Producer-defined role with no manuscript source.",
+      expectedRunFingerprint: "a".repeat(64),
+      expectedCatalogRevisionId: "catalog-a",
+      expectedCatalogFingerprint: "b".repeat(64),
+      expectedSnapshotId: "snapshot-a",
+      expectedSnapshotRevision: 3,
+      expectedSnapshotFingerprint: "c".repeat(64),
+      expectedCorrectionSetFingerprint: "d".repeat(64),
+      expectedCastingProfileFingerprint: "e".repeat(64),
+      idempotencyKey: "custom-role-create-1"
+    };
+    expect(
+      await api.casting.createCustomRole(exactCustomRoleRequest)
+    ).toMatchObject({ ok: true });
+    expect(electron.invoke).toHaveBeenCalledWith(
+      IPC_CHANNELS.castingCreateCustomRole,
+      {
+        contractVersion: "1.0.0",
+        payload: exactCustomRoleRequest
+      }
+    );
+    expect(Object.isFrozen(api)).toBe(true);
+    expect(Object.isFrozen(api.casting)).toBe(true);
     const projectBRequest = await api.analysis.listRuns({
       projectId: "project-b"
     });
@@ -167,6 +228,12 @@ describe("preload active project session", () => {
       error: { code: "PROJECT_CONTEXT_MISMATCH" }
     });
     expect(electron.invoke).toHaveBeenCalledTimes(1);
+    expect(
+      await api.casting.listRuns({ projectId: "project-a" })
+    ).toMatchObject({
+      ok: false,
+      error: { code: "PROJECT_CONTEXT_MISMATCH" }
+    });
   });
 });
 

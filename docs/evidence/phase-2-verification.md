@@ -22,13 +22,13 @@ application binaries.
 | Field | Value |
 | --- | --- |
 | Branch | `codex/phase-2-story-intelligence` |
-| Code/artifact source commit | `0f2583b7b1409a663368b504f73c2a30f075f520` |
+| Code/artifact source commit | `1084cb75875824dbf5f8087d0fcd454b1e369fcf` |
 | Application version | `0.1.0` |
-| Verification date | 2026-07-30 UTC |
-| Canonical Windows CI run/job | `30588967280` / `91026816077`, successful |
-| Code-head PR Windows CI run/job | `30588969013` / `91026821380`, successful |
-| Artifact ID/size/digest | `8777922822`; 426,968,851 bytes; `sha256:fc27f10cf1aa916cb05eeba17ad63b3dcda06478e526974261f667c520e22df7` |
-| Artifact expiry | `2026-08-06T23:14:00Z` |
+| Verification date | 2026-07-31 UTC |
+| Canonical Windows CI run/job | `30595242789` / `91046107125`, successful |
+| Code-head PR Windows CI run/job | `30595244921` / `91046113733`, successful |
+| Artifact ID/size/digest | `8780115193`; 427,010,997 bytes; `sha256:b27f422f877b5fe88f401d2f06e43bdcc4d1e6604fba01f7cfa020b8d865e28c` |
+| Artifact expiry | `2026-08-07T01:18:04Z` |
 
 The downloaded artifact was independently rehashed outside the repository.
 Its application, staged service, embedded service, machine result, and
@@ -48,12 +48,12 @@ artifact gate below used CPython `3.12.10`.
 | Frozen dependency install | `pnpm install --frozen-lockfile` | Passed; all three workspace projects were current |
 | Lint | `pnpm lint` | Passed helper syntax, ESLint with zero lint warnings, Ruff, tracked-content scanning, and diff safeguards |
 | Type checks | `pnpm typecheck` | Passed both TypeScript projects and strict mypy across 20 service source files |
-| Full repository tests | `pnpm test` | 38 schema/tooling passed; 236 backend passed; 156 desktop passed across 10 files; 430 total passed, 0 failed, 0 skipped; one backend `StarletteDeprecationWarning` |
+| Full repository tests | `pnpm test` | 38 schema/tooling passed; 236 backend passed; 157 desktop passed across 10 files; 431 total passed, 0 failed, 0 skipped; one backend `StarletteDeprecationWarning` |
 | Focused Phase 2 service suites | The seven migration, intelligence, API, correction, graph, and scale test files used by CI | 90 passed, 0 skipped; one identical `StarletteDeprecationWarning`; these 90 repeat tests already present in the full backend count |
 | Windows build | `pnpm build` | Passed contracts, PyInstaller service smoke/staging, renderer/main/preload build, and unpacked Electron packaging |
-| Development Electron E2E | `CSS_E2E=1`; Playwright `tests/e2e/persistence.spec.ts` | 1 passed; test 29.9 seconds, total 31.4 seconds |
+| Development Electron E2E | `CSS_E2E=1`; Playwright `tests/e2e/persistence.spec.ts` | Final stress gate passed 10 consecutive runs with one worker, zero retries, and max-failures 1 in 6.2 minutes |
 | Packaged Electron E2E | `pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged` against the exact local unpacked executable | 1 passed in 1.2 minutes; both launches, restart persistence, ownership, and shutdown checks passed |
-| Tracked/staged/precommit safeguards | `pnpm scan:tracked`; `pnpm scan:staged`; `pnpm precommit` | Passed before every Phase 2 commit; the code-head tracked scan covered 263 files |
+| Tracked/staged/precommit safeguards | `pnpm scan:tracked`; `pnpm scan:staged`; `pnpm precommit` | Passed before every Phase 2 commit; the code-head tracked scan covered 264 files |
 | Clean checkout | `node scripts/git-check.mjs --clean` | Passed after the code commits and local gates |
 
 FFmpeg was installed locally, so the loudness capability test ran and the local
@@ -64,9 +64,9 @@ interchangeable.
 The local unpacked artifact was
 `apps/desktop/release/0.1.0/win-unpacked/Cinematic Story Studio.exe`.
 The application was 225,613,824 bytes with SHA-256
-`4b50888ddab6327f329f2a53c732b5c79de4ea40e3b9bf5aaa16d0760d69a7a6`.
-The local staged and embedded services were each 28,474,084 bytes with SHA-256
-`7192fcbf16e7facf31dda402c8de853eba8f1b2499c8af6c721a8f7936590750`.
+`452db4a9e7186ac22447e2ae82bca097551cb382e4ad0a0274f513f31f66ba4e`.
+The local staged and embedded services were each 28,473,852 bytes with SHA-256
+`ea5069ff806a157778ca3eb1cb154168ca4bb3d7924c6accdd1a5b47ae5fdc2d`.
 That local service differs from the hosted Python 3.12 build; no
 cross-environment byte reproducibility is claimed. Each environment tested its
 own exact staged/embedded pair.
@@ -84,7 +84,7 @@ The canonical job ran on GitHub Actions runner `2.336.0`, hosted agent
 `20260707.563`, Microsoft Windows Server 2025 Datacenter `10.0.26100`, image
 `windows-2025-vs2026` version `20260714.173.1`, with Node.js `24.18.0`, pnpm
 `11.9.0`, and CPython `3.12.10`. Workflow head and tested checkout were both
-`0f2583b7b1409a663368b504f73c2a30f075f520`; the push-run pull-request head
+`1084cb75875824dbf5f8087d0fcd454b1e369fcf`; the push-run pull-request head
 was correctly `null`.
 
 Every positive gate step succeeded: credential-free checkout; Python, pnpm,
@@ -102,12 +102,12 @@ outcomes were already successful.
 | --- | --- |
 | Locked parser/public-fixture gate | 31 passed, 0 failed, 0 skipped |
 | Schema/tooling | 38 passed, 0 failed, 0 skipped |
-| Backend | 235 passed, 1 skipped, 1 warning in 399.49 seconds |
+| Backend | 235 passed, 1 skipped, 1 warning |
 | Hosted FFmpeg result | `test_audio_qc.py:254` skipped because FFmpeg was not installed; all 235 other backend tests passed |
-| Desktop | 10 files, 156 passed in 11.47 seconds |
-| Focused Phase 2 service suites | 90 passed, 1 warning in 250.10 seconds; repeated subset, not additive to the full backend total |
-| Development Electron E2E | 1 passed; test 23.9 seconds, total 25.0 seconds |
-| Exact-artifact packaged E2E step | Successful; 1 passed; test 33.4 seconds, total 34.3 seconds |
+| Desktop | 10 files, 157 passed; the same-project refresh regression passed in 1.590 seconds |
+| Focused Phase 2 service suites | 90 passed, 1 warning; repeated subset, not additive to the full backend total |
+| Development Electron E2E | 1 passed; test 26.1 seconds, total 27.1 seconds |
+| Exact-artifact packaged E2E step | Successful; 1 passed; test 46.7 seconds, total 47.6 seconds |
 | Manifest generation/validation | Schema `3.0.0` manifest and schema `4.0.0` packaged result both passed |
 | Tracked scan / clean checkout | Both passed after build and E2E |
 
@@ -134,13 +134,13 @@ The packaged run used only the generated DOCX represented by
 | Decoded DOCX bytes/hash | 2,758; `ddddd80f6486e22b8a38e66416d1e69f9ccb66cd34bc238e502cd999c6b64ee4` |
 | Canonical text bytes/code points/hash | 3,783 / 3,783; `d65b8ce103a3cab7943562629109133bdc850b637068919ff7fecd999e20ee0a` |
 | Markdown bytes/code points/hash | 3,832 / 3,832; `a8f2a5958a1706c2cca70711676ce96522d79d4e520aa07c6eb78dc648eaab19` |
-| Source document ID/revision | `3cca5303-8fc7-4356-b424-f8a570973d53` / 1 |
-| Extraction ID/revision | `b93c2323-49e1-4099-91af-59cfd07c17ec` / 1 |
+| Source document ID/revision | `c65f5953-0a90-42fa-a898-961873a3437c` / 1 |
+| Extraction ID/revision | `5c2e8693-f9de-4ce7-8db7-aea0bf27a342` / 1 |
 | Extracted text hash | `0df10ce37649dd291e3bb8f3a45a06f46bf2513154d59c04573335a65800ea69` |
-| Import Review ID/revision/decision | `e670d7e4-d8e7-4b2b-9c1c-183b6d415e87` / 2 / `f5c2491c-4e2c-4708-9a1d-a614b3d885b6` |
-| Story ID/revision/fingerprint | `0db24899-a2a7-4de9-b6d7-a169e87588d3` / 1 / `0df10ce37649dd291e3bb8f3a45a06f46bf2513154d59c04573335a65800ea69` |
+| Import Review ID/revision/decision | `29f727d2-1fd1-4b1d-83f8-50868c542d7d` / 2 / `bddef435-1e05-498d-896e-b2d3cebb0575` |
+| Story ID/revision/fingerprint | `10a21fd9-4a97-4f20-b9da-085013f76c88` / 1 / `0df10ce37649dd291e3bb8f3a45a06f46bf2513154d59c04573335a65800ea69` |
 | Extraction/review result | Extraction revision 1, zero warnings, approved; extraction, approval, baseline analysis, and correction persisted after restart |
-| Approved evidence fingerprint | `319545e4a179a06d0d28a4fc44ae03d0b81c08843ecdefa8b8dd7d3348c71ca6` |
+| Approved evidence fingerprint | `ad8573553a3ad092a7e0dfbbfa217c8b8ff9b78117a5a5c8f09ef0febf3d1fc1` |
 
 The synthetic expectations prove three chapters, six scenes, ten named
 characters, six locations, ten dialogue lines including four ambiguous lines,
@@ -161,17 +161,17 @@ run succeeded:
 
 | Agent/version | Execution ID | Output fingerprint |
 | --- | --- | --- |
-| `story-structure@1.0.0` | `32262ef1-9118-4526-8660-454b15313ed0` | `325c1fe80c1bbbf40cfd407741e44eee235bd28ace63dfdd72f451f00c0d0fd3` |
-| `story-beats@1.0.0` | `da85440c-16c4-414d-8804-3024d0bb50e4` | `88cb14c0b1cb3121c2f1dd0399a2722bd1e7c3beefc7ba3f97f7a47030e1a01b` |
-| `character-identity@1.0.0` | `59832e45-e5ba-4e81-b7ef-51ab5dce9c3c` | `b31cfe36dc8fed3af773c183a8f6af93b5e98e5cf92ea985ce35b3f92cc5505a` |
-| `dialogue-attribution@1.0.0` | `1a6b76c5-009b-4629-973c-27d2f0b5b506` | `21a712b7f4b87baa807d1e6378599f4b6df699a99562f4d086b7d89b427a2e63` |
-| `point-of-view@1.0.0` | `c18f0af1-d4f3-4728-bdb0-8ee003244d79` | `b8fb429fe54bc7a7c14ed1ad86ad0eb048ac1402c3e53ea946b2b664921e5406` |
-| `story-setting@1.0.0` | `1d97fec4-9c91-40a8-bd01-0230e24a46d5` | `b675af06581b2371e56488e3211565cf621dd40d7e073f3d6b9f7d076193cf9c` |
-| `story-timeline@1.0.0` | `8f450525-cdda-4e00-9a10-441f6143d7eb` | `aa31ebd4269075f5fbc33bfc6e0cc0f6dabbb5c994ac4a146102433955c9b76e` |
-| `character-relationships@1.0.0` | `f4f95171-53d3-45ed-b0cf-b2d5d94a08cb` | `6a911b7b6598439ebc01d92239697af391d4325b75a4976b0258294e704b2c86` |
-| `emotion-dramatic-intent@1.0.0` | `f35c47d7-17f8-4f51-a7d5-622e79756576` | `7a35c0e5302efbb1adb8654878bb365cca8f03cd79fbf20a59d578a89f01a757` |
-| `story-continuity@1.0.0` | `bd07ba22-5efd-4062-b853-f848bf55321c` | `4f191a138c52efd9e988571c78fe464e255679c7a55d9a354eaf6764cefb5aff` |
-| `analysis-synthesis@1.0.0` | `875b37e2-4315-466d-8337-6b6eb4d9aa3f` | `f4e7e639bb6770e3f7287748cf3dd88ca140506c63aa3718d23ce4bb1a61da25` |
+| `story-structure@1.0.0` | `57a023e9-9113-4457-8908-9c040417a29c` | `325c1fe80c1bbbf40cfd407741e44eee235bd28ace63dfdd72f451f00c0d0fd3` |
+| `story-beats@1.0.0` | `cdf48a93-5ced-4dea-8d02-a70530067aed` | `88cb14c0b1cb3121c2f1dd0399a2722bd1e7c3beefc7ba3f97f7a47030e1a01b` |
+| `character-identity@1.0.0` | `72d9b3c8-9ca5-4c6f-99e5-3092728f31d2` | `29e9f6968d65cc460ab59e3e8fb5aa366ff728bd326ada9a6d36e140ed0d349d` |
+| `dialogue-attribution@1.0.0` | `fe3e45db-b00a-4e2a-b610-a29fe897f447` | `6edbcb3583915ec366fa850944709f442b4319bea689c406a4d179d3d6774e13` |
+| `point-of-view@1.0.0` | `a8b3273f-7a3e-4e91-98b7-74b072e405e3` | `f043db68b58673d37830b1a1a324cbac316ad290a6c08ee0ee302a2fe66796cd` |
+| `story-setting@1.0.0` | `d2417f81-ecc2-45c3-a039-5c343840858f` | `b675af06581b2371e56488e3211565cf621dd40d7e073f3d6b9f7d076193cf9c` |
+| `story-timeline@1.0.0` | `23605072-8e76-4075-b417-7e3e82ab56d4` | `6499d5b3e78429f61d7b615427c7f77cfc3ee06771df71900e1c77da9e4c8dd4` |
+| `character-relationships@1.0.0` | `d4015d0c-a5c0-4c7f-8941-53a545b403e3` | `6c22b81d5981a4e4cfef26a72e466e92c2aae03d742e19a10522d4c7418cb5ab` |
+| `emotion-dramatic-intent@1.0.0` | `9ef21ec1-6253-471b-86a0-8e9768fd54b7` | `2994b0df92132e05261148f41aecb06c500d0e2b94f0c00dfadad9732a4ecf63` |
+| `story-continuity@1.0.0` | `a8d6e8b9-0677-4025-9776-4a435a13c677` | `9111238b4dd39aba2fb513387bc60fda33233d26f8da7efeef075c713c95fee1` |
+| `analysis-synthesis@1.0.0` | `74e988b4-c366-4376-a318-09765b7b3fac` | `e050556883d707b2164d44d9b0af72a19ea37942092a52ee0b7e73e4b9747510` |
 
 The exact observed stage order was:
 `validate_approved_input`, `initialize_run`, `analyze_structure`,
@@ -185,12 +185,12 @@ The exact observed stage order was:
 
 | Field | Value |
 | --- | --- |
-| Analysis run/job | `963ed125-ea6d-4ad2-b787-f037b2cb1704` / `0648a1d5-7149-40b9-bc79-bf1ec37e5716`, succeeded |
+| Analysis run/job | `6bf591c5-0280-44f0-b693-1cb97fef3b4f` / `7fcee0aa-cfa6-43ea-b874-4b1378810b67`, succeeded |
 | Input fingerprint | `0df10ce37649dd291e3bb8f3a45a06f46bf2513154d59c04573335a65800ea69` |
-| Run fingerprint | `2c6c09f41e1be1343b5c1a31a42fffdd90d16ee7def5dc287e1a6a1d16d02951` |
-| Snapshot ID/revision | `2674c3c1-0c80-4352-a000-5260cce6f038` / 1 |
-| Snapshot fingerprint | `95a364ce0ba7f1e3084054c58e51648fc54590f9072c9e1e9723be9b6a72eb5b` |
-| Correction-set fingerprint | `d701b4c808234e388a3e88e11d6b9e6cd9ddbab5929332bf747eaa90214bcc6f` |
+| Run fingerprint | `a0e8d4a4826bd4f7b80c97a794a9773084b34b7118b0d17b3e2605e71c3968d5` |
+| Snapshot ID/revision | `1c27db89-d060-4ab1-8bdc-e888dfdc881e` / 1 |
+| Snapshot fingerprint | `32c40fb1ce8eba0de30d1d32a28c1ac6741aac332c1195f530afe22c04e89ba1` |
+| Correction-set fingerprint | `cc5b672d7158136f59e9283ad2127da4580c4960b029b3555b4e247a81575c41` |
 
 The exact 16 persisted collection counts were: agent executions 11, chapters
 3, scenes 6, beats 25, characters 10, mentions 96, dialogue lines 10,
@@ -225,9 +225,9 @@ restart, and bound to these reason digests:
 | Correction | ID / target | Previous fingerprint | Corrected/effective-before/effective-after fingerprint | Reason SHA-256 |
 | --- | --- | --- | --- | --- |
 | Structure boundary/label | Not exercised in packaged E2E; typed add/move/remove/rename behavior passed API, service, and desktop tests | not applicable | not applicable | not applicable |
-| Character identity | `5aadef85-8638-4259-9074-e203c4e87c57` / `e0a4d1b4-985f-5fe6-a26a-74416ac6fcfb` | `03a46ecf3de8309e93d569193c8b9418c7194ced2db37e2fff9178edd425e48f` | `3a5d293b736095316b45a643d1850e6ebde7a4321445436efe9384da304d3f26` | `b42b6091d0bde37b4dd15f99a321e86dd965f2272a4ca68da6703b6f5ba2f0da` |
-| Dialogue speaker | `9efca9e6-a6a0-4b1b-bea9-971bf242d061` / `9f409df4-1940-5377-b6e0-1440461f4590` | `fa9c99a6ec97d20f9f8a06adb0f615fa58cfcb7891f53f324b96a1255ea77238` | `e6a686653e220b4b0e4515da842cba13ab7cf4eb243acc3b99cdb51f48003d64` | `6db94e679f663d3dfbed36c173eb8445d6a364beb114c7f8c070e30983247300` |
-| Continuity disposition | `ad29281e-b168-4e52-aef3-78c8097339c0` / `2603bd5e-a0cc-5db4-8dc3-af5e752095ab` | `87336a8d7b77f466739d64b47be65c670b5e386e7f5adbcb709455601344d6ef` | `f815e99fe085dfd5945658903db6bfb3c227bb2e003e6bb9999bbac79ad662bc` | `d7497ae908f34096c6bbbfdcbf7ea8287967882880cd229af078eee2383c2554` |
+| Character identity | `5ec0bb14-3901-472e-9838-2268a06a3112` / `fdb1b993-c256-5789-b569-c61334390dcf` | `7974a58fed43f6060eca3beefe9cbff1eca89a321f159fc0a7163a1fefd83835` | `d13b21481a7840d23e92f71b270e3801192015a67e4be81be923f1dd5555d7fc` | `b42b6091d0bde37b4dd15f99a321e86dd965f2272a4ca68da6703b6f5ba2f0da` |
+| Dialogue speaker | `9c9885f9-1890-436f-9177-5e14ac7e19b0` / `eb361fe4-0baa-54d8-a747-d44008af63f5` | `33f1726886424260b0f7970fade01f2e3edd0329b5923293d149ce8283d84e84` | `397aa9a044c2f61d8b98071fc7ba42e49de3ecd2715b91c40cc8a7125d5dd60f` | `6db94e679f663d3dfbed36c173eb8445d6a364beb114c7f8c070e30983247300` |
+| Continuity disposition | `78c41f72-05be-4981-a3b3-c97d3c217232` / `13d31b82-e29c-5578-9928-518eae37a777` | `30e0e4726af7ec1332d2b804a75c6d13be634ecf3c820c95ddaa9e464d61e87e` | `b8a41dcffa4632b5b64830b6ce76cbef4c0c5c153e5a0842b89a42b7606f6c0f` | `d7497ae908f34096c6bbbfdcbf7ea8287967882880cd229af078eee2383c2554` |
 
 The Phase 0 bridge reason is intentionally not serialized into the Phase 2
 manifest. Its correction record, effective speaker, analysis, and approval
@@ -238,10 +238,10 @@ recorded fingerprints after restart:
 
 | Gate | Review / decision ID | Artifact fingerprint | Evidence fingerprint | Decision-record fingerprint | Before/after |
 | --- | --- | --- | --- | --- | --- |
-| `story_structure_review` | `3b9efb61-3033-5234-90cd-bb5b057ca8d6` / `001439b5-5091-4e54-86b6-38bd10e919af` | `117729e8c06caba4c609e792b36c5304612fc0e3738967f6aea641e6d4330029` | `117729e8c06caba4c609e792b36c5304612fc0e3738967f6aea641e6d4330029` | `121757e245db8f4453d67ab2452354a561359913c147206a88dff1b34d3286ca` | Approved and identical |
-| `character_registry_review` | `a5b3299a-b107-52e9-921b-92ce91b23329` / `5a8d9035-7e91-4c74-9dcb-2c9a682153a8` | `85e479efce8060379c990898598c5be89e45ed334f5200275cc6339cb13e31a4` | `85e479efce8060379c990898598c5be89e45ed334f5200275cc6339cb13e31a4` | `c2e2867c686107c2c4406ae35259509cc836e67fee78f5bacebe4b7bba55f9bb` | Approved and identical |
-| `dialogue_attribution_review` | `46fbe0a6-e6d7-5d99-aa8e-140a605b3ac4` / `de9598aa-c8d5-475a-8c0e-4f59c89170a0` | `e03cf2e6eaeea6a8c229f4096e748bd82c2c7263227368ede8c45ae39bb6d14b` | `e03cf2e6eaeea6a8c229f4096e748bd82c2c7263227368ede8c45ae39bb6d14b` | `454ef6039d174d2b20be8cf125f1331c2df5297c6a82ca8a4baf2d58ddd530f5` | Approved and identical |
-| `whole_book_analysis_review` | `f7530fc9-d9ef-5a45-ab3a-86f0e8ff8a95` / `5301fc16-5bda-48f0-9f26-e1269ca868e1` | `7a726836238923834268e4780edd7bd594ed6b2924b613937c496a3fb057bca1` | `7a726836238923834268e4780edd7bd594ed6b2924b613937c496a3fb057bca1` | `6196829fcd2f3946c29efb03989fb8229ac0a470bbe33146752ca51d80bd4557` | Approved and identical |
+| `story_structure_review` | `e84bca14-e43a-51dc-9f79-56495aa01f5e` / `734787ff-d420-49a9-b4ea-32c448fcf1e7` | `89e398402fd4c49c20ff8230edf1d8745ab55aa73b6f6fd86a666cc709631aaa` | `89e398402fd4c49c20ff8230edf1d8745ab55aa73b6f6fd86a666cc709631aaa` | `f1dbb82d91b88aeeb2a7463db59be50c7d9b172843f16383c3f62840dcfbcb5d` | Approved and identical |
+| `character_registry_review` | `2e8010da-1b3c-532c-8826-71f93560b5dc` / `f8b99705-7526-4c77-aacb-e4e7eb31ec27` | `1bdff4ded19d43681cdded3b2c9055ce3ac90d3d92bd8c3d39c321adc00cf8bd` | `1bdff4ded19d43681cdded3b2c9055ce3ac90d3d92bd8c3d39c321adc00cf8bd` | `6a88a213a75f23dde37d570ff8278b3e7ea80fb0a1fd92790e375f0ed2f6ca64` | Approved and identical |
+| `dialogue_attribution_review` | `2d6a3366-a1fd-5785-ae89-18730796d528` / `6d50f130-4ac8-40bb-946c-6429dc00de7a` | `18ac81d4df761f2f2c79924f1bcd3b6182d08ab44e3dfedc03c310357514861f` | `18ac81d4df761f2f2c79924f1bcd3b6182d08ab44e3dfedc03c310357514861f` | `fece0c6335b5f98b9a0289af6e29bb988b4b5f8470b931504c711a5f1ca72f5c` | Approved and identical |
+| `whole_book_analysis_review` | `6c31c643-646e-51a8-bb7c-a082f4ad35e1` / `8bba9f9d-c93e-4a5d-bec8-cce0a3e49ec9` | `a6a438c95944bac6efe21dbc2a048427eb2e56da1fde85526bef636bc0a99494` | `a6a438c95944bac6efe21dbc2a048427eb2e56da1fde85526bef636bc0a99494` | `f69f71b0b4cc9b1228dc04c57511de4e7b5608d70ff5ee1716d0e336d2c620ff` | Approved and identical |
 
 The first three gates are independently reviewable; Whole-Book Analysis Review
 requires all three current approvals. Approval is evidence-revision scoped and
@@ -278,26 +278,26 @@ inspected for manuscript data, or terminated merely by name.
 
 | Launch | Launcher/root | Owned app PIDs | Owned service PIDs | Exit |
 | --- | --- | --- | --- | --- |
-| 1 | 5072 / 2096 | 332, 1292, 2096, 3100 | 2252, 4076, 9424 | All seven exited gracefully; forced `[]`; remaining `[]` |
-| 2 | 5348 / 1492 | 1492, 5332, 8292, 9044 | 6932, 8212 | All six exited gracefully; forced `[]`; remaining `[]` |
+| 1 | 7176 / 5380 | 1236, 4656, 5380, 8496 | 628, 2784, 7892 | All seven exited gracefully; forced `[]`; remaining `[]` |
+| 2 | 3304 / 2172 | 2172, 7712, 7776, 8252 | 5716, 6196 | All six exited gracefully; forced `[]`; remaining `[]` |
 
 The exact owned identities were:
 
 | Launch | PID | Parent PID | Kind | Invariant creation time |
 | --- | ---: | ---: | --- | --- |
-| 1 | 2096 | 5072 | app | `2026-07-30T23:13:24.2901960Z` |
-| 1 | 3100 | 2096 | app | `2026-07-30T23:13:24.4396500Z` |
-| 1 | 332 | 2096 | app | `2026-07-30T23:13:24.4448670Z` |
-| 1 | 1292 | 2096 | app | `2026-07-30T23:13:24.4758040Z` |
-| 1 | 4076 | 2096 | service | `2026-07-30T23:13:24.6662990Z` |
-| 1 | 2252 | 4076 | service | `2026-07-30T23:13:25.4073430Z` |
-| 1 | 9424 | 2252 | service | `2026-07-30T23:13:28.3533600Z` |
-| 2 | 1492 | 5348 | app | `2026-07-30T23:13:46.4970490Z` |
-| 2 | 8292 | 1492 | app | `2026-07-30T23:13:46.6339020Z` |
-| 2 | 9044 | 1492 | app | `2026-07-30T23:13:46.6381300Z` |
-| 2 | 5332 | 1492 | app | `2026-07-30T23:13:46.6858940Z` |
-| 2 | 8212 | 1492 | service | `2026-07-30T23:13:46.8611230Z` |
-| 2 | 6932 | 8212 | service | `2026-07-30T23:13:47.4238530Z` |
+| 1 | 5380 | 7176 | app | `2026-07-31T01:17:29.9729690Z` |
+| 1 | 4656 | 5380 | app | `2026-07-31T01:17:30.1100240Z` |
+| 1 | 8496 | 5380 | app | `2026-07-31T01:17:30.1096830Z` |
+| 1 | 1236 | 5380 | app | `2026-07-31T01:17:30.1531020Z` |
+| 1 | 2784 | 5380 | service | `2026-07-31T01:17:30.3318640Z` |
+| 1 | 628 | 2784 | service | `2026-07-31T01:17:30.8368550Z` |
+| 1 | 7892 | 628 | service | `2026-07-31T01:17:34.0034060Z` |
+| 2 | 2172 | 3304 | app | `2026-07-31T01:17:52.6249860Z` |
+| 2 | 8252 | 2172 | app | `2026-07-31T01:17:52.7401420Z` |
+| 2 | 7776 | 2172 | app | `2026-07-31T01:17:52.7447770Z` |
+| 2 | 7712 | 2172 | app | `2026-07-31T01:17:52.7783310Z` |
+| 2 | 5716 | 2172 | service | `2026-07-31T01:17:52.9478230Z` |
+| 2 | 6196 | 5716 | service | `2026-07-31T01:17:53.4600710Z` |
 
 Shutdown required two post-close absence observations for every exact owned
 PID. Ownership was established, both launches completed, cleanup completed,
@@ -305,18 +305,18 @@ and no unrelated process was terminated.
 
 ## Build-evidence manifest
 
-The manifest was generated at `2026-07-30T23:13:55.073Z` by
-`GitHub Actions 1000001491`, Windows X64, GitHub-hosted, workflow run
-`30588967280`, attempt 1, job `verify-and-build`.
+The manifest was generated at `2026-07-31T01:18:00.380Z` by
+`GitHub Actions 1000001506`, Windows X64, GitHub-hosted, workflow run
+`30595242789`, attempt 1, job `verify-and-build`.
 
 | Artifact | Relative path | Bytes | SHA-256 |
 | --- | --- | ---: | --- |
-| Desktop application | `apps/desktop/release/0.1.0/win-unpacked/Cinematic Story Studio.exe` | 225,613,824 | `4b50888ddab6327f329f2a53c732b5c79de4ea40e3b9bf5aaa16d0760d69a7a6` |
-| Staged service | `apps/desktop/build-resources/service/cinematic-story-service.exe` | 27,132,642 | `8e19520876a0b81f34d375b50a06cbb17456fb42ec73eeee7667932a8007f772` |
-| Embedded service | `apps/desktop/release/0.1.0/win-unpacked/resources/service/cinematic-story-service.exe` | 27,132,642 | `8e19520876a0b81f34d375b50a06cbb17456fb42ec73eeee7667932a8007f772` |
-| Packaged result | `apps/desktop/release/0.1.0/packaged-e2e-result.json` | 22,667 | `ef6eb17ec2e9e70f2b28f7e7f380981d1b4a58477c3a380e59ec332358a537e0` |
-| Packaged screenshot | `apps/desktop/release/0.1.0/packaged-e2e.png` | 111,406 | `4493833d034c47cdfa525e9411075651060250a0f9f4848e3b4c36ec5f6e45be` |
-| Manifest after download | `apps/desktop/release/0.1.0/build-evidence.json` | 34,905 | `4be79d50c607bf19ed6a0b3e803e553bffdbc538efbf3f7c544a8e720a0b11b8` |
+| Desktop application | `apps/desktop/release/0.1.0/win-unpacked/Cinematic Story Studio.exe` | 225,613,824 | `452db4a9e7186ac22447e2ae82bca097551cb382e4ad0a0274f513f31f66ba4e` |
+| Staged service | `apps/desktop/build-resources/service/cinematic-story-service.exe` | 27,133,007 | `801c111bf96cfe724034187990c29b981b77a51ae95e2a69072c6567453f2bd7` |
+| Embedded service | `apps/desktop/release/0.1.0/win-unpacked/resources/service/cinematic-story-service.exe` | 27,133,007 | `801c111bf96cfe724034187990c29b981b77a51ae95e2a69072c6567453f2bd7` |
+| Packaged result | `apps/desktop/release/0.1.0/packaged-e2e-result.json` | 22,666 | `9a9bb304b4955056631bc4afcefef7dd0318a82a27b21b3eb82e56be69ca189d` |
+| Packaged screenshot | `apps/desktop/release/0.1.0/packaged-e2e.png` | 152,685 | `f0102f2d96f90cd867b449b278afe14197d8806f143b966acee70b70f542f241` |
+| Manifest after download | `apps/desktop/release/0.1.0/build-evidence.json` | 34,904 | `9293ec7d2a06e250dcedc8537b19e0b7a0fc6a67167953a9a4198a2b98ca4665` |
 
 Staged and embedded services matched. Packaged result and step outcome agreed.
 All 14 named assertions were `true`:
@@ -377,15 +377,15 @@ threshold. The separate `Security safeguards` workflow enforces repository
 policy and scans Git history with Gitleaks; it is not described as a
 dependency audit.
 
-At the code artifact head, Dependency Review run/job `30588968960` /
-`91026821074` succeeded with no vulnerable package at moderate-or-higher
+At the code artifact head, Dependency Review run/job `30595244861` /
+`91046113464` succeeded with no vulnerable package at moderate-or-higher
 severity, no denied package, and an empty dependency-change report. Its scope
 is the pull-request dependency delta, not every transitive package in every
 ecosystem.
 
-Security push run/job `30588967284` / `91026815933` and pull-request run/job
-`30588968995` / `91026821214` both succeeded. They scanned 263 tracked files
-and 33 commits with checksum-pinned Gitleaks `8.30.1`, finding no leak.
+Security push run/job `30595242831` / `91046106997` and pull-request run/job
+`30595244846` / `91046113466` both succeeded. They scanned 264 tracked files
+and 36 commits with checksum-pinned Gitleaks `8.30.1`, finding no leak.
 
 Phase 2 does not add `pnpm audit` or `pip-audit` as CI gates and does not claim
 a comprehensive ecosystem vulnerability audit. The live-registry audit

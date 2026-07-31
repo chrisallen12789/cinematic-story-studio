@@ -378,6 +378,76 @@ describe("Phase 0 desktop workspace", () => {
     expect(api.dialogue.correctSpeaker).not.toHaveBeenCalled();
   });
 
+  it("preserves rendered ownership when a same-project job refresh fails", async () => {
+    const runningJob = createJob({ state: "running", progress: 0.8 });
+    const succeededJob = createJob({
+      state: "succeeded",
+      stage: "complete",
+      progress: 1
+    });
+    const detail = createProjectDetail({ jobs: [runningJob] });
+    let resolveRefresh:
+      | ((result: DesktopResult<ProjectDetail>) => void)
+      | undefined;
+    let resolveImport:
+      | ((result: DesktopResult<ImportStoryResponse | null>) => void)
+      | undefined;
+    const refresh = new Promise<DesktopResult<ProjectDetail>>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const importRequest = new Promise<
+      DesktopResult<ImportStoryResponse | null>
+    >((resolve) => {
+      resolveImport = resolve;
+    });
+    const api = createApi({ project: detail });
+    vi.mocked(api.jobs.get).mockResolvedValue(
+      ok({ correlationId: "job-refresh-correlation", job: succeededJob })
+    );
+    vi.mocked(api.projects.open).mockReturnValue(refresh);
+    vi.mocked(api.projects.importSelectedFile).mockReturnValue(importRequest);
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    expect(await screen.findByText('"We should go."')).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Import document" }));
+    expect(
+      screen.getByRole("button", { name: "Selecting..." })
+    ).toBeDisabled();
+    await waitFor(
+      () => {
+        expect(api.projects.open).toHaveBeenCalledWith(
+          detail.project.projectId
+        );
+      },
+      { timeout: 5_000 }
+    );
+    expect(
+      screen.getByRole("heading", { name: detail.project.name })
+    ).toBeVisible();
+    expect(screen.getByText('"We should go."')).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Selecting..." })
+    ).toBeDisabled();
+
+    resolveRefresh?.(fail("PROJECT_CONTEXT_CHANGED"));
+    expect(
+      await screen.findByText("PROJECT_CONTEXT_CHANGED", { exact: true })
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: detail.project.name })
+    ).toBeVisible();
+    expect(screen.getByText('"We should go."')).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Selecting..." })
+    ).toBeDisabled();
+
+    resolveImport?.(ok(null));
+    expect(
+      await screen.findByRole("button", { name: "Import document" })
+    ).toBeEnabled();
+  });
+
   it("saves a speaker correction with reason and revision", async () => {
     const detail = createProjectDetail();
     const api = createApi({ project: detail });

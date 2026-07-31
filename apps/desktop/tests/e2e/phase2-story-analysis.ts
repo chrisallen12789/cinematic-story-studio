@@ -38,9 +38,14 @@ const phase2CorrectionReason = Object.freeze({
   continuityDisposition:
     "Phase 2 E2E: human review confirms this continuity issue."
 });
-const snapshotContextRetryLimit = 3;
+const snapshotContextRetryLimit = 5;
 const snapshotContextRetryDelayMs = 250;
 const projectContextChangedCode = "PROJECT_CONTEXT_CHANGED";
+const projectContextMismatchCode = "PROJECT_CONTEXT_MISMATCH";
+const snapshotContextRetryCodes = [
+  projectContextChangedCode,
+  projectContextMismatchCode
+] as const;
 
 export interface Phase2RuntimeSnapshot {
   readonly run: StoryAnalysisRun;
@@ -60,7 +65,7 @@ export interface Phase2WorkflowEvidence {
 
 type Phase2RuntimeSnapshotAttemptResult =
   | {
-      readonly outcome: "project_context_changed";
+      readonly outcome: "project_context_unavailable";
     }
   | {
       readonly outcome: "succeeded";
@@ -232,15 +237,15 @@ export async function readPhase2RuntimeSnapshot(
     }
     if (attempt < snapshotContextRetryLimit) {
       // When a durable job leaves an active state, the renderer performs one
-      // same-project refresh. That refresh intentionally changes the guarded
-      // selection epoch and rejects concurrent evidence reads. Retry only that
-      // exact typed result, rebuild the entire snapshot, and never reuse a
-      // partial page from the invalidated attempt.
+      // same-project refresh. During that bounded refresh the guarded context
+      // is either changing or temporarily unselected. Retry only those exact
+      // typed results, rebuild the entire snapshot, and never reuse a partial
+      // page from an invalidated attempt.
       await page.waitForTimeout(snapshotContextRetryDelayMs * attempt);
     }
   }
   throw new Error(
-    "The Phase 2 project context changed during all bounded evidence reads."
+    "The Phase 2 project context was unavailable during all bounded evidence reads."
   );
 }
 
@@ -248,30 +253,62 @@ async function readPhase2RuntimeSnapshotAttempt(
   page: Page
 ): Promise<Phase2RuntimeSnapshotAttemptResult> {
   const result = await page.evaluate(
-    async ({ collections, contextChangedCode }) => {
-      const restored = await window.cinematicStory.projects.restoreRecent();
-      if (!restored.ok) {
-        if (restored.error.code === contextChangedCode) {
-          return { outcome: "project_context_changed" } as const;
-        }
+    async ({ collections, contextRetryCodes }) => {
+      const retryableContextCodes = new Set<string>(contextRetryCodes);
+      const projectResult = await window.cinematicStory.projects.list();
+      if (!projectResult.ok) {
         throw new Error(
-          `The Phase 2 project restore failed with ${restored.error.code}: ${restored.error.message}`
+          `The Phase 2 project discovery failed with ${projectResult.error.code}: ${projectResult.error.message}`
         );
       }
-      if (restored.value === null) {
-        throw new Error("The Phase 2 project could not be restored.");
+      const projectPage = projectResult.value;
+      const project = projectPage.items[0];
+      if (
+        project === undefined ||
+        projectPage.items.length !== 1 ||
+        projectPage.nextCursor !== undefined
+      ) {
+        throw new Error(
+          "The isolated Phase 2 E2E workspace did not contain exactly one project."
+        );
       }
-      const projectedRun = restored.value.currentAnalysisRun;
-      if (projectedRun === null) {
-        throw new Error("The current Phase 2 run was unavailable.");
+
+      // Evidence reads must not call `restoreRecent` or `open`: both are
+      // guarded selection operations and can invalidate the renderer's own
+      // same-project terminal-job refresh. Discover the single synthetic run
+      // through read-only paginated APIs instead.
+      const runPageResult = await window.cinematicStory.analysis.listRuns({
+        projectId: project.projectId,
+        limit: 200
+      });
+      if (!runPageResult.ok) {
+        if (retryableContextCodes.has(runPageResult.error.code)) {
+          return { outcome: "project_context_unavailable" } as const;
+        }
+        throw new Error(
+          `The Phase 2 run discovery failed with ${runPageResult.error.code}: ${runPageResult.error.message}`
+        );
+      }
+      const runPage = runPageResult.value;
+      const projectedRun = runPage.runs[0];
+      if (
+        projectedRun === undefined ||
+        runPage.runs.length !== 1 ||
+        runPage.pageSize !== 1 ||
+        runPage.total !== 1 ||
+        runPage.nextCursor !== undefined
+      ) {
+        throw new Error(
+          "The isolated Phase 2 E2E project did not contain exactly one analysis run."
+        );
       }
       const runResult = await window.cinematicStory.analysis.getRun({
         projectId: projectedRun.projectId,
         runId: projectedRun.runId
       });
       if (!runResult.ok) {
-        if (runResult.error.code === contextChangedCode) {
-          return { outcome: "project_context_changed" } as const;
+        if (retryableContextCodes.has(runResult.error.code)) {
+          return { outcome: "project_context_unavailable" } as const;
         }
         throw new Error(
           `The Phase 2 run read failed with ${runResult.error.code}: ${runResult.error.message}`
@@ -333,10 +370,10 @@ async function readPhase2RuntimeSnapshotAttempt(
         guardedResults.some(
           (guardedResult) =>
             !guardedResult.ok &&
-            guardedResult.error.code === contextChangedCode
+            retryableContextCodes.has(guardedResult.error.code)
         )
       ) {
-        return { outcome: "project_context_changed" } as const;
+        return { outcome: "project_context_unavailable" } as const;
       }
       const entityPages = entityResults.map(([collection, entityResult]) => {
         if (!entityResult.ok) {
@@ -391,7 +428,7 @@ async function readPhase2RuntimeSnapshotAttempt(
     },
     {
       collections: ANALYSIS_ENTITY_COLLECTIONS,
-      contextChangedCode: projectContextChangedCode
+      contextRetryCodes: snapshotContextRetryCodes
     }
   );
   return result as Phase2RuntimeSnapshotAttemptResult;

@@ -86,6 +86,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
     useState<FfmpegCapabilityResponse | null>(null);
   const wasConnected = useRef(false);
   const projectSelectionEpoch = useRef(0);
+  const projectRefreshGeneration = useRef(0);
   const activeProjectIdRef = useRef<string | null>(null);
   const busyOperationToken = useRef(0);
 
@@ -161,6 +162,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
 
   const beginProjectSelection = useCallback(() => {
     const selection = ++projectSelectionEpoch.current;
+    projectRefreshGeneration.current += 1;
     busyOperationToken.current += 1;
     activeProjectIdRef.current = null;
     setProject(null);
@@ -208,26 +210,38 @@ export function App({ api = window.cinematicStory }: AppProps) {
 
   const openProject = useCallback(
     async (projectId: string, showLoading = true) => {
-      const selection = beginProjectSelection();
+      const preserveCurrentProject =
+        !showLoading && activeProjectIdRef.current === projectId;
+      if (!showLoading && !preserveCurrentProject) {
+        return;
+      }
+      const selection = preserveCurrentProject
+        ? projectSelectionEpoch.current
+        : beginProjectSelection();
+      const refreshGeneration = preserveCurrentProject
+        ? ++projectRefreshGeneration.current
+        : null;
+      const contextIsCurrent = () =>
+        selection === projectSelectionEpoch.current &&
+        (refreshGeneration === null ||
+          (refreshGeneration === projectRefreshGeneration.current &&
+            activeProjectIdRef.current === projectId));
       if (showLoading) {
         setProjectLoading(true);
       }
       setError(null);
       try {
         const detail = await unwrap(api.projects.open(projectId));
-        if (selection !== projectSelectionEpoch.current) {
+        if (!contextIsCurrent()) {
           return;
         }
         applyProject(detail);
       } catch (caught) {
-        if (selection === projectSelectionEpoch.current) {
+        if (contextIsCurrent()) {
           setError(asDesktopError(caught));
         }
       } finally {
-        if (
-          showLoading &&
-          selection === projectSelectionEpoch.current
-        ) {
+        if (showLoading && contextIsCurrent()) {
           setProjectLoading(false);
         }
       }

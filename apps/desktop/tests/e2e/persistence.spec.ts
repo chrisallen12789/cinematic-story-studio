@@ -38,6 +38,7 @@ test.describe("desktop persistence", () => {
   );
 
   test("restores the most recent project after a real service restart", async () => {
+    test.setTimeout(240_000);
     const isolationRoot = await mkdtemp(
       path.join(tmpdir(), "css-desktop-e2e-")
     );

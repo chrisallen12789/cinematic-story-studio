@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/synthetic-voice-catalog.schema.json",
+  "title": "SyntheticVoiceCatalog",
+  "$ref": "definitions.schema.json#/$defs/SyntheticVoiceCatalog"
+}

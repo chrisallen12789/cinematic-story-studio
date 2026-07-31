@@ -1,0 +1,4376 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/definitions.schema.json",
+  "title": "Cinematic Story Studio Phase 3A definitions",
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": ".*\\S.*"
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 40
+    },
+    "ContractVersion": {
+      "const": "3.0.0"
+    },
+    "NonblankText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": ".*\\S.*"
+    },
+    "NullableId": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "NullableTimestamp": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin",
+        "producerId",
+        "producerVersion",
+        "recordedAt"
+      ],
+      "properties": {
+        "origin": {
+          "enum": [
+            "development_fixture",
+            "local_catalog",
+            "runtime_agent",
+            "human",
+            "system"
+          ]
+        },
+        "producerId": {
+          "$ref": "#/$defs/Id"
+        },
+        "producerVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "recordedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "inputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "sourceRevisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "Warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "requiresHumanReview",
+        "relatedEntityIds",
+        "evidence"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,79}$"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error",
+            "blocker"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Redacted operator-safe wording; source excerpts belong in evidence."
+        },
+        "requiresHumanReview": {
+          "type": "boolean"
+        },
+        "relatedEntityIds": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "../v2/definitions.schema.json#/$defs/AnalysisEvidenceSpan"
+          }
+        }
+      }
+    },
+    "DescriptorAvailability": {
+      "enum": [
+        "available",
+        "unavailable",
+        "disabled"
+      ]
+    },
+    "VoiceRightsState": {
+      "enum": [
+        "verified",
+        "restricted",
+        "unknown",
+        "prohibited"
+      ]
+    },
+    "Suitability": {
+      "enum": [
+        "preferred",
+        "suitable",
+        "limited",
+        "unsuitable",
+        "unknown"
+      ]
+    },
+    "VoiceOutputCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "formats",
+        "sampleRatesHz"
+      ],
+      "properties": {
+        "formats": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "pcm_s16le",
+              "wav",
+              "mp3",
+              "unknown"
+            ]
+          }
+        },
+        "sampleRatesHz": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 8000,
+            "maximum": 192000
+          }
+        }
+      }
+    },
+    "VoiceProviderDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "providerId",
+        "providerVersion",
+        "providerType",
+        "runtimeAvailability",
+        "catalogAvailability",
+        "synthesisImplemented",
+        "networkUseRequired",
+        "credentialsRequired",
+        "supportedOperatingSystems",
+        "supportedLanguages",
+        "outputCapability",
+        "rightsMetadataCapabilities",
+        "healthStatus",
+        "provenance"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "providerId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerType": {
+          "enum": [
+            "local",
+            "cloud_capable_disabled",
+            "development_fixture"
+          ]
+        },
+        "runtimeAvailability": {
+          "$ref": "#/$defs/DescriptorAvailability"
+        },
+        "catalogAvailability": {
+          "$ref": "#/$defs/DescriptorAvailability"
+        },
+        "synthesisImplemented": {
+          "type": "boolean"
+        },
+        "networkUseRequired": {
+          "type": "boolean"
+        },
+        "credentialsRequired": {
+          "type": "boolean"
+        },
+        "supportedOperatingSystems": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "windows",
+              "macos",
+              "linux"
+            ]
+          }
+        },
+        "supportedLanguages": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "outputCapability": {
+          "$ref": "#/$defs/VoiceOutputCapability"
+        },
+        "rightsMetadataCapabilities": {
+          "type": "array",
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "license_identifier",
+              "commercial_use",
+              "attribution",
+              "distribution_limits",
+              "consent",
+              "effective_dates",
+              "evidence_reference"
+            ]
+          }
+        },
+        "healthStatus": {
+          "enum": [
+            "healthy",
+            "degraded",
+            "unavailable",
+            "disabled"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      }
+    },
+    "VoiceCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supportedLanguages",
+        "supportedLocales",
+        "expressiveControls",
+        "speakingRateRange",
+        "pitchControl",
+        "styleControl",
+        "outputCapability"
+      ],
+      "properties": {
+        "supportedLanguages": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "supportedLocales": {
+          "type": "array",
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "expressiveControls": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "energy",
+              "emotion",
+              "pace",
+              "pitch",
+              "style"
+            ]
+          }
+        },
+        "speakingRateRange": {
+          "$ref": "#/$defs/SpeakingRateRange"
+        },
+        "pitchControl": {
+          "enum": [
+            "none",
+            "categorical",
+            "continuous"
+          ]
+        },
+        "styleControl": {
+          "enum": [
+            "none",
+            "categorical",
+            "continuous"
+          ]
+        },
+        "outputCapability": {
+          "$ref": "#/$defs/VoiceOutputCapability"
+        }
+      }
+    },
+    "VoiceModelDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "modelId",
+        "providerId",
+        "modelName",
+        "modelVersion",
+        "capability",
+        "executionLocation",
+        "licenseClassification",
+        "availability",
+        "deprecated",
+        "provenance"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "modelId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerId": {
+          "$ref": "#/$defs/Id"
+        },
+        "modelName": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "modelVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "capability": {
+          "$ref": "#/$defs/VoiceCapability"
+        },
+        "executionLocation": {
+          "enum": [
+            "local",
+            "remote"
+          ]
+        },
+        "licenseClassification": {
+          "enum": [
+            "fixture_only",
+            "commercial",
+            "restricted",
+            "unknown",
+            "prohibited"
+          ]
+        },
+        "availability": {
+          "$ref": "#/$defs/DescriptorAvailability"
+        },
+        "deprecated": {
+          "type": "boolean"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      }
+    },
+    "VoiceCatalogRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "catalogRevisionId",
+        "revision",
+        "semanticVersion",
+        "rightsPolicyId",
+        "providerDescriptorIds",
+        "modelDescriptorIds",
+        "voiceProfileIds",
+        "createdAt",
+        "immutable",
+        "provenance",
+        "catalogFingerprint"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "catalogRevisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "semanticVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "rightsPolicyId": {
+          "const": "voice-rights-policy-v1"
+        },
+        "providerDescriptorIds": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "modelDescriptorIds": {
+          "type": "array",
+          "maxItems": 500,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "voiceProfileIds": {
+          "type": "array",
+          "maxItems": 5000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "createdAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "immutable": {
+          "const": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "catalogFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "SpeakingRateRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum",
+        "maximum",
+        "unit"
+      ],
+      "properties": {
+        "minimum": {
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 4
+        },
+        "maximum": {
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 4
+        },
+        "unit": {
+          "const": "multiplier"
+        }
+      }
+    },
+    "CastingVoiceProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "voiceProfileId",
+        "providerId",
+        "modelId",
+        "providerVoiceId",
+        "catalogRevisionId",
+        "displayLabel",
+        "language",
+        "locale",
+        "accentOrDialect",
+        "agePresentationRange",
+        "vocalPresentation",
+        "vocalTexture",
+        "pitchRange",
+        "speakingRateRange",
+        "energyRange",
+        "expressiveRange",
+        "narrationSuitability",
+        "dialogueSuitability",
+        "longFormSuitability",
+        "characterRoleSuitability",
+        "maximumRecommendedWords",
+        "knownLimitations",
+        "rightsRecordId",
+        "rightsState",
+        "licenseScope",
+        "commercialUse",
+        "attributionRequired",
+        "voiceCloningClassification",
+        "consentStatus",
+        "metadataSimilarityGroup",
+        "reuseRiskGroup",
+        "version",
+        "state",
+        "provenance"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "voiceProfileId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerId": {
+          "$ref": "#/$defs/Id"
+        },
+        "modelId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerVoiceId": {
+          "$ref": "#/$defs/Id"
+        },
+        "catalogRevisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "displayLabel": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "language": {
+          "$ref": "#/$defs/Id"
+        },
+        "locale": {
+          "$ref": "#/$defs/Id"
+        },
+        "accentOrDialect": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "agePresentationRange": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimum",
+            "maximum"
+          ],
+          "properties": {
+            "minimum": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 120
+            },
+            "maximum": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 120
+            }
+          }
+        },
+        "vocalPresentation": {
+          "enum": [
+            "feminine",
+            "masculine",
+            "androgynous",
+            "neutral",
+            "varied",
+            "unspecified"
+          ]
+        },
+        "vocalTexture": {
+          "enum": [
+            "airy",
+            "bright",
+            "clear",
+            "crisp",
+            "gravelly",
+            "resonant",
+            "smooth",
+            "warm",
+            "textured",
+            "varied",
+            "unspecified"
+          ]
+        },
+        "pitchRange": {
+          "enum": [
+            "low",
+            "low_mid",
+            "mid",
+            "mid_high",
+            "high",
+            "wide",
+            "unspecified"
+          ]
+        },
+        "speakingRateRange": {
+          "$ref": "#/$defs/SpeakingRateRange"
+        },
+        "energyRange": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimum",
+            "maximum"
+          ],
+          "properties": {
+            "minimum": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maximum": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "expressiveRange": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "narrationSuitability": {
+          "$ref": "#/$defs/Suitability"
+        },
+        "dialogueSuitability": {
+          "$ref": "#/$defs/Suitability"
+        },
+        "longFormSuitability": {
+          "$ref": "#/$defs/Suitability"
+        },
+        "characterRoleSuitability": {
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "lead",
+              "supporting",
+              "minor",
+              "group",
+              "announcement",
+              "internal_thought"
+            ]
+          }
+        },
+        "maximumRecommendedWords": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "knownLimitations": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/NonblankText"
+          }
+        },
+        "rightsRecordId": {
+          "$ref": "#/$defs/Id"
+        },
+        "rightsState": {
+          "$ref": "#/$defs/VoiceRightsState"
+        },
+        "licenseScope": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "commercialUse": {
+          "enum": [
+            "permitted",
+            "restricted",
+            "unknown",
+            "prohibited"
+          ]
+        },
+        "attributionRequired": {
+          "type": "boolean"
+        },
+        "voiceCloningClassification": {
+          "enum": [
+            "not_cloned_synthetic_fixture",
+            "provider_declared_non_cloned",
+            "unknown",
+            "prohibited"
+          ]
+        },
+        "consentStatus": {
+          "enum": [
+            "not_applicable_synthetic_fixture",
+            "verified",
+            "restricted",
+            "missing",
+            "unknown",
+            "prohibited"
+          ]
+        },
+        "metadataSimilarityGroup": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "reuseRiskGroup": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "version": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "enum": [
+            "active",
+            "unavailable",
+            "deprecated",
+            "blocked"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      }
+    },
+    "VoiceRightsRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "rightsRecordId",
+        "voiceProfileId",
+        "providerId",
+        "state",
+        "licenseIdentifier",
+        "rightsBasis",
+        "commercialUsePermission",
+        "attributionRequirement",
+        "geographicLimitations",
+        "distributionLimitations",
+        "voiceCloningStatus",
+        "consentStatus",
+        "effectiveDate",
+        "expiresAt",
+        "evidenceReference",
+        "humanVerificationStatus",
+        "provenance",
+        "revision"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "rightsRecordId": {
+          "$ref": "#/$defs/Id"
+        },
+        "voiceProfileId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerId": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "$ref": "#/$defs/VoiceRightsState"
+        },
+        "licenseIdentifier": {
+          "$ref": "#/$defs/Id"
+        },
+        "rightsBasis": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "commercialUsePermission": {
+          "enum": [
+            "permitted",
+            "restricted",
+            "unknown",
+            "prohibited"
+          ]
+        },
+        "attributionRequirement": {
+          "enum": [
+            "none",
+            "required",
+            "unknown",
+            "prohibited"
+          ]
+        },
+        "geographicLimitations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "distributionLimitations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "voiceCloningStatus": {
+          "enum": [
+            "not_applicable_synthetic_fixture",
+            "not_permitted",
+            "permitted_with_consent",
+            "unknown",
+            "prohibited"
+          ]
+        },
+        "consentStatus": {
+          "enum": [
+            "not_applicable_synthetic_fixture",
+            "verified",
+            "restricted",
+            "missing",
+            "unknown",
+            "prohibited"
+          ]
+        },
+        "effectiveDate": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "evidenceReference": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "humanVerificationStatus": {
+          "enum": [
+            "verified",
+            "not_required_fixture",
+            "pending",
+            "rejected"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "ProductionRoleType": {
+      "enum": [
+        "primary_narrator",
+        "secondary_narrator",
+        "named_character",
+        "unresolved_speaker",
+        "group_or_crowd",
+        "quoted_document_or_announcement",
+        "internal_thought",
+        "custom"
+      ]
+    },
+    "ProductionRoleRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "locales",
+        "agePresentationRange",
+        "vocalPresentations",
+        "preferredTextures",
+        "speakingRateRange",
+        "requiredExpressiveRange",
+        "longFormRequired"
+      ],
+      "properties": {
+        "language": {
+          "$ref": "#/$defs/Id"
+        },
+        "locales": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "agePresentationRange": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "minimum",
+                "maximum"
+              ],
+              "properties": {
+                "minimum": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 120
+                },
+                "maximum": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 120
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vocalPresentations": {
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "feminine",
+              "masculine",
+              "androgynous",
+              "neutral",
+              "varied",
+              "unspecified"
+            ]
+          }
+        },
+        "preferredTextures": {
+          "type": "array",
+          "maxItems": 11,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "airy",
+              "bright",
+              "clear",
+              "crisp",
+              "gravelly",
+              "resonant",
+              "smooth",
+              "warm",
+              "textured",
+              "varied",
+              "unspecified"
+            ]
+          }
+        },
+        "speakingRateRange": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SpeakingRateRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requiredExpressiveRange": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "longFormRequired": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ProductionRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "roleId",
+        "projectId",
+        "roleType",
+        "phase2EntityId",
+        "effectiveDisplayLabel",
+        "analysisRunId",
+        "analysisSnapshotId",
+        "analysisSnapshotRevision",
+        "analysisSnapshotFingerprint",
+        "dialogueLineCount",
+        "narrationSpanCount",
+        "approximateWordCount",
+        "range",
+        "languageRequirements",
+        "performanceRequirements",
+        "warnings",
+        "provenance",
+        "effectiveFingerprint",
+        "status",
+        "revision"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "roleId": {
+          "$ref": "#/$defs/Id"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "roleType": {
+          "$ref": "#/$defs/ProductionRoleType"
+        },
+        "phase2EntityId": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "effectiveDisplayLabel": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "analysisRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "analysisSnapshotId": {
+          "$ref": "#/$defs/Id"
+        },
+        "analysisSnapshotRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "analysisSnapshotFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "dialogueLineCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "narrationSpanCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "approximateWordCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "firstChapterOrdinal",
+            "lastChapterOrdinal",
+            "firstSceneOrdinal",
+            "lastSceneOrdinal"
+          ],
+          "properties": {
+            "firstChapterOrdinal": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "lastChapterOrdinal": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "firstSceneOrdinal": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "lastSceneOrdinal": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "languageRequirements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "performanceRequirements": {
+          "$ref": "#/$defs/ProductionRoleRequirement"
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/Warning"
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "effectiveFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "intentionally_uncast",
+            "unresolved",
+            "invalidated"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "narratorKind": {
+          "enum": [
+            "primary",
+            "secondary"
+          ]
+        },
+        "characterId": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "roleImportance": {
+          "enum": [
+            "major",
+            "supporting",
+            "minor",
+            "unresolved"
+          ]
+        },
+        "unresolvedMaterialExplicitlyRepresented": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "roleType": {
+                "enum": [
+                  "primary_narrator",
+                  "secondary_narrator"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "narratorKind"
+            ]
+          },
+          "else": {
+            "required": [
+              "characterId",
+              "roleImportance",
+              "unresolvedMaterialExplicitlyRepresented"
+            ]
+          }
+        }
+      ]
+    },
+    "NarratorRole": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ProductionRole"
+        },
+        {
+          "properties": {
+            "roleType": {
+              "enum": [
+                "primary_narrator",
+                "secondary_narrator"
+              ]
+            },
+            "narratorKind": {
+              "enum": [
+                "primary",
+                "secondary"
+              ]
+            }
+          },
+          "required": [
+            "narratorKind"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "characterId"
+                ]
+              },
+              {
+                "required": [
+                  "roleImportance"
+                ]
+              },
+              {
+                "required": [
+                  "unresolvedMaterialExplicitlyRepresented"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CharacterVoiceRole": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ProductionRole"
+        },
+        {
+          "properties": {
+            "roleType": {
+              "enum": [
+                "named_character",
+                "unresolved_speaker",
+                "group_or_crowd",
+                "quoted_document_or_announcement",
+                "internal_thought",
+                "custom"
+              ]
+            }
+          },
+          "required": [
+            "characterId",
+            "roleImportance",
+            "unresolvedMaterialExplicitlyRepresented"
+          ],
+          "not": {
+            "required": [
+              "narratorKind"
+            ]
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CustomProductionRole": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/CharacterVoiceRole"
+        },
+        {
+          "properties": {
+            "roleType": {
+              "const": "custom"
+            },
+            "phase2EntityId": {
+              "type": "null"
+            },
+            "dialogueLineCount": {
+              "const": 0
+            },
+            "narrationSpanCount": {
+              "const": 0
+            },
+            "approximateWordCount": {
+              "const": 0
+            },
+            "range": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "firstChapterOrdinal",
+                "lastChapterOrdinal",
+                "firstSceneOrdinal",
+                "lastSceneOrdinal"
+              ],
+              "properties": {
+                "firstChapterOrdinal": {
+                  "type": "null"
+                },
+                "lastChapterOrdinal": {
+                  "type": "null"
+                },
+                "firstSceneOrdinal": {
+                  "type": "null"
+                },
+                "lastSceneOrdinal": {
+                  "type": "null"
+                }
+              }
+            },
+            "characterId": {
+              "type": "null"
+            },
+            "roleImportance": {
+              "const": "supporting"
+            },
+            "unresolvedMaterialExplicitlyRepresented": {
+              "const": false
+            },
+            "provenance": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/Provenance"
+                },
+                {
+                  "properties": {
+                    "origin": {
+                      "const": "human"
+                    }
+                  },
+                  "required": [
+                    "sourceRevisionId",
+                    "reason"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CastingProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "values",
+        "canonicalJson",
+        "fingerprint"
+      ],
+      "properties": {
+        "values": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileId",
+            "castingContractVersion",
+            "producerId",
+            "rightsPolicyId",
+            "deterministic",
+            "providerNeutral",
+            "externalSemanticDependency",
+            "explanationRequired",
+            "compatibilityRules",
+            "hardConstraints",
+            "softPreferences",
+            "conflictRules",
+            "rightsEligibilityRules",
+            "limits"
+          ],
+          "properties": {
+            "profileId": {
+              "const": "governed-voice-casting-v1@1.0.0"
+            },
+            "castingContractVersion": {
+              "$ref": "#/$defs/ContractVersion"
+            },
+            "producerId": {
+              "const": "voice-casting-orchestrator@1.0.0"
+            },
+            "rightsPolicyId": {
+              "const": "voice-rights-policy-v1"
+            },
+            "deterministic": {
+              "const": true
+            },
+            "providerNeutral": {
+              "const": true
+            },
+            "externalSemanticDependency": {
+              "const": false
+            },
+            "explanationRequired": {
+              "const": true
+            },
+            "compatibilityRules": {
+              "$ref": "#/$defs/CastingCompatibilityRules"
+            },
+            "hardConstraints": {
+              "$ref": "#/$defs/CastingHardConstraintIds"
+            },
+            "softPreferences": {
+              "$ref": "#/$defs/CastingSoftPreferenceIds"
+            },
+            "conflictRules": {
+              "$ref": "#/$defs/CastingConflictCategories"
+            },
+            "rightsEligibilityRules": {
+              "$ref": "#/$defs/CastingRightsEligibilityRules"
+            },
+            "limits": {
+              "$ref": "#/$defs/CastingLimits"
+            }
+          }
+        },
+        "canonicalJson": {
+          "const": "{\"castingContractVersion\":\"3.0.0\",\"compatibilityRules\":[\"hard_constraints_fail_closed\",\"soft_preferences_score_separately\",\"unknown_remains_unknown\",\"no_automatic_assignment\",\"declared_metadata_only\"],\"conflictRules\":[\"incompatible_voice_reuse\",\"narrator_major_character_reuse\",\"metadata_similarity_risk\",\"accent_or_locale_mismatch\",\"insufficient_expressive_range\",\"rights_conflict\",\"provider_or_model_unavailable\",\"deprecated_voice\",\"role_length_suitability\",\"unresolved_role_assignment\",\"voice_reuse_threshold_exceeded\"],\"deterministic\":true,\"explanationRequired\":true,\"externalSemanticDependency\":false,\"hardConstraints\":[\"language_support\",\"provider_available\",\"model_available\",\"rights_not_prohibited\",\"rights_known\",\"required_consent\",\"voice_not_blocked\",\"declared_capabilities\",\"role_length_suitability\"],\"limits\":{\"defaultPageSize\":50,\"maximumConflictsPerRun\":10000,\"maximumExplanationCodePoints\":2000,\"maximumFinalCandidatesPerRole\":12,\"maximumHardConstraintResults\":16,\"maximumPageSize\":200,\"maximumPreReductionCandidatesPerRole\":50,\"maximumProductionRoles\":300,\"maximumSoftPreferenceResults\":16,\"maximumVoiceProfiles\":5000,\"maximumVoiceReusePerProfile\":2,\"maximumWarningsPerEntity\":32},\"producerId\":\"voice-casting-orchestrator@1.0.0\",\"profileId\":\"governed-voice-casting-v1@1.0.0\",\"providerNeutral\":true,\"rightsEligibilityRules\":[\"verified_eligible\",\"restricted_requires_acknowledgement\",\"unknown_ineligible\",\"prohibited_ineligible\"],\"rightsPolicyId\":\"voice-rights-policy-v1\",\"softPreferences\":[\"locale_match\",\"narration_suitability\",\"dialogue_suitability\",\"expressive_range\",\"age_presentation\",\"vocal_presentation\",\"vocal_texture\",\"speaking_rate\",\"emotional_range\",\"long_form_preference\"]}"
+        },
+        "fingerprint": {
+          "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6"
+        }
+      }
+    },
+    "CastingLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximumProductionRoles",
+        "maximumVoiceProfiles",
+        "maximumPreReductionCandidatesPerRole",
+        "maximumFinalCandidatesPerRole",
+        "defaultPageSize",
+        "maximumPageSize",
+        "maximumExplanationCodePoints",
+        "maximumWarningsPerEntity",
+        "maximumHardConstraintResults",
+        "maximumSoftPreferenceResults",
+        "maximumConflictsPerRun",
+        "maximumVoiceReusePerProfile"
+      ],
+      "properties": {
+        "maximumProductionRoles": {
+          "const": 300
+        },
+        "maximumVoiceProfiles": {
+          "const": 5000
+        },
+        "maximumPreReductionCandidatesPerRole": {
+          "const": 50
+        },
+        "maximumFinalCandidatesPerRole": {
+          "const": 12
+        },
+        "defaultPageSize": {
+          "const": 50
+        },
+        "maximumPageSize": {
+          "const": 200
+        },
+        "maximumExplanationCodePoints": {
+          "const": 2000
+        },
+        "maximumWarningsPerEntity": {
+          "const": 32
+        },
+        "maximumHardConstraintResults": {
+          "const": 16
+        },
+        "maximumSoftPreferenceResults": {
+          "const": 16
+        },
+        "maximumConflictsPerRun": {
+          "const": 10000
+        },
+        "maximumVoiceReusePerProfile": {
+          "const": 2
+        }
+      }
+    },
+    "CastingCompatibilityRules": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "prefixItems": [
+        {
+          "const": "hard_constraints_fail_closed"
+        },
+        {
+          "const": "soft_preferences_score_separately"
+        },
+        {
+          "const": "unknown_remains_unknown"
+        },
+        {
+          "const": "no_automatic_assignment"
+        },
+        {
+          "const": "declared_metadata_only"
+        }
+      ],
+      "items": false
+    },
+    "CastingRightsEligibilityRules": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {
+          "const": "verified_eligible"
+        },
+        {
+          "const": "restricted_requires_acknowledgement"
+        },
+        {
+          "const": "unknown_ineligible"
+        },
+        {
+          "const": "prohibited_ineligible"
+        }
+      ],
+      "items": false
+    },
+    "CastingHardConstraintIds": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "prefixItems": [
+        {
+          "const": "language_support"
+        },
+        {
+          "const": "provider_available"
+        },
+        {
+          "const": "model_available"
+        },
+        {
+          "const": "rights_not_prohibited"
+        },
+        {
+          "const": "rights_known"
+        },
+        {
+          "const": "required_consent"
+        },
+        {
+          "const": "voice_not_blocked"
+        },
+        {
+          "const": "declared_capabilities"
+        },
+        {
+          "const": "role_length_suitability"
+        }
+      ],
+      "items": false
+    },
+    "CastingSoftPreferenceIds": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "prefixItems": [
+        {
+          "const": "locale_match"
+        },
+        {
+          "const": "narration_suitability"
+        },
+        {
+          "const": "dialogue_suitability"
+        },
+        {
+          "const": "expressive_range"
+        },
+        {
+          "const": "age_presentation"
+        },
+        {
+          "const": "vocal_presentation"
+        },
+        {
+          "const": "vocal_texture"
+        },
+        {
+          "const": "speaking_rate"
+        },
+        {
+          "const": "emotional_range"
+        },
+        {
+          "const": "long_form_preference"
+        }
+      ],
+      "items": false
+    },
+    "CastingConflictCategories": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "prefixItems": [
+        {
+          "const": "incompatible_voice_reuse"
+        },
+        {
+          "const": "narrator_major_character_reuse"
+        },
+        {
+          "const": "metadata_similarity_risk"
+        },
+        {
+          "const": "accent_or_locale_mismatch"
+        },
+        {
+          "const": "insufficient_expressive_range"
+        },
+        {
+          "const": "rights_conflict"
+        },
+        {
+          "const": "provider_or_model_unavailable"
+        },
+        {
+          "const": "deprecated_voice"
+        },
+        {
+          "const": "role_length_suitability"
+        },
+        {
+          "const": "unresolved_role_assignment"
+        },
+        {
+          "const": "voice_reuse_threshold_exceeded"
+        }
+      ],
+      "items": false
+    },
+    "CastingPhase2Prerequisites": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projectId",
+        "sourceDocumentId",
+        "sourceRevision",
+        "extractionId",
+        "extractionRevision",
+        "extractedTextSha256",
+        "importReviewDecisionId",
+        "analysisRunId",
+        "analysisSnapshotId",
+        "analysisSnapshotRevision",
+        "analysisSnapshotFingerprint",
+        "analysisCorrectionSetFingerprint",
+        "characterRegistryFingerprint",
+        "phase2GateDecisionIds",
+        "evidenceFingerprint"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "sourceDocumentId": {
+          "$ref": "#/$defs/Id"
+        },
+        "sourceRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "extractionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "extractionRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "extractedTextSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "importReviewDecisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "analysisRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "analysisSnapshotId": {
+          "$ref": "#/$defs/Id"
+        },
+        "analysisSnapshotRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "analysisSnapshotFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "analysisCorrectionSetFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "characterRegistryFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "phase2GateDecisionIds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "storyStructureReview",
+            "characterRegistryReview",
+            "dialogueAttributionReview",
+            "wholeBookAnalysisReview"
+          ],
+          "properties": {
+            "storyStructureReview": {
+              "$ref": "#/$defs/Id"
+            },
+            "characterRegistryReview": {
+              "$ref": "#/$defs/Id"
+            },
+            "dialogueAttributionReview": {
+              "$ref": "#/$defs/Id"
+            },
+            "wholeBookAnalysisReview": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        },
+        "evidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CastingRunCountSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionRoles",
+        "narratorRoles",
+        "characterRoles",
+        "preReductionCandidates",
+        "finalCandidates",
+        "conflicts",
+        "assignments",
+        "corrections"
+      ],
+      "properties": {
+        "productionRoles": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 300
+        },
+        "narratorRoles": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 300
+        },
+        "characterRoles": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 300
+        },
+        "preReductionCandidates": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15000
+        },
+        "finalCandidates": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600
+        },
+        "conflicts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "assignments": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 300
+        },
+        "corrections": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "CastingRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "castingRunId",
+        "projectId",
+        "prerequisites",
+        "profile",
+        "producerId",
+        "catalogRevisionId",
+        "catalogFingerprint",
+        "effectiveCorrectionSetFingerprint",
+        "inputFingerprint",
+        "outputFingerprint",
+        "idempotencyFingerprint",
+        "jobId",
+        "status",
+        "currentStage",
+        "progress",
+        "checkpoint",
+        "attempt",
+        "retryPolicy",
+        "failurePolicy",
+        "resumeOfCastingRunId",
+        "retryOfCastingRunId",
+        "retryClassification",
+        "cancellationRequested",
+        "warnings",
+        "summary",
+        "approvedCastSnapshot",
+        "createdAt",
+        "updatedAt",
+        "completedAt",
+        "failure"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "prerequisites": {
+          "$ref": "#/$defs/CastingPhase2Prerequisites"
+        },
+        "profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileId",
+            "fingerprint"
+          ],
+          "properties": {
+            "profileId": {
+              "const": "governed-voice-casting-v1@1.0.0"
+            },
+            "fingerprint": {
+              "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6"
+            }
+          }
+        },
+        "producerId": {
+          "const": "voice-casting-orchestrator@1.0.0"
+        },
+        "catalogRevisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "catalogFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "effectiveCorrectionSetFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "inputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "outputFingerprint": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idempotencyFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "jobId": {
+          "$ref": "#/$defs/Id"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "invalidated"
+          ]
+        },
+        "currentStage": {
+          "enum": [
+            "queued",
+            "validate_phase_2_approvals",
+            "freeze_source_analysis_evidence",
+            "load_voice_catalog_revision",
+            "create_production_roles",
+            "evaluate_role_constraints",
+            "generate_bounded_candidates",
+            "evaluate_differentiation_conflicts",
+            "publish_casting_run",
+            "publish_reviewable_cast_snapshot",
+            "complete"
+          ]
+        },
+        "progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "checkpoint": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "checkpointId",
+                "stage",
+                "fingerprint",
+                "recordedAt"
+              ],
+              "properties": {
+                "checkpointId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "stage": {
+                  "$ref": "#/$defs/CastingJobStage"
+                },
+                "fingerprint": {
+                  "$ref": "#/$defs/Sha256"
+                },
+                "recordedAt": {
+                  "$ref": "#/$defs/Timestamp"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retryPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxAttempts",
+            "retryableFailureCodes"
+          ],
+          "properties": {
+            "maxAttempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "retryableFailureCodes": {
+              "type": "array",
+              "maxItems": 100,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/Id"
+              }
+            }
+          }
+        },
+        "failurePolicy": {
+          "const": "fail_closed_preserve_effective_cast_snapshot"
+        },
+        "resumeOfCastingRunId": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "retryOfCastingRunId": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "retryClassification": {
+          "enum": [
+            "retryable",
+            "not_retryable",
+            "retry_exhausted"
+          ]
+        },
+        "cancellationRequested": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/Warning"
+          }
+        },
+        "summary": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CastingRunCountSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvedCastSnapshot": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ApprovedCastSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "failure": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "code",
+                "redactedMessage",
+                "retryable",
+                "redacted"
+              ],
+              "properties": {
+                "code": {
+                  "$ref": "#/$defs/Id"
+                },
+                "redactedMessage": {
+                  "$ref": "#/$defs/NonblankText"
+                },
+                "retryable": {
+                  "type": "boolean"
+                },
+                "redacted": {
+                  "const": true
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "CastingJobStage": {
+      "enum": [
+        "validate_phase_2_approvals",
+        "freeze_source_analysis_evidence",
+        "load_voice_catalog_revision",
+        "create_production_roles",
+        "evaluate_role_constraints",
+        "generate_bounded_candidates",
+        "evaluate_differentiation_conflicts",
+        "publish_casting_run",
+        "publish_reviewable_cast_snapshot"
+      ]
+    },
+    "AnalysisConfidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "score",
+        "classification",
+        "basis"
+      ],
+      "properties": {
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "classification": {
+          "enum": [
+            "unknown",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "basis": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "calibrationId": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "CastingCompatibilityAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "assessmentId",
+        "roleId",
+        "voiceProfileId",
+        "compatibilityStatus",
+        "compatibilityScore",
+        "confidence",
+        "hardConstraints",
+        "softPreferences",
+        "rightsEligibility",
+        "languageEligibility",
+        "providerAvailability",
+        "modelAvailability",
+        "longFormSuitability",
+        "explanation",
+        "provenance",
+        "inputFingerprint",
+        "baseEvidenceFingerprint",
+        "outputFingerprint"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "assessmentId": {
+          "$ref": "#/$defs/Id"
+        },
+        "roleId": {
+          "$ref": "#/$defs/Id"
+        },
+        "voiceProfileId": {
+          "$ref": "#/$defs/Id"
+        },
+        "compatibilityStatus": {
+          "enum": [
+            "compatible",
+            "compatible_with_warnings",
+            "incompatible",
+            "unknown"
+          ]
+        },
+        "compatibilityScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "$ref": "#/$defs/AnalysisConfidence"
+        },
+        "hardConstraints": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "constraintId",
+              "result",
+              "explanation"
+            ],
+            "properties": {
+              "constraintId": {
+                "enum": [
+                  "language_support",
+                  "provider_available",
+                  "model_available",
+                  "rights_not_prohibited",
+                  "rights_known",
+                  "required_consent",
+                  "voice_not_blocked",
+                  "declared_capabilities",
+                  "role_length_suitability"
+                ]
+              },
+              "result": {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "unknown"
+                ]
+              },
+              "explanation": {
+                "$ref": "#/$defs/NonblankText"
+              }
+            }
+          }
+        },
+        "softPreferences": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "preferenceId",
+              "score",
+              "explanation"
+            ],
+            "properties": {
+              "preferenceId": {
+                "enum": [
+                  "locale_match",
+                  "narration_suitability",
+                  "dialogue_suitability",
+                  "expressive_range",
+                  "age_presentation",
+                  "vocal_presentation",
+                  "vocal_texture",
+                  "speaking_rate",
+                  "emotional_range",
+                  "long_form_preference"
+                ]
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "explanation": {
+                "$ref": "#/$defs/NonblankText"
+              }
+            }
+          }
+        },
+        "rightsEligibility": {
+          "enum": [
+            "eligible",
+            "restricted_requires_acknowledgement",
+            "ineligible_unknown",
+            "ineligible_prohibited"
+          ]
+        },
+        "languageEligibility": {
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        },
+        "providerAvailability": {
+          "$ref": "#/$defs/DescriptorAvailability"
+        },
+        "modelAvailability": {
+          "$ref": "#/$defs/DescriptorAvailability"
+        },
+        "longFormSuitability": {
+          "$ref": "#/$defs/Suitability"
+        },
+        "explanation": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "inputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "baseEvidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "outputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CastingCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "candidateId",
+        "castingRunId",
+        "roleId",
+        "voiceProfileId",
+        "rank",
+        "preReductionRank",
+        "assessment",
+        "conflictIds",
+        "conflictWarnings",
+        "rejectedByCorrectionId",
+        "provenance",
+        "inputFingerprint",
+        "baseEvidenceFingerprint",
+        "outputFingerprint"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "candidateId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "roleId": {
+          "$ref": "#/$defs/Id"
+        },
+        "voiceProfileId": {
+          "$ref": "#/$defs/Id"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "preReductionRank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "assessment": {
+          "$ref": "#/$defs/CastingCompatibilityAssessment"
+        },
+        "conflictIds": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "conflictWarnings": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/Warning"
+          }
+        },
+        "rejectedByCorrectionId": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "inputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "baseEvidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "outputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CastingConflictCategory": {
+      "enum": [
+        "incompatible_voice_reuse",
+        "narrator_major_character_reuse",
+        "metadata_similarity_risk",
+        "accent_or_locale_mismatch",
+        "insufficient_expressive_range",
+        "rights_conflict",
+        "provider_or_model_unavailable",
+        "deprecated_voice",
+        "role_length_suitability",
+        "unresolved_role_assignment",
+        "voice_reuse_threshold_exceeded"
+      ]
+    },
+    "CastingConflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "conflictId",
+        "castingRunId",
+        "category",
+        "severity",
+        "roleIds",
+        "voiceProfileIds",
+        "explanation",
+        "metadataOnly",
+        "acousticSimilarityClaimed",
+        "resolutionState",
+        "dispositionCorrectionId",
+        "provenance",
+        "inputFingerprint",
+        "baseEvidenceFingerprint",
+        "outputFingerprint"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "conflictId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "category": {
+          "$ref": "#/$defs/CastingConflictCategory"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error",
+            "blocker"
+          ]
+        },
+        "roleIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 300,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "voiceProfileIds": {
+          "type": "array",
+          "maxItems": 300,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "explanation": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "metadataOnly": {
+          "const": true
+        },
+        "acousticSimilarityClaimed": {
+          "const": false
+        },
+        "resolutionState": {
+          "enum": [
+            "open",
+            "acknowledged",
+            "approved_reuse",
+            "resolved",
+            "superseded"
+          ]
+        },
+        "dispositionCorrectionId": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "inputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "baseEvidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "outputFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CastAssignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "assignmentId",
+        "projectId",
+        "roleId",
+        "voiceProfileId",
+        "voiceProfileVersion",
+        "voiceEvidenceFingerprint",
+        "rightsRecordId",
+        "rightsRecordRevision",
+        "rightsEvidenceFingerprint",
+        "catalogRevisionId",
+        "castingRunId",
+        "castingProfileFingerprint",
+        "phase2SnapshotFingerprint",
+        "effectiveCorrectionSetFingerprint",
+        "authority",
+        "rationale",
+        "warnings",
+        "rightsState",
+        "revision",
+        "provenance",
+        "supersedesAssignmentId",
+        "effective"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "assignmentId": {
+          "$ref": "#/$defs/Id"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "roleId": {
+          "$ref": "#/$defs/Id"
+        },
+        "voiceProfileId": {
+          "$ref": "#/$defs/Id"
+        },
+        "voiceProfileVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "voiceEvidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "rightsRecordId": {
+          "$ref": "#/$defs/Id"
+        },
+        "rightsRecordRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rightsEvidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "catalogRevisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingProfileFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "phase2SnapshotFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "effectiveCorrectionSetFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "authority": {
+          "enum": [
+            "machine_proposal",
+            "human_selection",
+            "human_locked"
+          ]
+        },
+        "rationale": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/Warning"
+          }
+        },
+        "rightsState": {
+          "$ref": "#/$defs/VoiceRightsState"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "supersedesAssignmentId": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "effective": {
+          "type": "boolean"
+        }
+      }
+    },
+    "CastingCorrectionCategory": {
+      "enum": [
+        "select_voice",
+        "clear_assignment",
+        "lock_assignment",
+        "unlock_assignment",
+        "mark_intentionally_uncast",
+        "change_role_label",
+        "change_casting_requirement",
+        "acknowledge_restricted_rights",
+        "approve_voice_reuse",
+        "reject_candidate",
+        "record_custom_rationale"
+      ]
+    },
+    "CastingCorrection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "correctionId",
+        "projectId",
+        "castingRunId",
+        "targetRoleId",
+        "priorEffectiveFingerprint",
+        "correctedValueFingerprint",
+        "actor",
+        "reason",
+        "recordedAt",
+        "provenance",
+        "immutable",
+        "lockedAgainstAutomation",
+        "supersedesCorrectionId",
+        "idempotencyFingerprint",
+        "category",
+        "correctedValue"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "correctionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "targetRoleId": {
+          "$ref": "#/$defs/Id"
+        },
+        "priorEffectiveFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "correctedValueFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "actor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "classification",
+            "actorId"
+          ],
+          "properties": {
+            "classification": {
+              "const": "human"
+            },
+            "actorId": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        },
+        "reason": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "recordedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "immutable": {
+          "const": true
+        },
+        "lockedAgainstAutomation": {
+          "const": true
+        },
+        "supersedesCorrectionId": {
+          "$ref": "#/$defs/NullableId"
+        },
+        "idempotencyFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "category": {
+          "$ref": "#/$defs/CastingCorrectionCategory"
+        },
+        "correctedValue": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "voiceProfileId"
+              ],
+              "properties": {
+                "voiceProfileId": {
+                  "$ref": "#/$defs/Id"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "expectedAssignmentId"
+              ],
+              "properties": {
+                "expectedAssignmentId": {
+                  "$ref": "#/$defs/Id"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "assignmentId"
+              ],
+              "properties": {
+                "assignmentId": {
+                  "$ref": "#/$defs/Id"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "lockedAssignmentId"
+              ],
+              "properties": {
+                "lockedAssignmentId": {
+                  "$ref": "#/$defs/Id"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "intentionallyUncast"
+              ],
+              "properties": {
+                "intentionallyUncast": {
+                  "const": true
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "effectiveDisplayLabel"
+              ],
+              "properties": {
+                "effectiveDisplayLabel": {
+                  "$ref": "#/$defs/NonblankText"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "requirement"
+              ],
+              "properties": {
+                "requirement": {
+                  "$ref": "#/$defs/ProductionRoleRequirement"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "rightsRecordId",
+                "rightsRecordRevision"
+              ],
+              "properties": {
+                "rightsRecordId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "rightsRecordRevision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "conflictId",
+                "approvedRoleIds"
+              ],
+              "properties": {
+                "conflictId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "approvedRoleIds": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 300,
+                  "uniqueItems": true,
+                  "items": {
+                    "$ref": "#/$defs/Id"
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "candidateId"
+              ],
+              "properties": {
+                "candidateId": {
+                  "$ref": "#/$defs/Id"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "rationale"
+              ],
+              "properties": {
+                "rationale": {
+                  "$ref": "#/$defs/NonblankText"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "category": {
+              "const": "select_voice"
+            },
+            "correctedValue": {
+              "required": [
+                "voiceProfileId"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "clear_assignment"
+            },
+            "correctedValue": {
+              "required": [
+                "expectedAssignmentId"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "lock_assignment"
+            },
+            "correctedValue": {
+              "required": [
+                "assignmentId"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "unlock_assignment"
+            },
+            "correctedValue": {
+              "required": [
+                "lockedAssignmentId"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "mark_intentionally_uncast"
+            },
+            "correctedValue": {
+              "required": [
+                "intentionallyUncast"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "change_role_label"
+            },
+            "correctedValue": {
+              "required": [
+                "effectiveDisplayLabel"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "change_casting_requirement"
+            },
+            "correctedValue": {
+              "required": [
+                "requirement"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "acknowledge_restricted_rights"
+            },
+            "correctedValue": {
+              "required": [
+                "rightsRecordId",
+                "rightsRecordRevision"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "approve_voice_reuse"
+            },
+            "correctedValue": {
+              "required": [
+                "conflictId",
+                "approvedRoleIds"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "reject_candidate"
+            },
+            "correctedValue": {
+              "required": [
+                "candidateId"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "record_custom_rationale"
+            },
+            "correctedValue": {
+              "required": [
+                "rationale"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "CastingGateId": {
+      "enum": [
+        "narrator_casting_review",
+        "character_casting_review",
+        "complete_cast_review"
+      ]
+    },
+    "CastingGateEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projectId",
+        "castingRunId",
+        "approvedCastSnapshotId",
+        "approvedCastSnapshotRevision",
+        "approvedCastSnapshotFingerprint",
+        "phase2SnapshotFingerprint",
+        "catalogRevisionId",
+        "catalogFingerprint",
+        "castingProfileFingerprint",
+        "effectiveCorrectionSetFingerprint",
+        "evidenceFingerprint"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "approvedCastSnapshotId": {
+          "$ref": "#/$defs/Id"
+        },
+        "approvedCastSnapshotRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "approvedCastSnapshotFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "phase2SnapshotFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "catalogRevisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "catalogFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "castingProfileFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "effectiveCorrectionSetFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "evidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CastingGateReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "reviewId",
+        "gateId",
+        "projectId",
+        "castingRunId",
+        "state",
+        "revision",
+        "prerequisiteGateIds",
+        "evidence",
+        "openWarningIds",
+        "acknowledgedWarningIds",
+        "latestDecision",
+        "provenance",
+        "updatedAt"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "reviewId": {
+          "$ref": "#/$defs/Id"
+        },
+        "gateId": {
+          "$ref": "#/$defs/CastingGateId"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "approved",
+            "changes_requested",
+            "rejected",
+            "invalidated"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "prerequisiteGateIds": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/CastingGateId"
+          }
+        },
+        "evidence": {
+          "$ref": "#/$defs/CastingGateEvidence"
+        },
+        "openWarningIds": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "acknowledgedWarningIds": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "latestDecision": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CastingReviewDecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "gateId": {
+                "const": "complete_cast_review"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "prerequisiteGateIds": {
+                "minItems": 2,
+                "maxItems": 2,
+                "prefixItems": [
+                  {
+                    "const": "narrator_casting_review"
+                  },
+                  {
+                    "const": "character_casting_review"
+                  }
+                ],
+                "items": false
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "prerequisiteGateIds": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CastingReviewDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "decisionId",
+        "reviewId",
+        "gateId",
+        "projectId",
+        "castingRunId",
+        "approvedCastSnapshotId",
+        "approvedCastSnapshotRevision",
+        "evidenceFingerprint",
+        "decision",
+        "actor",
+        "acknowledgedWarningIds",
+        "rationale",
+        "decidedAt",
+        "provenance",
+        "immutable",
+        "supersedesDecisionId"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "decisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "reviewId": {
+          "$ref": "#/$defs/Id"
+        },
+        "gateId": {
+          "$ref": "#/$defs/CastingGateId"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "approvedCastSnapshotId": {
+          "$ref": "#/$defs/Id"
+        },
+        "approvedCastSnapshotRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "decision": {
+          "enum": [
+            "approved",
+            "changes_requested",
+            "rejected",
+            "invalidated"
+          ]
+        },
+        "actor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "classification",
+            "actorId"
+          ],
+          "properties": {
+            "classification": {
+              "enum": [
+                "human",
+                "system"
+              ]
+            },
+            "actorId": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        },
+        "acknowledgedWarningIds": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "pattern": ".*\\S.*"
+        },
+        "decidedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "immutable": {
+          "const": true
+        },
+        "supersedesDecisionId": {
+          "$ref": "#/$defs/NullableId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "const": "invalidated"
+              }
+            },
+            "required": [
+              "decision"
+            ]
+          },
+          "then": {
+            "properties": {
+              "actor": {
+                "properties": {
+                  "classification": {
+                    "const": "system"
+                  }
+                },
+                "required": [
+                  "classification"
+                ]
+              }
+            },
+            "required": [
+              "actor"
+            ]
+          },
+          "else": {
+            "properties": {
+              "actor": {
+                "properties": {
+                  "classification": {
+                    "const": "human"
+                  }
+                },
+                "required": [
+                  "classification"
+                ]
+              }
+            },
+            "required": [
+              "actor"
+            ]
+          }
+        }
+      ]
+    },
+    "ApprovedCastSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "snapshotId",
+        "castingRunId",
+        "projectId",
+        "revision",
+        "phase2SnapshotFingerprint",
+        "catalogRevisionId",
+        "catalogFingerprint",
+        "castingProfileFingerprint",
+        "effectiveCorrectionSetFingerprint",
+        "assignmentIds",
+        "intentionallyUncastRoleIds",
+        "unresolvedConflictIds",
+        "counts",
+        "snapshotFingerprint",
+        "reviewEligible",
+        "createdAt",
+        "immutable"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "snapshotId": {
+          "$ref": "#/$defs/Id"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "projectId": {
+          "$ref": "#/$defs/Id"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase2SnapshotFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "catalogRevisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "catalogFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "castingProfileFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "effectiveCorrectionSetFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "assignmentIds": {
+          "type": "array",
+          "maxItems": 300,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "intentionallyUncastRoleIds": {
+          "type": "array",
+          "maxItems": 300,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "unresolvedConflictIds": {
+          "type": "array",
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "counts": {
+          "$ref": "#/$defs/CastingRunCountSummary"
+        },
+        "snapshotFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "reviewEligible": {
+          "type": "boolean",
+          "description": "Frozen eligibility at snapshot publication; current authority is represented by casting gate reviews."
+        },
+        "createdAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "immutable": {
+          "const": true
+        }
+      }
+    },
+    "SyntheticVoiceCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "catalogRevision",
+        "providers",
+        "models",
+        "voices",
+        "rights",
+        "fingerprint"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "catalogRevision": {
+          "$ref": "#/$defs/VoiceCatalogRevision"
+        },
+        "providers": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/VoiceProviderDescriptor"
+          }
+        },
+        "models": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/VoiceModelDescriptor"
+          }
+        },
+        "voices": {
+          "type": "array",
+          "minItems": 14,
+          "maxItems": 5000,
+          "items": {
+            "$ref": "#/$defs/CastingVoiceProfile"
+          }
+        },
+        "rights": {
+          "type": "array",
+          "minItems": 14,
+          "maxItems": 5000,
+          "items": {
+            "$ref": "#/$defs/VoiceRightsRecord"
+          }
+        },
+        "fingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "Phase3PackagedE2eResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "contractVersion",
+        "result",
+        "fixture",
+        "flow",
+        "casting",
+        "screenshot",
+        "processOwnership",
+        "assertions",
+        "completedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "5.0.0"
+        },
+        "contractVersion": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "result": {
+          "const": "passed"
+        },
+        "fixture": {
+          "const": "fixtures/synthetic-story/sample-story.docx.base64"
+        },
+        "flow": {
+          "$ref": "#/$defs/Phase3PackagedFlow"
+        },
+        "casting": {
+          "$ref": "#/$defs/Phase3CastingProof"
+        },
+        "screenshot": {
+          "$ref": "#/$defs/Phase3SuccessfulScreenshot"
+        },
+        "processOwnership": {
+          "$ref": "#/$defs/Phase3ProcessOwnershipProof"
+        },
+        "assertions": {
+          "$ref": "#/$defs/Phase3Assertions"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "Phase3PackagedFlow": {
+      "type": "array",
+      "minItems": 32,
+      "maxItems": 32,
+      "prefixItems": [
+        {
+          "const": "create_project"
+        },
+        {
+          "const": "import_synthetic_docx"
+        },
+        {
+          "const": "wait_for_extraction"
+        },
+        {
+          "const": "approve_import_review"
+        },
+        {
+          "const": "complete_phase_2_analysis"
+        },
+        {
+          "const": "verify_four_phase_2_approvals"
+        },
+        {
+          "const": "open_casting_workspace"
+        },
+        {
+          "const": "load_synthetic_voice_catalog"
+        },
+        {
+          "const": "create_production_roles"
+        },
+        {
+          "const": "run_casting_analysis"
+        },
+        {
+          "const": "inspect_narrator_candidates"
+        },
+        {
+          "const": "select_narrator_voice"
+        },
+        {
+          "const": "lock_narrator_assignment"
+        },
+        {
+          "const": "inspect_character_candidates"
+        },
+        {
+          "const": "select_first_character_voice"
+        },
+        {
+          "const": "lock_first_character_assignment"
+        },
+        {
+          "const": "select_second_character_voice"
+        },
+        {
+          "const": "lock_second_character_assignment"
+        },
+        {
+          "const": "surface_metadata_differentiation_conflict"
+        },
+        {
+          "const": "disposition_casting_conflict"
+        },
+        {
+          "const": "surface_restricted_or_ineligible_rights"
+        },
+        {
+          "const": "reject_ineligible_final_approval"
+        },
+        {
+          "const": "approve_narrator_casting_review"
+        },
+        {
+          "const": "approve_character_casting_review"
+        },
+        {
+          "const": "approve_complete_cast_review"
+        },
+        {
+          "const": "close_application"
+        },
+        {
+          "const": "verify_first_shutdown_owned_process_exit"
+        },
+        {
+          "const": "restart_same_application"
+        },
+        {
+          "const": "restore_phase_0_through_phase_2_evidence"
+        },
+        {
+          "const": "restore_phase_3a_casting_evidence"
+        },
+        {
+          "const": "close_restarted_application"
+        },
+        {
+          "const": "verify_final_owned_process_exit"
+        }
+      ],
+      "items": false
+    },
+    "Phase3SuccessfulScreenshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relativePath",
+        "byteSize",
+        "sha256",
+        "captureStatus"
+      ],
+      "properties": {
+        "relativePath": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "captureStatus": {
+          "const": "success"
+        }
+      }
+    },
+    "Phase3RoleVoiceAssignmentEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assignmentId",
+        "roleId",
+        "roleType",
+        "voiceProfileId",
+        "authority",
+        "rightsState"
+      ],
+      "properties": {
+        "assignmentId": {
+          "$ref": "#/$defs/Id"
+        },
+        "roleId": {
+          "$ref": "#/$defs/Id"
+        },
+        "roleType": {
+          "$ref": "#/$defs/ProductionRoleType"
+        },
+        "voiceProfileId": {
+          "$ref": "#/$defs/Id"
+        },
+        "authority": {
+          "const": "human_locked"
+        },
+        "rightsState": {
+          "enum": [
+            "verified",
+            "restricted"
+          ]
+        }
+      }
+    },
+    "Phase3NarratorRoleVoiceAssignmentEvidence": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Phase3RoleVoiceAssignmentEvidence"
+        },
+        {
+          "properties": {
+            "roleType": {
+              "enum": [
+                "primary_narrator",
+                "secondary_narrator"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Phase3CharacterRoleVoiceAssignmentEvidence": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Phase3RoleVoiceAssignmentEvidence"
+        },
+        {
+          "properties": {
+            "roleType": {
+              "enum": [
+                "named_character",
+                "unresolved_speaker",
+                "group_or_crowd",
+                "quoted_document_or_announcement",
+                "internal_thought",
+                "custom"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Phase3CastingProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profileId",
+        "profileFingerprint",
+        "catalogRevisionId",
+        "catalogFingerprint",
+        "castingRunId",
+        "approvedCastSnapshotId",
+        "approvedCastSnapshotRevision",
+        "narratorAssignmentId",
+        "characterAssignmentIds",
+        "narratorAssignment",
+        "characterAssignments",
+        "conflictId",
+        "conflictDispositionCorrectionId",
+        "restrictedRightsWarningId",
+        "ineligibleApprovalRejected",
+        "gateDecisionIds",
+        "restartRestored"
+      ],
+      "properties": {
+        "profileId": {
+          "const": "governed-voice-casting-v1@1.0.0"
+        },
+        "profileFingerprint": {
+          "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6"
+        },
+        "catalogRevisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "catalogFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "approvedCastSnapshotId": {
+          "$ref": "#/$defs/Id"
+        },
+        "approvedCastSnapshotRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "narratorAssignmentId": {
+          "$ref": "#/$defs/Id"
+        },
+        "characterAssignmentIds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 300,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "narratorAssignment": {
+          "$ref": "#/$defs/Phase3NarratorRoleVoiceAssignmentEvidence"
+        },
+        "characterAssignments": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 300,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Phase3CharacterRoleVoiceAssignmentEvidence"
+          }
+        },
+        "conflictId": {
+          "$ref": "#/$defs/Id"
+        },
+        "conflictDispositionCorrectionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "restrictedRightsWarningId": {
+          "$ref": "#/$defs/Id"
+        },
+        "ineligibleApprovalRejected": {
+          "const": true
+        },
+        "gateDecisionIds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "narratorCastingReview",
+            "characterCastingReview",
+            "completeCastReview"
+          ],
+          "properties": {
+            "narratorCastingReview": {
+              "$ref": "#/$defs/Id"
+            },
+            "characterCastingReview": {
+              "$ref": "#/$defs/Id"
+            },
+            "completeCastReview": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        },
+        "restartRestored": {
+          "const": true
+        }
+      }
+    },
+    "Phase3LaunchShutdownProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "launch",
+        "electron",
+        "service"
+      ],
+      "properties": {
+        "launch": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "electron": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "launcherPid",
+            "rootPid",
+            "exitCode",
+            "forceKillUsed"
+          ],
+          "properties": {
+            "launcherPid": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "rootPid": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "exitCode": {
+              "const": 0
+            },
+            "forceKillUsed": {
+              "const": false
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pid",
+            "method",
+            "exitCode",
+            "signalCode",
+            "forceKillUsed"
+          ],
+          "properties": {
+            "pid": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "method": {
+              "const": "stdin_eof"
+            },
+            "exitCode": {
+              "const": 0
+            },
+            "signalCode": {
+              "const": null
+            },
+            "forceKillUsed": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    "Phase3ProcessOwnershipProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ownershipEstablished",
+        "electronOwnedPids",
+        "serviceOwnedPids",
+        "launchShutdowns",
+        "forcedPids",
+        "remainingOwnedPids",
+        "unrelatedProcessesTerminated"
+      ],
+      "properties": {
+        "ownershipEstablished": {
+          "const": true
+        },
+        "electronOwnedPids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "serviceOwnedPids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "launchShutdowns": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/Phase3LaunchShutdownProof"
+          }
+        },
+        "forcedPids": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "remainingOwnedPids": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "unrelatedProcessesTerminated": {
+          "const": false
+        }
+      }
+    },
+    "Phase3Assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase2PrerequisitesCurrent",
+        "castingProfilePinned",
+        "catalogFingerprintVerified",
+        "rolesCreated",
+        "boundedCandidatesCreated",
+        "metadataConflictProven",
+        "rightsGovernanceProven",
+        "humanAssignmentsLocked",
+        "threeGateDecisionsPersisted",
+        "restartPersistenceProven",
+        "processOwnershipExitProven"
+      ],
+      "properties": {
+        "phase2PrerequisitesCurrent": {
+          "const": true
+        },
+        "castingProfilePinned": {
+          "const": true
+        },
+        "catalogFingerprintVerified": {
+          "const": true
+        },
+        "rolesCreated": {
+          "const": true
+        },
+        "boundedCandidatesCreated": {
+          "const": true
+        },
+        "metadataConflictProven": {
+          "const": true
+        },
+        "rightsGovernanceProven": {
+          "const": true
+        },
+        "humanAssignmentsLocked": {
+          "const": true
+        },
+        "threeGateDecisionsPersisted": {
+          "const": true
+        },
+        "restartPersistenceProven": {
+          "const": true
+        },
+        "processOwnershipExitProven": {
+          "const": true
+        }
+      }
+    },
+    "Phase3VoiceCastingEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "castingProfile",
+        "providers",
+        "models",
+        "catalogRevision",
+        "rightsPolicyId",
+        "phase2Evidence",
+        "counts",
+        "castingRunId",
+        "approvedCastSnapshot",
+        "assignments",
+        "rightsEligibility",
+        "correctionPersistence",
+        "conflictDispositionPersistence",
+        "gateDecisions",
+        "restartPersistence",
+        "packagedE2e",
+        "assertions"
+      ],
+      "properties": {
+        "castingProfile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileId",
+            "fingerprint",
+            "producerId"
+          ],
+          "properties": {
+            "profileId": {
+              "const": "governed-voice-casting-v1@1.0.0"
+            },
+            "fingerprint": {
+              "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6"
+            },
+            "producerId": {
+              "const": "voice-casting-orchestrator@1.0.0"
+            }
+          }
+        },
+        "providers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/DescriptorEvidence"
+          }
+        },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/DescriptorEvidence"
+          }
+        },
+        "catalogRevision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "catalogRevisionId",
+            "revision",
+            "fingerprint"
+          ],
+          "properties": {
+            "catalogRevisionId": {
+              "$ref": "#/$defs/Id"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "fingerprint": {
+              "$ref": "#/$defs/Sha256"
+            }
+          }
+        },
+        "rightsPolicyId": {
+          "const": "voice-rights-policy-v1"
+        },
+        "phase2Evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "analysisRunId",
+            "snapshotId",
+            "snapshotRevision",
+            "snapshotFingerprint",
+            "correctionSetFingerprint",
+            "gateDecisionIds"
+          ],
+          "properties": {
+            "analysisRunId": {
+              "$ref": "#/$defs/Id"
+            },
+            "snapshotId": {
+              "$ref": "#/$defs/Id"
+            },
+            "snapshotRevision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "snapshotFingerprint": {
+              "$ref": "#/$defs/Sha256"
+            },
+            "correctionSetFingerprint": {
+              "$ref": "#/$defs/Sha256"
+            },
+            "gateDecisionIds": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/Id"
+              }
+            }
+          }
+        },
+        "counts": {
+          "$ref": "#/$defs/CastingRunCountSummary"
+        },
+        "castingRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "approvedCastSnapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "snapshotId",
+            "revision",
+            "fingerprint"
+          ],
+          "properties": {
+            "snapshotId": {
+              "$ref": "#/$defs/Id"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "fingerprint": {
+              "$ref": "#/$defs/Sha256"
+            }
+          }
+        },
+        "assignments": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "narratorAssignmentId",
+            "characterAssignmentIds",
+            "narratorAssignment",
+            "characterAssignments"
+          ],
+          "properties": {
+            "narratorAssignmentId": {
+              "$ref": "#/$defs/Id"
+            },
+            "characterAssignmentIds": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 300,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/Id"
+              }
+            },
+            "narratorAssignment": {
+              "$ref": "#/$defs/Phase3NarratorRoleVoiceAssignmentEvidence"
+            },
+            "characterAssignments": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 300,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/Phase3CharacterRoleVoiceAssignmentEvidence"
+              }
+            }
+          }
+        },
+        "rightsEligibility": {
+          "const": "eligible_after_required_acknowledgements"
+        },
+        "correctionPersistence": {
+          "const": true
+        },
+        "conflictDispositionPersistence": {
+          "const": true
+        },
+        "gateDecisions": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "restartPersistence": {
+          "const": true
+        },
+        "packagedE2e": {
+          "$ref": "#/$defs/Phase3PackagedE2eResult"
+        },
+        "assertions": {
+          "$ref": "#/$defs/Phase3Assertions"
+        }
+      }
+    },
+    "Phase3BuildEvidenceManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "artifactPathScope",
+        "workflowHeadSha",
+        "testedCheckoutSha",
+        "pullRequestHeadSha",
+        "appVersion",
+        "artifacts",
+        "assertions",
+        "secureIngest",
+        "storyAnalysisContract",
+        "packagedE2e",
+        "voiceCastingContract",
+        "testTimestamp",
+        "runner"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "4.0.0"
+        },
+        "artifactPathScope": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/artifactPathScope"
+        },
+        "workflowHeadSha": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/workflowHeadSha"
+        },
+        "testedCheckoutSha": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/testedCheckoutSha"
+        },
+        "pullRequestHeadSha": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/pullRequestHeadSha"
+        },
+        "appVersion": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/appVersion"
+        },
+        "artifacts": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/artifacts"
+        },
+        "assertions": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/assertions"
+        },
+        "secureIngest": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/secureIngest"
+        },
+        "storyAnalysisContract": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/storyAnalysisContract"
+        },
+        "packagedE2e": {
+          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/packagedE2e"
+        },
+        "voiceCastingContract": {
+          "$ref": "#/$defs/Phase3VoiceCastingEvidence"
+        },
+        "testTimestamp": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "runner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "os",
+            "architecture",
+            "environment",
+            "runId",
+            "runAttempt",
+            "workflow",
+            "job"
+          ],
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/Id"
+            },
+            "os": {
+              "const": "Windows"
+            },
+            "architecture": {
+              "const": "X64"
+            },
+            "environment": {
+              "const": "github-hosted"
+            },
+            "runId": {
+              "$ref": "#/$defs/Id"
+            },
+            "runAttempt": {
+              "$ref": "#/$defs/Id"
+            },
+            "workflow": {
+              "const": "Phase 3A Windows CI"
+            },
+            "job": {
+              "const": "verify-and-build"
+            }
+          }
+        }
+      }
+    },
+    "ArtifactHash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relativePath",
+        "byteSize",
+        "sha256"
+      ],
+      "properties": {
+        "relativePath": {
+          "$ref": "#/$defs/NonblankText"
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "DescriptorEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "descriptorId",
+        "version"
+      ],
+      "properties": {
+        "descriptorId": {
+          "$ref": "#/$defs/Id"
+        },
+        "version": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    }
+  }
+}

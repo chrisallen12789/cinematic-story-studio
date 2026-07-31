@@ -24,6 +24,10 @@
       "types": "./dist/story-analysis.d.ts",
       "default": "./dist/story-analysis.js"
     },
+    "./voice-casting": {
+      "types": "./dist/voice-casting.d.ts",
+      "default": "./dist/voice-casting.js"
+    },
     "./api": {
       "types": "./dist/api.d.ts",
       "default": "./dist/api.js"

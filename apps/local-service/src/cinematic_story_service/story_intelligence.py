@@ -1723,6 +1723,48 @@ class StoryIntelligenceRepository:
             ]
         )
 
+    def effective_correction_set_fingerprint(
+        self,
+        session: Session,
+        *,
+        run: AnalysisRunRow,
+    ) -> str:
+        rows = list(
+            session.scalars(
+                select(AnalysisCorrectionRow)
+                .where(
+                    AnalysisCorrectionRow.project_id == run.project_id,
+                    self._correction_scope_condition(run),
+                )
+                .order_by(
+                    AnalysisCorrectionRow.recorded_at,
+                    AnalysisCorrectionRow.id,
+                )
+            )
+        )
+        return request_fingerprint(
+            [
+                {
+                    "category": row.category,
+                    "targetKey": row.target_key,
+                    "revision": row.revision,
+                    "patch": effective_patch,
+                    "correctionFingerprint": row.correction_fingerprint,
+                    "supersedesCorrectionId": row.supersedes_correction_id,
+                    "legacyCorrectionId": row.legacy_correction_id,
+                }
+                for row in rows
+                if (
+                    effective_patch := self._correction_patch_for_run(
+                        session,
+                        correction=row,
+                        run=run,
+                    )
+                )
+                is not None
+            ]
+        )
+
     def _assert_run_approval_current(
         self,
         session: Session,
@@ -3017,7 +3059,10 @@ class StoryIntelligenceRepository:
             "revision": execution.attempt if execution is not None else 1,
             "inputFingerprint": run.input_fingerprint,
             "snapshotFingerprint": snapshot.fingerprint,
-            "correctionSetFingerprint": run.correction_set_fingerprint,
+            "correctionSetFingerprint": self.effective_correction_set_fingerprint(
+                session,
+                run=run,
+            ),
             "counts": counts,
             "collections": collections,
             "createdAt": snapshot.created_at,

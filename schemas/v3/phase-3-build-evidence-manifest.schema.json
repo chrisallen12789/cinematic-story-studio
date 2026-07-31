@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/phase-3-build-evidence-manifest.schema.json",
+  "title": "Phase3BuildEvidenceManifest",
+  "$ref": "definitions.schema.json#/$defs/Phase3BuildEvidenceManifest"
+}

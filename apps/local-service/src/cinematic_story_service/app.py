@@ -17,6 +17,8 @@ from starlette.exceptions import HTTPException as StarletteHttpException
 from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.types import Message, Receive
 
+from .casting import DEFAULT_CASTING_PAGE_SIZE, MAX_CASTING_PAGE_SIZE
+from .casting_repository import CastingRepository
 from .config import ServiceSettings
 from .database import Database
 from .errors import ServiceError
@@ -25,11 +27,15 @@ from .projects import ProjectRepository, StoryImportService
 from .providers import ProviderRegistry
 from .schemas import (
     AppendAnalysisCorrectionRequest,
+    AppendCastingCorrectionRequest,
     CorrectDialogueSpeakerRequest,
     CreateAnalysisRunRequest,
+    CreateCastingRunRequest,
+    CreateCustomProductionRoleRequest,
     CreateJobRequest,
     CreateProjectRequest,
     DecideAnalysisReviewRequest,
+    DecideCastingReviewRequest,
     DecideImportReviewRequest,
 )
 from .story_intelligence import StoryIntelligenceRepository
@@ -53,6 +59,10 @@ _PHASE_2_MUTATION_BODY_LIMIT = 64 * 1024
 _PHASE_2_MUTATION_PATH = re.compile(
     r"^/api/v1/projects/[^/]+/analysis-runs"
     r"(?:$|/[^/]+/(?:corrections|reviews/[^/]+/decisions)$)"
+)
+_PHASE_3_MUTATION_PATH = re.compile(
+    r"^/api/v1/projects/[^/]+/casting-runs"
+    r"(?:$|/[^/]+/(?:roles|corrections|reviews/[^/]+/decisions)$)"
 )
 
 
@@ -161,7 +171,10 @@ async def _bounded_phase_2_json_call(
     applies = (
         request.method in {"POST", "PUT", "PATCH"}
         and content_type == "application/json"
-        and _PHASE_2_MUTATION_PATH.fullmatch(request.url.path) is not None
+        and (
+            _PHASE_2_MUTATION_PATH.fullmatch(request.url.path) is not None
+            or _PHASE_3_MUTATION_PATH.fullmatch(request.url.path) is not None
+        )
     )
     if not applies:
         return await call_next(request)
@@ -243,6 +256,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
     multipart_spool_directory = ensure_private_directory(settings.data_dir / "multipart-staging")
     projects = ProjectRepository(database)
     story_intelligence = StoryIntelligenceRepository(database, projects)
+    casting = CastingRepository(database, projects, story_intelligence)
     imports = StoryImportService(settings, projects)
     reconciled_staging = imports.reconcile_staging()
     if reconciled_staging:
@@ -256,6 +270,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
         settings.instance_id,
         settings.parser_deadline_seconds,
         story_intelligence=story_intelligence,
+        casting=casting,
     )
     jobs.reconcile_interrupted()
     jobs.reconcile_orphaned_extractions()
@@ -286,6 +301,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
     app.state.database = database
     app.state.projects = projects
     app.state.story_intelligence = story_intelligence
+    app.state.casting = casting
     app.state.imports = imports
     app.state.jobs = jobs
     app.state.worker = worker
@@ -446,6 +462,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
     def project_detail(request: Request, project_id: str) -> dict[str, Any]:
         detail = projects.get_project_detail(project_id)
         summary = story_intelligence.project_summary(project_id)
+        casting_summary = casting.project_summary(project_id)
         current_run = summary["currentRun"]
         return {
             "correlationId": _correlation_id(request),
@@ -460,6 +477,9 @@ def create_app(settings: ServiceSettings) -> FastAPI:
                 else []
             ),
             "wholeBookAnalysis": summary,
+            "voiceCasting": casting_summary,
+            "currentCastingRun": casting_summary["currentRun"],
+            "castingGateReviews": casting_summary["gateReviews"],
         }
 
     @app.post("/api/v1/projects/{project_id}/imports", status_code=202)
@@ -667,9 +687,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
             ),
         }
 
-    @app.get(
-        "/api/v1/projects/{project_id}/analysis-runs/{run_id}/entities/{collection}"
-    )
+    @app.get("/api/v1/projects/{project_id}/analysis-runs/{run_id}/entities/{collection}")
     def list_analysis_entities(
         request: Request,
         project_id: str,
@@ -811,10 +829,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
             ),
         }
 
-    @app.post(
-        "/api/v1/projects/{project_id}/analysis-runs/{run_id}"
-        "/reviews/{gate_id}/decisions"
-    )
+    @app.post("/api/v1/projects/{project_id}/analysis-runs/{run_id}/reviews/{gate_id}/decisions")
     def decide_analysis_review(
         request: Request,
         project_id: str,
@@ -842,6 +857,593 @@ def create_app(settings: ServiceSettings) -> FastAPI:
                 project_id=project_id,
                 run_id=run_id,
             ),
+        }
+
+    @app.get("/api/v1/projects/{project_id}/casting/catalog")
+    def get_voice_catalog(
+        request: Request,
+        project_id: str,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_CASTING_PAGE_SIZE),
+        ] = DEFAULT_CASTING_PAGE_SIZE,
+        expected_catalog_revision_id: Annotated[
+            str | None,
+            Query(alias="expectedCatalogRevisionId", max_length=128),
+        ] = None,
+        expected_catalog_fingerprint: Annotated[
+            str | None,
+            Query(
+                alias="expectedCatalogFingerprint",
+                pattern=r"^[a-f0-9]{64}$",
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            **casting.catalog_page(
+                project_id=project_id,
+                cursor=cursor,
+                limit=limit,
+                expected_revision_id=expected_catalog_revision_id,
+                expected_fingerprint=expected_catalog_fingerprint,
+            ),
+        }
+
+    @app.post("/api/v1/projects/{project_id}/casting-runs", status_code=202)
+    def create_casting_run(
+        request: Request,
+        project_id: str,
+        body: CreateCastingRunRequest,
+    ) -> dict[str, Any]:
+        run, job = casting.create_run(
+            project_id=project_id,
+            expected_analysis_run_id=body.expected_analysis_run_id,
+            expected_snapshot_id=body.expected_snapshot_id,
+            expected_snapshot_revision=body.expected_snapshot_revision,
+            expected_snapshot_fingerprint=body.expected_snapshot_fingerprint,
+            expected_correction_set_fingerprint=(body.expected_correction_set_fingerprint),
+            expected_import_review_decision_id=(body.expected_import_review_decision_id),
+            expected_analysis_gate_decision_ids=(
+                body.expected_analysis_gate_decision_ids.model_dump()
+            ),
+            expected_catalog_revision_id=body.expected_catalog_revision_id,
+            expected_catalog_fingerprint=body.expected_catalog_fingerprint,
+            expected_casting_profile_fingerprint=(body.expected_casting_profile_fingerprint),
+            idempotency_key=body.idempotency_key,
+        )
+        worker.wake()
+        return {
+            "correlationId": _correlation_id(request),
+            "run": run,
+            "job": job,
+        }
+
+    @app.get("/api/v1/projects/{project_id}/casting-runs")
+    def list_casting_runs(
+        request: Request,
+        project_id: str,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_CASTING_PAGE_SIZE),
+        ] = DEFAULT_CASTING_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        runs, next_cursor, total = casting.list_runs(
+            project_id=project_id,
+            cursor=cursor,
+            limit=limit,
+        )
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "items": runs,
+            "total": total,
+            "pageSize": len(runs),
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    @app.get("/api/v1/projects/{project_id}/casting-runs/{run_id}")
+    def get_casting_run(
+        request: Request,
+        project_id: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            "run": casting.get_run(project_id=project_id, run_id=run_id),
+        }
+
+    def casting_evidence(
+        *,
+        expected_run_fingerprint: str,
+        expected_catalog_revision_id: str,
+        expected_catalog_fingerprint: str,
+        expected_snapshot_id: str,
+        expected_snapshot_revision: int,
+        expected_snapshot_fingerprint: str,
+    ) -> dict[str, Any]:
+        return {
+            "expected_run_fingerprint": expected_run_fingerprint,
+            "expected_catalog_revision_id": expected_catalog_revision_id,
+            "expected_catalog_fingerprint": expected_catalog_fingerprint,
+            "expected_snapshot_id": expected_snapshot_id,
+            "expected_snapshot_revision": expected_snapshot_revision,
+            "expected_snapshot_fingerprint": expected_snapshot_fingerprint,
+        }
+
+    @app.get("/api/v1/projects/{project_id}/casting-runs/{run_id}/roles")
+    def list_production_roles(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        expected_run_fingerprint: Annotated[
+            str,
+            Query(alias="expectedRunFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_catalog_revision_id: Annotated[
+            str,
+            Query(alias="expectedCatalogRevisionId", min_length=1, max_length=128),
+        ],
+        expected_catalog_fingerprint: Annotated[
+            str,
+            Query(alias="expectedCatalogFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_snapshot_id: Annotated[
+            str,
+            Query(alias="expectedSnapshotId", min_length=1, max_length=128),
+        ],
+        expected_snapshot_revision: Annotated[
+            int,
+            Query(alias="expectedSnapshotRevision", ge=1),
+        ],
+        expected_snapshot_fingerprint: Annotated[
+            str,
+            Query(alias="expectedSnapshotFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_CASTING_PAGE_SIZE),
+        ] = DEFAULT_CASTING_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        items, next_cursor, total = casting.list_roles(
+            project_id=project_id,
+            run_id=run_id,
+            cursor=cursor,
+            limit=limit,
+            evidence=casting_evidence(
+                expected_run_fingerprint=expected_run_fingerprint,
+                expected_catalog_revision_id=expected_catalog_revision_id,
+                expected_catalog_fingerprint=expected_catalog_fingerprint,
+                expected_snapshot_id=expected_snapshot_id,
+                expected_snapshot_revision=expected_snapshot_revision,
+                expected_snapshot_fingerprint=expected_snapshot_fingerprint,
+            ),
+        )
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "castingRunId": run_id,
+            "items": items,
+            "total": total,
+            "pageSize": len(items),
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    @app.post("/api/v1/projects/{project_id}/casting-runs/{run_id}/roles")
+    def create_custom_production_role(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        body: CreateCustomProductionRoleRequest,
+    ) -> dict[str, Any]:
+        role, invalidated_gate_ids, run, reviews = casting.create_custom_role(
+            project_id=project_id,
+            run_id=run_id,
+            definition_id=body.definition_id,
+            label=body.label,
+            performance_requirements=body.performance_requirements.model_dump(
+                by_alias=True
+            ),
+            reason=body.reason,
+            expected_run_fingerprint=body.expected_run_fingerprint,
+            expected_catalog_revision_id=body.expected_catalog_revision_id,
+            expected_catalog_fingerprint=body.expected_catalog_fingerprint,
+            expected_snapshot_id=body.expected_snapshot_id,
+            expected_snapshot_revision=body.expected_snapshot_revision,
+            expected_snapshot_fingerprint=body.expected_snapshot_fingerprint,
+            expected_correction_set_fingerprint=(
+                body.expected_correction_set_fingerprint
+            ),
+            expected_casting_profile_fingerprint=(
+                body.expected_casting_profile_fingerprint
+            ),
+            idempotency_key=body.idempotency_key,
+        )
+        return {
+            "correlationId": _correlation_id(request),
+            "role": role,
+            "invalidatedGateIds": invalidated_gate_ids,
+            "run": run,
+            "reviews": reviews,
+        }
+
+    @app.get("/api/v1/projects/{project_id}/casting-runs/{run_id}/roles/{role_id}/candidates")
+    def list_casting_candidates(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        role_id: str,
+        expected_role_revision: Annotated[
+            int,
+            Query(alias="expectedRoleRevision", ge=1),
+        ],
+        expected_run_fingerprint: Annotated[
+            str,
+            Query(alias="expectedRunFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_catalog_revision_id: Annotated[
+            str,
+            Query(alias="expectedCatalogRevisionId", min_length=1, max_length=128),
+        ],
+        expected_catalog_fingerprint: Annotated[
+            str,
+            Query(alias="expectedCatalogFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_snapshot_id: Annotated[
+            str,
+            Query(alias="expectedSnapshotId", min_length=1, max_length=128),
+        ],
+        expected_snapshot_revision: Annotated[
+            int,
+            Query(alias="expectedSnapshotRevision", ge=1),
+        ],
+        expected_snapshot_fingerprint: Annotated[
+            str,
+            Query(alias="expectedSnapshotFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_CASTING_PAGE_SIZE),
+        ] = DEFAULT_CASTING_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        items, next_cursor, total = casting.list_candidates(
+            project_id=project_id,
+            run_id=run_id,
+            role_id=role_id,
+            expected_role_revision=expected_role_revision,
+            cursor=cursor,
+            limit=limit,
+            evidence=casting_evidence(
+                expected_run_fingerprint=expected_run_fingerprint,
+                expected_catalog_revision_id=expected_catalog_revision_id,
+                expected_catalog_fingerprint=expected_catalog_fingerprint,
+                expected_snapshot_id=expected_snapshot_id,
+                expected_snapshot_revision=expected_snapshot_revision,
+                expected_snapshot_fingerprint=expected_snapshot_fingerprint,
+            ),
+        )
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "castingRunId": run_id,
+            "items": items,
+            "total": total,
+            "pageSize": len(items),
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    def casting_page_response(
+        request: Request,
+        run_id: str,
+        values: tuple[list[dict[str, Any]], str | None, int],
+    ) -> dict[str, Any]:
+        items, next_cursor, total = values
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "castingRunId": run_id,
+            "items": items,
+            "total": total,
+            "pageSize": len(items),
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    @app.get("/api/v1/projects/{project_id}/casting-runs/{run_id}/conflicts")
+    def list_casting_conflicts(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        expected_run_fingerprint: Annotated[
+            str,
+            Query(alias="expectedRunFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_catalog_revision_id: Annotated[
+            str,
+            Query(alias="expectedCatalogRevisionId", min_length=1, max_length=128),
+        ],
+        expected_catalog_fingerprint: Annotated[
+            str,
+            Query(alias="expectedCatalogFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_snapshot_id: Annotated[
+            str,
+            Query(alias="expectedSnapshotId", min_length=1, max_length=128),
+        ],
+        expected_snapshot_revision: Annotated[
+            int,
+            Query(alias="expectedSnapshotRevision", ge=1),
+        ],
+        expected_snapshot_fingerprint: Annotated[
+            str,
+            Query(alias="expectedSnapshotFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_CASTING_PAGE_SIZE),
+        ] = DEFAULT_CASTING_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        return casting_page_response(
+            request,
+            run_id,
+            casting.list_conflicts(
+                project_id=project_id,
+                run_id=run_id,
+                cursor=cursor,
+                limit=limit,
+                evidence=casting_evidence(
+                    expected_run_fingerprint=expected_run_fingerprint,
+                    expected_catalog_revision_id=expected_catalog_revision_id,
+                    expected_catalog_fingerprint=expected_catalog_fingerprint,
+                    expected_snapshot_id=expected_snapshot_id,
+                    expected_snapshot_revision=expected_snapshot_revision,
+                    expected_snapshot_fingerprint=expected_snapshot_fingerprint,
+                ),
+            ),
+        )
+
+    @app.get("/api/v1/projects/{project_id}/casting-runs/{run_id}/assignments")
+    def list_cast_assignments(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        expected_run_fingerprint: Annotated[
+            str,
+            Query(alias="expectedRunFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_catalog_revision_id: Annotated[
+            str,
+            Query(alias="expectedCatalogRevisionId", min_length=1, max_length=128),
+        ],
+        expected_catalog_fingerprint: Annotated[
+            str,
+            Query(alias="expectedCatalogFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_snapshot_id: Annotated[
+            str,
+            Query(alias="expectedSnapshotId", min_length=1, max_length=128),
+        ],
+        expected_snapshot_revision: Annotated[
+            int,
+            Query(alias="expectedSnapshotRevision", ge=1),
+        ],
+        expected_snapshot_fingerprint: Annotated[
+            str,
+            Query(alias="expectedSnapshotFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_CASTING_PAGE_SIZE),
+        ] = DEFAULT_CASTING_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        return casting_page_response(
+            request,
+            run_id,
+            casting.list_assignments(
+                project_id=project_id,
+                run_id=run_id,
+                cursor=cursor,
+                limit=limit,
+                evidence=casting_evidence(
+                    expected_run_fingerprint=expected_run_fingerprint,
+                    expected_catalog_revision_id=expected_catalog_revision_id,
+                    expected_catalog_fingerprint=expected_catalog_fingerprint,
+                    expected_snapshot_id=expected_snapshot_id,
+                    expected_snapshot_revision=expected_snapshot_revision,
+                    expected_snapshot_fingerprint=expected_snapshot_fingerprint,
+                ),
+            ),
+        )
+
+    @app.get("/api/v1/projects/{project_id}/casting-runs/{run_id}/corrections")
+    def list_casting_corrections(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        expected_run_fingerprint: Annotated[
+            str,
+            Query(alias="expectedRunFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_catalog_revision_id: Annotated[
+            str,
+            Query(alias="expectedCatalogRevisionId", min_length=1, max_length=128),
+        ],
+        expected_catalog_fingerprint: Annotated[
+            str,
+            Query(alias="expectedCatalogFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_snapshot_id: Annotated[
+            str,
+            Query(alias="expectedSnapshotId", min_length=1, max_length=128),
+        ],
+        expected_snapshot_revision: Annotated[
+            int,
+            Query(alias="expectedSnapshotRevision", ge=1),
+        ],
+        expected_snapshot_fingerprint: Annotated[
+            str,
+            Query(alias="expectedSnapshotFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_CASTING_PAGE_SIZE),
+        ] = DEFAULT_CASTING_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        return casting_page_response(
+            request,
+            run_id,
+            casting.list_corrections(
+                project_id=project_id,
+                run_id=run_id,
+                cursor=cursor,
+                limit=limit,
+                evidence=casting_evidence(
+                    expected_run_fingerprint=expected_run_fingerprint,
+                    expected_catalog_revision_id=expected_catalog_revision_id,
+                    expected_catalog_fingerprint=expected_catalog_fingerprint,
+                    expected_snapshot_id=expected_snapshot_id,
+                    expected_snapshot_revision=expected_snapshot_revision,
+                    expected_snapshot_fingerprint=expected_snapshot_fingerprint,
+                ),
+            ),
+        )
+
+    @app.post("/api/v1/projects/{project_id}/casting-runs/{run_id}/corrections")
+    def append_casting_correction(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        body: AppendCastingCorrectionRequest,
+    ) -> dict[str, Any]:
+        correction, assignment, invalidated_gate_ids, run, reviews = casting.append_correction(
+            project_id=project_id,
+            run_id=run_id,
+            operation=body.operation,
+            target_role_id=body.target_role_id,
+            expected_role_revision=body.expected_role_revision,
+            expected_run_fingerprint=body.expected_run_fingerprint,
+            expected_catalog_fingerprint=body.expected_catalog_fingerprint,
+            expected_snapshot_fingerprint=body.expected_snapshot_fingerprint,
+            expected_correction_set_fingerprint=(body.expected_correction_set_fingerprint),
+            previous_effective_fingerprint=(body.previous_effective_fingerprint),
+            voice_profile_id=body.voice_profile_id,
+            corrected_value=body.corrected_value,
+            reason=body.reason,
+            supersedes_correction_id=body.supersedes_correction_id,
+            idempotency_key=body.idempotency_key,
+        )
+        return {
+            "correlationId": _correlation_id(request),
+            "correction": correction,
+            "assignment": assignment,
+            "invalidatedGateIds": invalidated_gate_ids,
+            "run": run,
+            "reviews": reviews,
+        }
+
+    @app.get("/api/v1/projects/{project_id}/casting-runs/{run_id}/reviews")
+    def list_casting_reviews(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        expected_run_fingerprint: Annotated[
+            str,
+            Query(alias="expectedRunFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_catalog_revision_id: Annotated[
+            str,
+            Query(alias="expectedCatalogRevisionId", min_length=1, max_length=128),
+        ],
+        expected_catalog_fingerprint: Annotated[
+            str,
+            Query(alias="expectedCatalogFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_snapshot_id: Annotated[
+            str,
+            Query(alias="expectedSnapshotId", min_length=1, max_length=128),
+        ],
+        expected_snapshot_revision: Annotated[
+            int,
+            Query(alias="expectedSnapshotRevision", ge=1),
+        ],
+        expected_snapshot_fingerprint: Annotated[
+            str,
+            Query(alias="expectedSnapshotFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_approved_cast_snapshot_id: Annotated[
+            str,
+            Query(
+                alias="expectedApprovedCastSnapshotId",
+                min_length=1,
+                max_length=128,
+            ),
+        ],
+        expected_approved_cast_snapshot_revision: Annotated[
+            int,
+            Query(alias="expectedApprovedCastSnapshotRevision", ge=1),
+        ],
+    ) -> dict[str, Any]:
+        items = casting.list_reviews(
+            project_id=project_id,
+            run_id=run_id,
+            evidence=casting_evidence(
+                expected_run_fingerprint=expected_run_fingerprint,
+                expected_catalog_revision_id=expected_catalog_revision_id,
+                expected_catalog_fingerprint=expected_catalog_fingerprint,
+                expected_snapshot_id=expected_snapshot_id,
+                expected_snapshot_revision=expected_snapshot_revision,
+                expected_snapshot_fingerprint=expected_snapshot_fingerprint,
+            ),
+            expected_cast_snapshot_id=(expected_approved_cast_snapshot_id),
+            expected_cast_snapshot_revision=(expected_approved_cast_snapshot_revision),
+        )
+        return {
+            "correlationId": _correlation_id(request),
+            "castingRunId": run_id,
+            "items": items,
+        }
+
+    @app.post("/api/v1/projects/{project_id}/casting-runs/{run_id}/reviews/{gate_id}/decisions")
+    def decide_casting_review(
+        request: Request,
+        project_id: str,
+        run_id: str,
+        gate_id: str,
+        body: DecideCastingReviewRequest,
+    ) -> dict[str, Any]:
+        review, decision, snapshot, run = casting.decide_review(
+            project_id=project_id,
+            run_id=run_id,
+            gate_id=gate_id,
+            decision=body.decision,
+            expected_revision=body.expected_revision,
+            expected_evidence_fingerprint=body.expected_evidence_fingerprint,
+            expected_run_fingerprint=body.expected_run_fingerprint,
+            expected_approved_cast_snapshot_id=(body.expected_approved_cast_snapshot_id),
+            expected_approved_cast_snapshot_revision=(
+                body.expected_approved_cast_snapshot_revision
+            ),
+            warning_acknowledgement_ids=(body.warning_acknowledgement_ids),
+            rationale=body.rationale,
+            supersedes_decision_id=body.supersedes_decision_id,
+            idempotency_key=body.idempotency_key,
+        )
+        return {
+            "correlationId": _correlation_id(request),
+            "review": review,
+            "decision": decision,
+            "snapshot": snapshot,
+            "run": run,
         }
 
     @app.put("/api/v1/projects/{project_id}/dialogue-lines/{line_id}/speaker")

@@ -62,8 +62,18 @@ The renderer is untrusted presentation code. Electron main owns native dialogs, 
 6. Human edits append correction overlays with optimistic fingerprint
    concurrency; they never mutate machine output.
 7. Story Structure, Character Registry, Dialogue Attribution, and Whole-Book
-   Analysis decisions pin exact snapshot evidence. A future render job may
-   consume those approvals but is not implemented in Phase 2.
+   Analysis decisions pin exact snapshot evidence.
+8. Phase 3A rechecks those decisions and freezes the exact Phase 2 snapshot,
+   correction set, character registry, synthetic catalog, deterministic
+   casting profile, and producer into a durable casting run.
+9. The casting job creates stable production roles, bounded explainable
+   candidates, and metadata-only conflicts, then atomically publishes an
+   immutable reviewable cast snapshot. It cannot assign or approve a voice.
+10. Human selections, locks, intentionally-uncast choices, rights/reuse
+    acknowledgements, and other casting corrections append immutable overlays.
+11. Narrator, Character, and Complete Cast Review decisions pin exact current
+    evidence. Phase 3A produces no speech/audio; any later synthesis boundary
+    requires separate authorization and implementation.
 
 ## Persistence topology
 
@@ -84,6 +94,8 @@ For the Phase 0 vertical slice, one application-level SQLite database containing
 6. Network listeners are loopback-only and authenticated. Cloud transmission requires a recorded user decision.
 7. Temporary outputs become durable only through validation plus atomic rename/transaction.
 8. Stable ordering and canonical serialization determine manifest identity; wall-clock metadata is excluded from content identity.
+9. Casting ranks and metadata similarity are review aids, never automatic
+   assignment, artistic correctness, acoustic similarity, or legal certainty.
 
 ## Repository boundaries
 
@@ -104,5 +116,8 @@ Dependency direction is UI → client contract → service use case → domain p
   [story-analysis-data-model.md](story-analysis-data-model.md),
   [confidence-and-evidence-policy.md](confidence-and-evidence-policy.md), and
   [human-analysis-corrections.md](human-analysis-corrections.md)
+- Casting: [voice-casting.md](voice-casting.md),
+  [casting-jobs-and-recovery.md](casting-jobs-and-recovery.md), and
+  [voice rights and consent](../security/voice-rights-and-consent.md)
 - Production: [runtime-agent-system.md](runtime-agent-system.md), [provider-adapters.md](provider-adapters.md), [audio-render-pipeline.md](audio-render-pipeline.md)
 - Operations: [security-and-privacy.md](security-and-privacy.md), [failure-recovery.md](failure-recovery.md), [windows-packaging.md](windows-packaging.md)

@@ -63,6 +63,56 @@ fingerprint. The historical decision remains intact. Import or re-extraction
 creates a separate pending review for the new current evidence; it never edits
 the old decision. No separate invalidation-event record is claimed in Phase 1.
 
+## Phase 3A casting gates
+
+Phase 3A refines the earlier conceptual “Casting approval” into these exact
+persisted gate IDs:
+
+| Gate ID | Current evidence reviewed | Prerequisite | Unlocks |
+| --- | --- | --- | --- |
+| `narrator_casting_review` | Current narrator roles, assignments/locks, rights evidence, warnings, conflicts, Phase 2/catalog/profile/correction fingerprints, and reviewable cast snapshot | Current Phase 2/Import Review authority and a published reviewable cast snapshot | One prerequisite for Complete Cast Review |
+| `character_casting_review` | Current character/unresolved/group/quoted/internal/custom roles, assignments or intentional uncast status, rights evidence, warnings, conflicts, and the same frozen identities | Current Phase 2/Import Review authority and a published reviewable cast snapshot | One prerequisite for Complete Cast Review |
+| `complete_cast_review` | The complete current reviewable cast snapshot, effective assignments/corrections, unresolved roles/conflicts, rights eligibility, and the two current casting decisions | Current approved Narrator and Character Casting Reviews; no unknown/prohibited selected rights or unacknowledged required warning | Marks this exact cast snapshot eligible for a separately authorized later phase; it does not synthesize or authorize audio in Phase 3A |
+
+Every review binds project and casting-run IDs, reviewable cast snapshot
+ID/revision/fingerprint, Phase 2 snapshot fingerprint, catalog
+ID/fingerprint, casting profile fingerprint, effective correction-set
+fingerprint, warning sets, and one canonical evidence fingerprint.
+
+Decisions are append-only events with exact decision/review/gate IDs, actor,
+acknowledged warning IDs, nonblank rationale, timestamp, provenance, optional
+superseded decision, and idempotency fingerprint. Human actors may append
+`approved|changes_requested|rejected` only. A system actor may append
+`invalidated` only and cannot approve, request changes, or reject; a human
+cannot author `invalidated`. A runtime job can initialize a pending review but
+cannot append a human decision or grant approval.
+
+The effective approval remains current only while every bound prerequisite
+matches:
+
+- changed Phase 2 snapshot, correction set, character registry, or required
+  Phase 2 gate decision makes dependent casting evidence non-current;
+- a selected voice's changed version, availability/deprecation/block, or
+  provider/model/rights record or revision appends durable invalidation
+  evidence and system `invalidated` decisions for only the affected role gate
+  and dependent Complete Cast Review;
+- an unrelated catalog change does not silently invalidate an unaffected
+  selected voice whose pinned evidence is unchanged, and preserves its
+  independent role-gate approval;
+- assignment, lock, intentionally-uncast state, conflict disposition, or
+  restricted-rights acknowledgement changes recompute affected gate evidence;
+  and
+- rerun, retry, resume, or restart never reapproves a gate.
+
+“Invalidated” is an effective projection backed by immutable assignment-
+invalidation evidence and a system-authored superseding decision. It remains
+latched if catalog content later reverts; a human must explicitly reselect
+eligible evidence and reapprove the affected gates. Historical decisions
+remain immutable and inspectable. The `ApprovedCastSnapshot` contract name
+means the artifact is reviewable for approval; inserting it does not make a
+review approved. Phase 3A does not collapse these three gates back into the
+generic future-production `casting_approval` label.
+
 ## Decision workflow
 
 1. Enumerate the candidate entity IDs and revisions in a deterministic order.

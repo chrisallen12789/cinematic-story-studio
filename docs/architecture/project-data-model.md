@@ -49,8 +49,11 @@ None of these paths are committed. Exports are user-owned copies outside this tr
 | `Character` | ID, project, canonical display name, aliases, evidence spans, confidence/warnings/provenance, revision | Merge/split is an explicit provenance event; IDs are not inferred solely from names. |
 | `DialogueLine` | ID, scene, ordinal, exact content span, quote/content spans, revision | Display text is sliced from immutable story, not separately rewritten. |
 | `DialogueAttribution` | ID, line, character ID or null, source `automated|human`, confidence/warnings, provenance, revision | Human value is protected; uncertainty permits null. |
-| `VoiceProfile` | ID, project/character scope, style/range/constraints, revision/provenance | Contains no secret or unverified provider availability. |
-| `CastingAssignment` | ID, character, voice profile/provider/voice refs, status, approval revision, provenance | `unassigned` is valid; provider/voice IDs are not fabricated. |
+| `CastingVoiceProfile` | Project-independent profile/provider/model/catalog identity, declared casting attributes, rights projection, state, version/provenance | Declared metadata only; no secret, sample, biometric identity, or inferred provider capability. |
+| `ProductionRole` | Stable project/snapshot/Phase 2 entity identity, type, workload/range, requirements, status, revision/provenance | Unresolved material gets a role only when explicitly represented; role labels do not define identity. |
+| `CastingCandidate` | Run/role/profile identity, bounded compatibility assessment, rank, conflicts, input/output fingerprints | Hard/soft/unknown states remain separate; rank never assigns a voice. |
+| `CastingAssignment` | ID, project/role/profile/catalog/run/profile/snapshot/correction fingerprints, exact source-correction ID for human authority, rights evidence, revision/provenance/supersession | Machine proposal, human selection, and human lock remain distinct immutable revisions; uncast is valid. |
+| `CastAssignmentInvalidation` | ID, exact assignment/project/run/role, reason codes, evidence fingerprint, provenance, time | Append-only durable latch for affected catalog/provider/model/profile/rights drift; catalog reversion does not reactivate the assignment. |
 | `PerformanceDirection` | ID, dialogue/narration/scene target, typed parameters/notes, approval/provenance | References exact target revision. |
 | `AmbienceCue`, `FoleyCue`, `MusicCue` | ID, scene/timeline range, asset/generation intent, gain/fade/priority, provenance/approval | Timing uses declared integer unit; music use is rights/policy reviewable. |
 | `ProductionTimeline` | ID, project input revision, `milliseconds` timebase, sample rate/channel layout, ordered tracks/cues, manifest/provenance | Canonical order and non-negative integer-millisecond positions; the render compiler records its one-time conversion to samples. |
@@ -115,6 +118,20 @@ bounded JSON; gate state is projected from append-only decision rows. Existing
 Phase 0/1 chapter, scene, character, dialogue, and correction rows are
 preserved as legacy baseline evidence; migration does not claim that they are
 an approved Phase 2 snapshot.
+
+Schema v4 adds `voice_catalog_revisions`, `voice_provider_descriptors`,
+`voice_model_descriptors`, `voice_profiles`, `voice_rights_records`,
+`casting_profiles`, `casting_runs`, `production_roles`,
+`casting_candidates`, `casting_conflicts`, `cast_assignments`,
+`cast_assignment_invalidations`, `casting_corrections`, `approved_cast_snapshots`,
+`casting_gate_reviews`, and `casting_gate_decisions`. Catalog and machine
+records are immutable revisions; assignments, assignment invalidations,
+corrections, and gate decisions are append-only with explicit supersession.
+A cast snapshot is reviewable, not auto-approved. Migration creates no
+provider, voice, role, candidate, assignment, invalidation, correction,
+snapshot, or decision. See
+[voice catalog and casting architecture](voice-casting.md) and
+[migration 0004](../migrations/0004-phase-3a-voice-casting.md).
 
 Large source/audio bytes are files, not SQLite BLOBs; SQLite stores verified relative references and hashes. Any resolved path must remain beneath its typed root. Secret values are never columns: provider settings contain an opaque OS credential reference and non-secret configuration only.
 

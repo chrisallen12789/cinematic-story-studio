@@ -51,6 +51,15 @@ Every route below is rooted at `/api/v1` and authenticated. Writes use a transac
 | `POST /projects/{projectId}/analysis-runs/{runId}/corrections` | Append one typed human correction with revision/fingerprint preconditions. |
 | `GET /projects/{projectId}/analysis-runs/{runId}/reviews` | Return the four current Phase 2 gate projections and decision history summaries. |
 | `POST /projects/{projectId}/analysis-runs/{runId}/reviews/{gateId}/decisions` | Append an idempotent human approve/reject/changes-requested decision for exact current evidence. |
+| `GET /projects/{projectId}/casting/catalog` | Return immutable provider/model/catalog metadata plus a bounded profile/rights page, optionally conditioned on catalog identity. |
+| `POST /projects/{projectId}/casting-runs` and `GET /projects/{projectId}/casting-runs[/{runId}]` | Recheck exact Phase 2/catalog/profile evidence, create a durable idempotent run/job, or read bounded run history/detail. |
+| `GET /projects/{projectId}/casting-runs/{runId}/roles` and `GET /projects/{projectId}/casting-runs/{runId}/roles/{roleId}/candidates` | Return fingerprint-conditioned bounded roles and role-revision-conditioned candidates. |
+| `GET /projects/{projectId}/casting-runs/{runId}/conflicts` | Return bounded metadata-only conflict evidence. |
+| `GET /projects/{projectId}/casting-runs/{runId}/assignments` | Return bounded immutable assignment history/projection. |
+| `GET /projects/{projectId}/casting-runs/{runId}/corrections` | Return bounded immutable correction history. |
+| `GET /projects/{projectId}/casting-runs/{runId}/reviews` | Return the three current casting review projections for an exact cast snapshot. |
+| `POST /projects/{projectId}/casting-runs/{runId}/corrections` | Append one immutable idempotent human correction against exact role/run/catalog/snapshot/correction evidence. |
+| `POST /projects/{projectId}/casting-runs/{runId}/reviews/{gateId}/decisions` | Append one idempotent human Narrator/Character/Complete Cast decision against exact review/run/cast-snapshot evidence. |
 
 Deletion/cache cleanup and approval/render routes are added behind the same boundary when their product flows are implemented; they must not be improvised as filesystem access APIs.
 
@@ -78,6 +87,16 @@ are capped at 512 Unicode code points. A claim carries at most 16 evidence
 spans; a dialogue line carries at most eight speaker candidates. List
 endpoints never return the complete manuscript. See
 [analysis-performance-and-pagination.md](analysis-performance-and-pagination.md).
+
+Phase 3A catalog/run/role/conflict/assignment/correction pages also default to
+50 and cap at 200; a role publishes at most 12 final candidates. Opaque cursors
+are at most 512 characters and bind collection/query/revision. Mutation JSON
+is capped at 64 KiB. Casting explanations cap at 2,000 Unicode code points,
+correction reasons at 1,000, review rationales at 4,000, and warning
+acknowledgements at 32. List routes recheck run/catalog/Phase 2 evidence;
+candidate reads also recheck role revision. Corrections and decisions require
+all prior-effective/revision/fingerprint preconditions. No casting list returns
+manuscript text. See [voice casting architecture](voice-casting.md).
 
 ## Error model
 

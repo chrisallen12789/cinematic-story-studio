@@ -59,6 +59,39 @@ The primary user is an author, producer, or audio director who wants one install
 - **PR-022** The target product supports performance direction, ambience, Foley, sound effects, restrained music, transitions, continuity review, mixing, mastering, and quality-control findings.
 - **PR-023** The target product exports scene and chapter artifacts plus WAV and MP3 masters; M4B is deferred until its metadata and chapter behavior are specified and tested.
 - **PR-024** A published render is reproducible from a versioned manifest or is marked non-reproducible with the exact missing/non-deterministic input.
+- **PR-025** Phase 3A casting starts only from the current approved Import
+  Review and all four current Phase 2 analysis reviews. A run freezes source,
+  extraction, review, snapshot, correction-set, character-registry, catalog,
+  profile, producer, and gate-decision identities/fingerprints and rejects
+  stale or cross-revision evidence.
+- **PR-026** The versioned provider-independent catalog separates provider
+  descriptors, model descriptors, project-independent voice profiles, and one
+  rights record per voice. The default repository catalog is synthetic,
+  deterministic, credential-free, content-free, and unable to synthesize or
+  make a cloud request.
+- **PR-027** The casting job derives stable production roles and bounded
+  candidates with separately visible hard constraints, soft preferences,
+  rights/consent, availability, unknown states, explanations, conflicts,
+  provenance, and fingerprints. Scores never assign a voice or claim artistic
+  correctness or acoustic similarity. Character identity remains the effective
+  Character Registry identity; importance and language/locale/performance
+  requirements project approved evidence conservatively without inference.
+  Candidate warnings reference actual persisted conflicts, and assignment-time
+  conflict recomputation fails closed at the governed cap.
+- **PR-028** Machine proposals remain separate from append-only human
+  selections, locks, intentionally-uncast decisions, conflict/rights
+  acknowledgements, candidate rejections, role corrections, and rationale.
+  Current assignment and review projections preserve complete supersession
+  history and survive restart/rerun when evidence remains compatible.
+- **PR-029** Narrator Casting Review, Character Casting Review, and Complete
+  Cast Review use append-only human decisions and system invalidation
+  decisions. Only humans may approve; only the system may author
+  `invalidated`. Selected catalog/provider/model/profile/rights drift durably
+  invalidates only the affected assignment, role gate, and dependent Complete
+  gate until explicit human reselection/reapproval. Complete Cast requires the
+  two current prerequisite reviews and current eligible rights evidence. An
+  approved Phase 3A cast is eligible only for a separately authorized later
+  phase; Phase 3A generates no speech or audio.
 
 ### Jobs and recovery
 
@@ -122,6 +155,24 @@ Phase 2 does **not** add speech synthesis, voice cloning/casting, provider
 credentials, cloud LLM or speech calls, local model downloads, music/Foley/
 ambience generation, audio mixing/export, OCR, signing, updates, a release
 tag, or a DAW timeline.
+
+## Phase 3A release boundary
+
+Phase 3A adds contract `3.0.0`, deterministic governed profile
+`governed-voice-casting-v1@1.0.0`, a repository-owned synthetic catalog,
+schema-v4 catalog/rights/role/candidate/assignment/invalidation/correction/
+review records, a durable casting job, bounded authenticated APIs and IPC, the
+Casting workspace, metadata-based conflict review, immutable human casting
+authority, and three casting approval gates. Exact behavior and claim limits are in
+[Phase 3A governed voice casting](phase-3a-voice-casting.md).
+
+Phase 3A does **not** add synthesis, audition audio, real-provider calls,
+credentials, model downloads, voice cloning, acoustic analysis, playback,
+waveforms, pronunciation, direction, music/Foley/ambience, mixing, audio
+export, signing, updates, releases, marketplaces, Phase 3B, or Phase 4. A
+rights state records evidence under a versioned policy; it is not legal
+certainty. A compatibility result explains declared metadata; it is not
+artistic correctness.
 
 ## Acceptance and traceability
 

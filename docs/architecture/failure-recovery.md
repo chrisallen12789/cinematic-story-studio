@@ -32,6 +32,12 @@ Durable state is authoritative; memory and UI state are projections. Recovery is
 | Story-analysis stage fails or reaches a profile limit | Durable agent execution and job attempt record the bounded error; no final snapshot is published | Correct input/policy or explicitly retry; reuse only fingerprint-compatible checkpoints. |
 | Phase 2 correction or decision loses a race | Target/snapshot revision or previous-value/evidence fingerprint mismatch | Return a conflict and preserve the proposed local edit for compare/reapply. |
 | Schema-v2 backup/migration fails | Startup remains unavailable/read-only with a redacted recovery code | Preserve the v2 database and verified backup; recover from a copy under migration 0003. |
+| Phase 3A prerequisite becomes stale | Run creation/publication rechecks Import Review, four Phase 2 decisions, snapshot, correction set, registry, catalog, and profile fingerprints | Reject or fail the run with a typed redacted conflict; keep the prior effective cast |
+| Voice catalog/profile validation fails | Descriptor, rights, identity, limit, canonical fingerprint, or version check rejects the input | Publish no run/snapshot; repair and publish a new immutable catalog/profile revision |
+| Casting job is cancelled, fails, or is interrupted | Durable attempt/event/checkpoint evidence remains; no partial role/candidate result becomes effective | Resume only from a compatible casting checkpoint or explicitly retry; never auto-approve |
+| Casting correction or decision loses a race | Role/run/catalog/snapshot/correction/review fingerprint or revision mismatch | Return a conflict and preserve the proposed local edit for compare/reapply |
+| Selected catalog/provider/model/profile/rights evidence changes | Append-only invalidation latches the affected assignment, system-invalidates only its role gate and dependent Complete gate, and preserves immutable history; catalog reversion does not restore authority | Explicitly select current eligible evidence and append human approvals; do not silently substitute |
+| Schema-v3 backup/migration fails | Startup remains unavailable/read-only with a redacted recovery code | Preserve the v3 database and verified backup; recover from a separate copy under migration 0004 |
 
 ## Startup reconciliation
 
@@ -79,6 +85,15 @@ The schema-v2 to v3 path applies the same non-destructive principles with an
 exact frozen-v2 structural signature and separately verified v2 backup. See
 [database migration 0003](../migrations/0003-phase-2-story-intelligence.md).
 
+The schema-v3 to v4 path validates the exact issued v3 ledger and frozen
+structure, creates and logically verifies a `v3-backup`, applies all Phase 3A
+tables/indexes/ledger state in one immediate transaction, preserves every
+Phase 0-2 value, and creates no catalog, assignment, correction, snapshot, or
+approval. There is no in-place v4-to-v3 downgrade. Recovery opens only a
+separately named copy of the verified v3 backup with the matching Phase 2
+application. See
+[database migration 0004](../migrations/0004-phase-3a-voice-casting.md).
+
 ## Data and cache cleanup
 
 Project deletion, cache cleanup, staging cleanup, and export cleanup are distinct commands with previewed scopes. They resolve exact application-managed roots, refuse broad/unresolved/reparse-point escape paths, skip leased/referenced content, and report partial failure. Repeating them is safe. Deleting application data cannot guarantee removal from backups, sync, restore points, or SSD remanence.
@@ -94,3 +109,13 @@ Tests inject failures at startup, transaction/file publication boundaries, impor
 - no duplicate provider work where reconciliation exists;
 - path-scoped cleanup and redacted errors;
 - usable verified backup on migration failure.
+
+Phase 3A additionally injects stale prerequisite/catalog/profile evidence,
+casting checkpoint incompatibility, cancellation before publication, failed
+attempt and retry, interruption and resume, correction/decision races,
+selected catalog/provider/model/profile/rights invalidation, and v3-to-v4
+migration/backup failures. Each
+case asserts that the prior effective cast remains unchanged and no runtime
+path silently reapproves, recasts, or publishes partial evidence. The detailed
+casting matrix and scale bounds are in
+[casting jobs, recovery, and scale](casting-jobs-and-recovery.md).

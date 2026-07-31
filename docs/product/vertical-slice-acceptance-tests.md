@@ -116,6 +116,46 @@ Cloud/model/network analysis remains disabled.
 | VS-249 | Deterministic generated 100,000-word analysis verifies bounded pages, the controlling collection index, cancellation/intermediate restart, stable IDs, non-quadratic candidate paths, and peak RSS below the 320 MiB test ceiling. | Pytest/scale |
 | VS-250 | Every Phase 0 and Phase 1 suite, development E2E, build, and exact packaged gate remains successful. | Full CI |
 
+## Phase 3A governed casting extension
+
+Phase 0-2 cases remain regression gates. Phase 3A uses only the approved public
+story fixture and the repository-owned synthetic voice catalog. It performs no
+network call, credential operation, model download, synthesis, or audio work.
+
+| ID | Required executable behavior | Primary level |
+| --- | --- | --- |
+| VS-301 | Casting creation succeeds only for the current approved Import Review, Phase 2 run/snapshot/correction set/character registry, and all four current approved Phase 2 gate decisions. | Pytest/API |
+| VS-302 | Missing, rejected, wrong-project, wrong-revision, superseded, or fingerprint-mismatched Phase 2 evidence is rejected without a publishable casting run. | Pytest/API/security |
+| VS-303 | Run creation freezes every source/extraction/review/snapshot/correction/gate/catalog/profile/producer identity and is idempotent. | Pytest/API |
+| VS-304 | TypeScript, Python, catalog tooling, desktop validation, and evidence agree on profile `governed-voice-casting-v1@1.0.0` and fingerprint `3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6`. | Node/Pytest/Vitest |
+| VS-305 | Synthetic catalog `synthetic-voice-catalog-v1@1.0.0` reproduces fingerprint `68d116d1f66e4ea4bcceabfd0520fd889cf9da3074ee1b9186c43c285575c25f`, two provider descriptors, five model descriptors, fourteen profiles, and fourteen rights records. | Node/Pytest |
+| VS-306 | Provider/model descriptors expose all typed availability, execution, output, licensing, rights-metadata, health, and provenance fields while both fixture providers remain non-synthesizing and the cloud-capable provider remains disabled. | Contract/Pytest |
+| VS-307 | Voice profiles preserve every declared language/locale/presentation/range/suitability/rights/state/provenance field and reject real-person, credential, content, duplicate, cross-descriptor, or malformed data. | Contract/Pytest/security |
+| VS-308 | Verified, restricted, unknown, and prohibited rights remain distinct; restricted selection requires exact acknowledgement, and unknown/prohibited rights cannot receive Complete Cast approval. | Pytest/API/UI |
+| VS-309 | Stable primary/secondary narrator, named-character, unresolved, group/crowd, quoted/announcement, internal-thought, and custom role types are supported; generated roles preserve stable Character Registry identity separately from analysis entity identity, derive importance conservatively, project only approved language/locale/performance evidence, and do not invent unresolved material or missing requirements. | Pytest |
+| VS-310 | Same snapshot/catalog/profile/correction inputs reproduce stable role/candidate/conflict IDs, ordering, compatibility content, and fingerprints. | Pytest |
+| VS-311 | Hard constraints fail closed and soft preferences remain separately visible; language, long-form, provider/model unavailable, blocked, deprecated, unknown, and prohibited cases retain their exact states. | Pytest/contract |
+| VS-312 | Each role evaluates at most 50 pre-reduction voices and publishes at most 12 candidates with bounded explanations, complete provenance, at most 32 warnings tied to its actual persisted conflict rows, and no automatic assignment. | Pytest/scale |
+| VS-313 | Metadata similarity, narrator/major-character reuse, incompatible reuse, locale, expressive, rights, availability, deprecated, role-length, unresolved-role, and reuse-threshold categories are typed; no result claims acoustic similarity, and assignment-time conflict recomputation rejects the whole mutation before crossing 10,000 conflicts. | Pytest/UI |
+| VS-314 | Human select, clear, lock, unlock, intentionally-uncast, label/requirement change, restricted-rights acknowledgement, voice-reuse approval, candidate rejection, and custom rationale append immutable correction evidence. | Pytest/API |
+| VS-315 | Machine proposals, human selections, and human locks remain separate assignment revisions; stale writes conflict and automation cannot overwrite human authority. | Pytest/API |
+| VS-316 | Compatible reruns/restarts preserve human selection, lock, correction, and conflict disposition. Changed incompatible evidence requires explicit recasting. | Pytest/integration |
+| VS-317 | Selected catalog/provider/model/profile/rights drift appends a durable affected-assignment invalidation plus system `invalidated` decisions for only that role gate and Complete; catalog reversion does not restore authority, explicit human reselection/reapproval is required, and unrelated catalog changes preserve unaffected assignment and gate approval. | Pytest |
+| VS-318 | Narrator and Character Casting Reviews are independently append-only; Complete Cast requires both current approvals and eligible current cast evidence. System actors can only invalidate, human actors cannot author `invalidated`, decisions persist after restart, and reruns never reapprove. | Pytest/API |
+| VS-319 | `analyze_casting` exposes all nine ordered stages, monotonic progress, bounded content-free events, cancellation before publication, explicit failed-attempt retry, and compatible checkpoint interruption recovery. | Pytest/integration |
+| VS-320 | Catalog/run/role/candidate/conflict/assignment/correction pages default to 50 and cap at 200, candidates cap at 12, cursors bind query/revision, and no list returns manuscript text. | Pytest/API |
+| VS-321 | Mutation body, identifier, idempotency, correction-field/reason, warning-acknowledgement/rationale, and explanation bounds fail closed; every Phase 3A route requires the correct launch token and project scope. | Pytest/API/security |
+| VS-322 | Main and preload reject unknown, oversized, stale, and cross-project Phase 3A IPC requests/responses while preserving renderer isolation. | Vitest |
+| VS-323 | The React Casting workspace exposes prerequisites/profile/catalog, paginated role workload/candidates, hard/soft/rights/availability explanations, metadata conflicts, assignments/locks/uncast status, correction history, three gates, and valid job controls without playback/waveform/audio controls. | Vitest |
+| VS-324 | A schema-valid synthetic catalog persists and API-pages 5,000 profiles; candidate scale executes 300 roles and 50 pre-reduction assessments per role with bounded final reduction/conflicts, deterministic rerun, cancellation, restart recovery, and no role-by-voice database access pattern. Supporting SQLite index plans are labeled as structural evidence, not runtime keyset-query evidence. | Pytest/scale |
+| VS-325 | A genuine frozen populated schema-v3 fixture migrates atomically to exact schema v4 after a verified logical-digest-equal v3 backup, preserving every Phase 0-2 value and creating no Phase 3A evidence. | Pytest/migration |
+| VS-326 | Backup corruption/publication failure, v3/v4 structural or ledger drift, injected v4 migration failure, and forged downgrade fail without mutation; rollback retains a usable verified v3 backup. | Pytest/migration |
+| VS-327 | Development Electron E2E completes the synthetic import, Phase 2 prerequisites, casting selections/locks/conflict/rights/gates, close/reopen restoration, and clean shutdown. | Playwright Windows |
+| VS-328 | Exact-CI-artifact packaged E2E completes and restores the same Phase 0-3A workflow against the exact embedded service and generates bounded screenshot/machine evidence. | Playwright/CI Windows |
+| VS-329 | Both packaged launches establish exact owned Electron/service identities by creation/ancestry/handshake, terminate only those identities, and finish with no forced or remaining owned PID. | Playwright/CI Windows |
+| VS-330 | Schema-`4.0.0` build evidence retains top-level Phase 2 `packagedE2e` schema `4.0.0`; `voiceCastingContract.packagedE2e` schema `5.0.0` validates all Phase 3A identities/counts/fingerprints/rights/corrections/conflicts/gates/restart/process assertions while the manifest binds exact application/service hashes; the version-scoped Windows artifact upload occurs only after both E2Es, initial manifest validation, tracked-content rescan, clean-tree verification, and final exact-byte manifest revalidation all succeed, with Gitleaks enforced separately by Security safeguards. | Tooling/CI |
+| VS-331 | Every Phase 0-2 test, development E2E, build, packaged E2E, migration, scan, and clean-tree gate remains successful. | Full CI |
+
 ## Concrete service contract
 
 All routes are under `/api/v1`, require `Authorization: Bearer <launch-token>`,
@@ -142,6 +182,18 @@ Required routes:
 | `POST /jobs/{jobId}/cancel` | Idempotently requests cancellation. |
 | `POST /jobs/{jobId}/retry` | Valid only for terminal recoverable failure; records a new attempt. |
 | `POST /jobs/{jobId}/resume` | Valid only for interrupted/paused work with a compatible checkpoint. |
+| `GET /projects/{projectId}/casting/catalog` | Returns the current immutable descriptor/model/profile/rights catalog and bounded voice page with optional catalog preconditions. |
+| `POST /projects/{projectId}/casting-runs` | Creates one durable idempotent `analyze_casting` run/job after rechecking all exact Phase 2, catalog, and profile preconditions. |
+| `GET /projects/{projectId}/casting-runs` | Returns bounded stable run history. |
+| `GET /projects/{projectId}/casting-runs/{runId}` | Returns one exact run and its reviewable cast snapshot. |
+| `GET /projects/{projectId}/casting-runs/{runId}/roles` | Returns bounded production roles only after run/catalog/snapshot preconditions match. |
+| `GET /projects/{projectId}/casting-runs/{runId}/roles/{roleId}/candidates` | Returns at most 12 candidates after also checking exact role revision. |
+| `GET /projects/{projectId}/casting-runs/{runId}/conflicts` | Returns bounded metadata-only conflict evidence. |
+| `GET /projects/{projectId}/casting-runs/{runId}/assignments` | Returns bounded immutable machine/human assignment history/projection. |
+| `GET /projects/{projectId}/casting-runs/{runId}/corrections` | Returns bounded immutable correction history. |
+| `POST /projects/{projectId}/casting-runs/{runId}/corrections` | Appends one idempotent human correction against exact role/run/catalog/snapshot/correction fingerprints. |
+| `GET /projects/{projectId}/casting-runs/{runId}/reviews` | Returns Narrator, Character, and Complete Cast Review projections for an exact cast snapshot. |
+| `POST /projects/{projectId}/casting-runs/{runId}/reviews/{gateId}/decisions` | Appends an idempotent human casting decision against exact review/run/snapshot/evidence preconditions. |
 
 Unknown JSON fields are rejected at write boundaries in Phase 0. Errors are:
 

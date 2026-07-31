@@ -81,3 +81,22 @@ Scale tests inspect the controlling collection index and verify bounded
 response serialization. Full source text is read only by the local analysis
 worker and bounded authenticated entity projection, never returned as one
 complete list payload.
+
+## Phase 3A casting limits
+
+Casting adds a separate fingerprinted profile rather than changing the Phase 2
+analysis profile. It caps one run at 300 roles and 5,000 catalog profiles,
+evaluates at most 50 pre-reduction candidates per role, publishes at most 12
+per role, caps conflicts at 10,000, and caps immutable corrections at 200 per
+run. Catalog, run, role, conflict,
+assignment, and correction pages default to 50 and cap at 200; candidate pages
+also respect the 12-candidate final bound. Explanations cap at 2,000 Unicode
+code points.
+
+The worker loads indexed descriptor/profile/rights maps once and performs at
+most 15,000 bounded compatibility assessments rather than issuing a
+role-by-voice database query pattern. The UI pages roles/catalogs and requests
+one role's candidates. Exact job/restart/scale requirements are in
+[casting jobs, recovery, and scale](casting-jobs-and-recovery.md); dated
+observations belong in
+[Phase 3A verification](../evidence/phase-3a-verification.md).

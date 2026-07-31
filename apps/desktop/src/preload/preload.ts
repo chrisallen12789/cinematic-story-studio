@@ -26,6 +26,21 @@ import type {
   ListAnalysisReviewsInput,
   ListAnalysisRunsInput
 } from "../shared/analysis-api.js";
+import type {
+  AppendCastingCorrectionInput,
+  CastingRunInput,
+  CreateCustomProductionRoleInput,
+  CreateCastingRunInput,
+  DecideCastingReviewInput,
+  ListCastAssignmentsInput,
+  ListCastingCandidatesInput,
+  ListCastingConflictsInput,
+  ListCastingCorrectionsInput,
+  ListCastingReviewsInput,
+  ListCastingRunsInput,
+  ListProductionRolesInput,
+  ListVoiceCatalogInput
+} from "../shared/casting-api.js";
 
 const projectScopedChannels = new Set<string>([
   IPC_CHANNELS.projectsImportSelectedFile,
@@ -40,6 +55,19 @@ const projectScopedChannels = new Set<string>([
   IPC_CHANNELS.analysisAppendCorrection,
   IPC_CHANNELS.analysisListReviews,
   IPC_CHANNELS.analysisDecideReview,
+  IPC_CHANNELS.castingGetCatalog,
+  IPC_CHANNELS.castingCreateRun,
+  IPC_CHANNELS.castingListRuns,
+  IPC_CHANNELS.castingGetRun,
+  IPC_CHANNELS.castingListRoles,
+  IPC_CHANNELS.castingCreateCustomRole,
+  IPC_CHANNELS.castingListCandidates,
+  IPC_CHANNELS.castingListConflicts,
+  IPC_CHANNELS.castingListAssignments,
+  IPC_CHANNELS.castingListCorrections,
+  IPC_CHANNELS.castingAppendCorrection,
+  IPC_CHANNELS.castingListReviews,
+  IPC_CHANNELS.castingDecideReview,
   IPC_CHANNELS.jobsCreate
 ]);
 
@@ -342,6 +370,34 @@ const api: CinematicStoryDesktopApi = {
     decideReview: (input: DecideAnalysisReviewInput) =>
       request(IPC_CHANNELS.analysisDecideReview, input)
   },
+  casting: {
+    getCatalog: (input: ListVoiceCatalogInput) =>
+      request(IPC_CHANNELS.castingGetCatalog, input),
+    createRun: (input: CreateCastingRunInput) =>
+      request(IPC_CHANNELS.castingCreateRun, input),
+    listRuns: (input: ListCastingRunsInput) =>
+      request(IPC_CHANNELS.castingListRuns, input),
+    getRun: (input: CastingRunInput) =>
+      request(IPC_CHANNELS.castingGetRun, input),
+    listRoles: (input: ListProductionRolesInput) =>
+      request(IPC_CHANNELS.castingListRoles, input),
+    createCustomRole: (input: CreateCustomProductionRoleInput) =>
+      request(IPC_CHANNELS.castingCreateCustomRole, input),
+    listCandidates: (input: ListCastingCandidatesInput) =>
+      request(IPC_CHANNELS.castingListCandidates, input),
+    listConflicts: (input: ListCastingConflictsInput) =>
+      request(IPC_CHANNELS.castingListConflicts, input),
+    listAssignments: (input: ListCastAssignmentsInput) =>
+      request(IPC_CHANNELS.castingListAssignments, input),
+    listCorrections: (input: ListCastingCorrectionsInput) =>
+      request(IPC_CHANNELS.castingListCorrections, input),
+    appendCorrection: (input: AppendCastingCorrectionInput) =>
+      request(IPC_CHANNELS.castingAppendCorrection, input),
+    listReviews: (input: ListCastingReviewsInput) =>
+      request(IPC_CHANNELS.castingListReviews, input),
+    decideReview: (input: DecideCastingReviewInput) =>
+      request(IPC_CHANNELS.castingDecideReview, input)
+  },
   jobs: {
     create: (input: CreateJobInput) =>
       request(IPC_CHANNELS.jobsCreate, input),
@@ -399,6 +455,7 @@ contextBridge.exposeInMainWorld(
     projects: Object.freeze(api.projects),
     dialogue: Object.freeze(api.dialogue),
     analysis: Object.freeze(api.analysis),
+    casting: Object.freeze(api.casting),
     jobs: Object.freeze(api.jobs),
     providers: Object.freeze(api.providers),
     capabilities: Object.freeze(api.capabilities)

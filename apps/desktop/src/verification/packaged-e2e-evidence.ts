@@ -126,6 +126,7 @@ export type PackagedFailureStage =
   | "restore_2"
   | "screenshot"
   | "shutdown_2"
+  | "evidence_generation"
   | "cleanup";
 
 export type PackagedFailureCode =
@@ -138,6 +139,7 @@ export type PackagedFailureCode =
   | "APPLICATION_WORKFLOW_FAILED"
   | "SHUTDOWN_VERIFICATION_FAILED"
   | "SCREENSHOT_CAPTURE_FAILED"
+  | "EVIDENCE_GENERATION_FAILED"
   | "CLEANUP_FAILED";
 
 export interface RedactedRelevantProcess {
@@ -388,6 +390,8 @@ export function packagedFailureCode(
       return "SHUTDOWN_VERIFICATION_FAILED";
     case "screenshot":
       return "SCREENSHOT_CAPTURE_FAILED";
+    case "evidence_generation":
+      return "EVIDENCE_GENERATION_FAILED";
     case "cleanup":
       return "CLEANUP_FAILED";
   }

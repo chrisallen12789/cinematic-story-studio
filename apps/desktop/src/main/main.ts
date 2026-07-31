@@ -13,7 +13,16 @@ import {
 import { BackendApiClient } from "./api-client.js";
 import { registerDesktopIpc } from "./ipc.js";
 import { PreferenceStore } from "./preferences.js";
-import { ServiceManager } from "./service-manager.js";
+import {
+  ServiceManager,
+  type ServiceStopResult
+} from "./service-manager.js";
+import {
+  createPackagedServiceShutdownEvidence,
+  packagedShutdownEvidenceEnvironment,
+  resolvePackagedShutdownEvidencePath,
+  writePackagedServiceShutdownEvidence
+} from "./shutdown-evidence.js";
 
 const mainDirectory = path.dirname(fileURLToPath(import.meta.url));
 const developmentUrl = "http://127.0.0.1:5173";
@@ -42,6 +51,13 @@ if (app.isPackaged) {
     app.setPath("userData", e2eDataPath);
   }
 }
+
+const packagedShutdownEvidencePath = app.isPackaged
+  ? resolvePackagedShutdownEvidencePath(
+      process.env[packagedShutdownEvidenceEnvironment],
+      app.getPath("userData")
+    )
+  : null;
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -102,11 +118,40 @@ app.on("before-quit", (event) => {
   shutdownStarted = true;
   unregisterIpc?.();
   unregisterIpc = null;
-  void (service?.stop(true) ?? Promise.resolve()).finally(() => {
-    shutdownComplete = true;
-    app.quit();
-  });
+  void completeShutdown();
 });
+
+async function completeShutdown(): Promise<void> {
+  let stopResult: ServiceStopResult | null = null;
+  let shutdownFailed = false;
+  try {
+    stopResult = service === null ? null : await service.stop(true);
+  } catch {
+    shutdownFailed = true;
+  }
+  if (
+    stopResult !== null &&
+    (stopResult.forceKillUsed ||
+      !stopResult.allProcessesExitedGracefully)
+  ) {
+    shutdownFailed = true;
+  }
+  if (packagedShutdownEvidencePath !== null) {
+    try {
+      await writePackagedServiceShutdownEvidence(
+        packagedShutdownEvidencePath,
+        createPackagedServiceShutdownEvidence(stopResult)
+      );
+    } catch {
+      shutdownFailed = true;
+    }
+  }
+  if (shutdownFailed) {
+    process.exitCode = 1;
+  }
+  shutdownComplete = true;
+  app.quit();
+}
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({

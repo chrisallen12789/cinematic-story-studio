@@ -119,3 +119,55 @@ immutable decision record is compared in the application and represented in
 CI evidence only by its SHA-256. Those CI proof shapes admit IDs, counts,
 hashes, and bounded process metadata, but no manuscript, correction or
 decision rationale, or evidence-excerpt text.
+
+## Phase 3A governed voice casting
+
+`v3/definitions.schema.json` adds closed, versioned boundaries for provider
+and model descriptors, catalog revisions, project-independent casting voice
+profiles, rights records, production roles, the deterministic casting
+profile, durable casting runs, explainable candidates, metadata-only
+conflicts, append-only assignments and corrections, three approval gates, and
+immutable approved-cast snapshots. Version 1 voice and casting meanings remain
+unchanged.
+
+The profile ID is `governed-voice-casting-v1@1.0.0`, the producer is
+`voice-casting-orchestrator@1.0.0`, and the rights policy is
+`voice-rights-policy-v1`. The canonical profile fingerprint is
+`3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6`.
+The schema pins 300 roles, 5,000 profiles, 50 pre-reduction candidates per
+role, 12 final candidates per role, page bounds of 50/200, and 2,000-code-point
+explanations. A voice profile may be assigned to at most two roles before the
+configured reuse-conflict rule fires.
+
+Rights states are exactly `verified`, `restricted`, `unknown`, and
+`prohibited`. Unknown and prohibited rights cannot be represented as eligible
+for final approval. Restricted rights remain reviewable only through an
+explicit acknowledgement correction. Corrections and decisions are immutable
+events; automated reruns cannot silently replace them. Human review decisions
+are `approved|changes_requested|rejected`, while only a system actor may append
+`invalidated`; a system actor cannot approve. Production roles cover primary
+and secondary narration, named characters, explicit unresolved speakers,
+groups, quoted documents or announcements, internal thought, and custom roles.
+Character roles keep stable Character Registry identity separate from analysis
+entity identity. Importance and language/locale/performance requirements are
+conservative approved-evidence projections, and candidate conflict warnings
+are bounded projections of actual conflict rows.
+
+`Phase3PackagedE2eResult` and `Phase3BuildEvidenceManifest` are bounded proof
+entry points for casting persistence, rights governance, three gate decisions,
+exact executable/service hashes, and exact owned-process exit. They admit
+identifiers, counts, hashes, and process IDs, but no manuscript text, license
+documents, credentials, voice samples, or audio.
+The schema-v4 manifest retains every schema-v3 Phase 2 top-level field and
+shape through pinned references, then adds one closed `voiceCastingContract`
+section. Existing secure-ingest, whole-book-analysis, artifact, assertion, and
+packaged-flow evidence is therefore not replaced or weakened.
+
+The repository-owned development catalog lives at
+`apps/local-service/src/cinematic_story_service/catalogs/synthetic_voice_catalog.v1.json`.
+Its fingerprint is computed from recursively key-sorted JSON after removing
+the two fingerprint fields; array order is significant. It is fictional
+metadata only and deliberately covers unavailable, deprecated, restricted,
+unknown, prohibited, provider-disabled, language-mismatch, long-form,
+metadata-similarity, and narrator/character-reuse cases without synthesis or
+audio.

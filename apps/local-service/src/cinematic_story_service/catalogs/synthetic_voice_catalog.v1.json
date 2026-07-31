@@ -1,0 +1,1562 @@
+{
+  "contractVersion": "3.0.0",
+  "catalogRevision": {
+    "contractVersion": "3.0.0",
+    "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+    "revision": 1,
+    "semanticVersion": "1.0.0",
+    "rightsPolicyId": "voice-rights-policy-v1",
+    "providerDescriptorIds": [
+      "synthetic-local-fixture",
+      "synthetic-disabled-cloud"
+    ],
+    "modelDescriptorIds": [
+      "synthetic-narrative-model",
+      "synthetic-character-model",
+      "synthetic-multilingual-model",
+      "synthetic-unavailable-model",
+      "synthetic-disabled-cloud-model"
+    ],
+    "voiceProfileIds": [
+      "synthetic-narrator-01",
+      "synthetic-narrator-02",
+      "synthetic-character-01",
+      "synthetic-character-02",
+      "synthetic-character-03",
+      "synthetic-character-04",
+      "synthetic-character-05",
+      "synthetic-character-06",
+      "synthetic-character-07",
+      "synthetic-character-08",
+      "synthetic-character-09",
+      "synthetic-character-10",
+      "synthetic-character-11",
+      "synthetic-character-12"
+    ],
+    "createdAt": "2026-01-01T00:00:00Z",
+    "immutable": true,
+    "provenance": {
+      "origin": "development_fixture",
+      "producerId": "repository-synthetic-voice-catalog",
+      "producerVersion": "1.0.0",
+      "recordedAt": "2026-01-01T00:00:00Z"
+    },
+    "catalogFingerprint": "68d116d1f66e4ea4bcceabfd0520fd889cf9da3074ee1b9186c43c285575c25f"
+  },
+  "providers": [
+    {
+      "contractVersion": "3.0.0",
+      "providerId": "synthetic-local-fixture",
+      "providerVersion": "1.0.0",
+      "providerType": "development_fixture",
+      "runtimeAvailability": "available",
+      "catalogAvailability": "available",
+      "synthesisImplemented": false,
+      "networkUseRequired": false,
+      "credentialsRequired": false,
+      "supportedOperatingSystems": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "supportedLanguages": [
+        "en",
+        "es"
+      ],
+      "outputCapability": {
+        "formats": [
+          "unknown"
+        ],
+        "sampleRatesHz": []
+      },
+      "rightsMetadataCapabilities": [
+        "license_identifier",
+        "commercial_use",
+        "attribution",
+        "distribution_limits",
+        "consent",
+        "effective_dates",
+        "evidence_reference"
+      ],
+      "healthStatus": "healthy",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "providerId": "synthetic-disabled-cloud",
+      "providerVersion": "1.0.0",
+      "providerType": "cloud_capable_disabled",
+      "runtimeAvailability": "disabled",
+      "catalogAvailability": "available",
+      "synthesisImplemented": false,
+      "networkUseRequired": true,
+      "credentialsRequired": true,
+      "supportedOperatingSystems": [
+        "windows"
+      ],
+      "supportedLanguages": [
+        "en"
+      ],
+      "outputCapability": {
+        "formats": [
+          "unknown"
+        ],
+        "sampleRatesHz": []
+      },
+      "rightsMetadataCapabilities": [
+        "license_identifier",
+        "commercial_use",
+        "attribution"
+      ],
+      "healthStatus": "disabled",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    }
+  ],
+  "models": [
+    {
+      "contractVersion": "3.0.0",
+      "modelId": "synthetic-narrative-model",
+      "providerId": "synthetic-local-fixture",
+      "modelName": "Synthetic Narrative Metadata Model",
+      "modelVersion": "1.0.0",
+      "capability": {
+        "supportedLanguages": [
+          "en"
+        ],
+        "supportedLocales": [
+          "en-US",
+          "en-GB"
+        ],
+        "expressiveControls": [
+          "energy",
+          "emotion",
+          "pace",
+          "style"
+        ],
+        "speakingRateRange": {
+          "minimum": 0.75,
+          "maximum": 1.3,
+          "unit": "multiplier"
+        },
+        "pitchControl": "categorical",
+        "styleControl": "categorical",
+        "outputCapability": {
+          "formats": [
+            "unknown"
+          ],
+          "sampleRatesHz": []
+        }
+      },
+      "executionLocation": "local",
+      "licenseClassification": "fixture_only",
+      "availability": "available",
+      "deprecated": false,
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "modelId": "synthetic-character-model",
+      "providerId": "synthetic-local-fixture",
+      "modelName": "Synthetic Character Metadata Model",
+      "modelVersion": "1.0.0",
+      "capability": {
+        "supportedLanguages": [
+          "en"
+        ],
+        "supportedLocales": [
+          "en-US",
+          "en-GB",
+          "en-CA"
+        ],
+        "expressiveControls": [
+          "energy",
+          "emotion",
+          "pace",
+          "pitch",
+          "style"
+        ],
+        "speakingRateRange": {
+          "minimum": 0.7,
+          "maximum": 1.45,
+          "unit": "multiplier"
+        },
+        "pitchControl": "categorical",
+        "styleControl": "categorical",
+        "outputCapability": {
+          "formats": [
+            "unknown"
+          ],
+          "sampleRatesHz": []
+        }
+      },
+      "executionLocation": "local",
+      "licenseClassification": "fixture_only",
+      "availability": "available",
+      "deprecated": false,
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "modelId": "synthetic-multilingual-model",
+      "providerId": "synthetic-local-fixture",
+      "modelName": "Synthetic Multilingual Metadata Model",
+      "modelVersion": "1.0.0",
+      "capability": {
+        "supportedLanguages": [
+          "en",
+          "es"
+        ],
+        "supportedLocales": [
+          "en-US",
+          "es-MX"
+        ],
+        "expressiveControls": [
+          "energy",
+          "emotion",
+          "pace"
+        ],
+        "speakingRateRange": {
+          "minimum": 0.8,
+          "maximum": 1.25,
+          "unit": "multiplier"
+        },
+        "pitchControl": "none",
+        "styleControl": "categorical",
+        "outputCapability": {
+          "formats": [
+            "unknown"
+          ],
+          "sampleRatesHz": []
+        }
+      },
+      "executionLocation": "local",
+      "licenseClassification": "fixture_only",
+      "availability": "available",
+      "deprecated": false,
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "modelId": "synthetic-unavailable-model",
+      "providerId": "synthetic-local-fixture",
+      "modelName": "Synthetic Unavailable Metadata Model",
+      "modelVersion": "1.0.0",
+      "capability": {
+        "supportedLanguages": [
+          "en"
+        ],
+        "supportedLocales": [
+          "en-US"
+        ],
+        "expressiveControls": [
+          "pace"
+        ],
+        "speakingRateRange": {
+          "minimum": 0.9,
+          "maximum": 1.1,
+          "unit": "multiplier"
+        },
+        "pitchControl": "none",
+        "styleControl": "none",
+        "outputCapability": {
+          "formats": [
+            "unknown"
+          ],
+          "sampleRatesHz": []
+        }
+      },
+      "executionLocation": "local",
+      "licenseClassification": "fixture_only",
+      "availability": "unavailable",
+      "deprecated": false,
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "modelId": "synthetic-disabled-cloud-model",
+      "providerId": "synthetic-disabled-cloud",
+      "modelName": "Synthetic Disabled Cloud Metadata Model",
+      "modelVersion": "1.0.0",
+      "capability": {
+        "supportedLanguages": [
+          "en"
+        ],
+        "supportedLocales": [
+          "en-US"
+        ],
+        "expressiveControls": [
+          "energy",
+          "pace"
+        ],
+        "speakingRateRange": {
+          "minimum": 0.8,
+          "maximum": 1.2,
+          "unit": "multiplier"
+        },
+        "pitchControl": "continuous",
+        "styleControl": "categorical",
+        "outputCapability": {
+          "formats": [
+            "unknown"
+          ],
+          "sampleRatesHz": []
+        }
+      },
+      "executionLocation": "remote",
+      "licenseClassification": "unknown",
+      "availability": "disabled",
+      "deprecated": false,
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    }
+  ],
+  "voices": [
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-narrator-01",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-narrative-model",
+      "providerVoiceId": "fixture-narrator-01",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Narrator 01 — Warm Resonant",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 35,
+        "maximum": 65
+      },
+      "vocalPresentation": "neutral",
+      "vocalTexture": "warm",
+      "pitchRange": "low_mid",
+      "speakingRateRange": {
+        "minimum": 0.82,
+        "maximum": 1.16,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.2,
+        "maximum": 0.85
+      },
+      "expressiveRange": [
+        "reflective",
+        "suspense",
+        "tender",
+        "urgent"
+      ],
+      "narrationSuitability": "preferred",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "preferred",
+      "characterRoleSuitability": [
+        "lead",
+        "supporting"
+      ],
+      "maximumRecommendedWords": null,
+      "knownLimitations": [],
+      "rightsRecordId": "rights-synthetic-narrator-01",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": "narrator-major-character-fixture",
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-narrator-02",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-narrative-model",
+      "providerVoiceId": "fixture-narrator-02",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Narrator 02 — Clear Bright",
+      "language": "en",
+      "locale": "en-GB",
+      "accentOrDialect": "Contemporary British (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 28,
+        "maximum": 55
+      },
+      "vocalPresentation": "feminine",
+      "vocalTexture": "clear",
+      "pitchRange": "mid",
+      "speakingRateRange": {
+        "minimum": 0.85,
+        "maximum": 1.2,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.25,
+        "maximum": 0.9
+      },
+      "expressiveRange": [
+        "measured",
+        "wry",
+        "tender",
+        "urgent"
+      ],
+      "narrationSuitability": "preferred",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "preferred",
+      "characterRoleSuitability": [
+        "lead",
+        "supporting"
+      ],
+      "maximumRecommendedWords": null,
+      "knownLimitations": [
+        "Restricted fixture rights require explicit acknowledgement."
+      ],
+      "rightsRecordId": "rights-synthetic-narrator-02",
+      "rightsState": "restricted",
+      "licenseScope": "repository test and CI use only",
+      "commercialUse": "restricted",
+      "attributionRequired": true,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-01",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-character-model",
+      "providerVoiceId": "fixture-character-01",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 01 — Amber Clear",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 20,
+        "maximum": 40
+      },
+      "vocalPresentation": "feminine",
+      "vocalTexture": "clear",
+      "pitchRange": "mid",
+      "speakingRateRange": {
+        "minimum": 0.8,
+        "maximum": 1.3,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.25,
+        "maximum": 0.95
+      },
+      "expressiveRange": [
+        "bright",
+        "concerned",
+        "resolute"
+      ],
+      "narrationSuitability": "limited",
+      "dialogueSuitability": "preferred",
+      "longFormSuitability": "suitable",
+      "characterRoleSuitability": [
+        "lead",
+        "supporting"
+      ],
+      "maximumRecommendedWords": 25000,
+      "knownLimitations": [],
+      "rightsRecordId": "rights-synthetic-character-01",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": "similarity-fixture-alpha",
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-02",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-character-model",
+      "providerVoiceId": "fixture-character-02",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 02 — Copper Clear",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 22,
+        "maximum": 42
+      },
+      "vocalPresentation": "feminine",
+      "vocalTexture": "clear",
+      "pitchRange": "mid",
+      "speakingRateRange": {
+        "minimum": 0.81,
+        "maximum": 1.3,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.25,
+        "maximum": 0.94
+      },
+      "expressiveRange": [
+        "bright",
+        "concerned",
+        "resolute"
+      ],
+      "narrationSuitability": "limited",
+      "dialogueSuitability": "preferred",
+      "longFormSuitability": "suitable",
+      "characterRoleSuitability": [
+        "lead",
+        "supporting"
+      ],
+      "maximumRecommendedWords": 25000,
+      "knownLimitations": [
+        "Intentionally similar fixture metadata to synthetic-character-01."
+      ],
+      "rightsRecordId": "rights-synthetic-character-02",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": "similarity-fixture-alpha",
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-03",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-multilingual-model",
+      "providerVoiceId": "fixture-character-03",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 03 — Spanish Crisp",
+      "language": "es",
+      "locale": "es-MX",
+      "accentOrDialect": "Mexican Spanish (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 25,
+        "maximum": 50
+      },
+      "vocalPresentation": "masculine",
+      "vocalTexture": "crisp",
+      "pitchRange": "mid",
+      "speakingRateRange": {
+        "minimum": 0.85,
+        "maximum": 1.25,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.3,
+        "maximum": 0.9
+      },
+      "expressiveRange": [
+        "calm",
+        "urgent"
+      ],
+      "narrationSuitability": "suitable",
+      "dialogueSuitability": "preferred",
+      "longFormSuitability": "suitable",
+      "characterRoleSuitability": [
+        "lead",
+        "supporting"
+      ],
+      "maximumRecommendedWords": 20000,
+      "knownLimitations": [
+        "Intentional language-mismatch fixture for English-only roles."
+      ],
+      "rightsRecordId": "rights-synthetic-character-03",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-04",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-character-model",
+      "providerVoiceId": "fixture-character-04",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 04 — Quick Bright",
+      "language": "en",
+      "locale": "en-CA",
+      "accentOrDialect": "Canadian English (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 18,
+        "maximum": 30
+      },
+      "vocalPresentation": "androgynous",
+      "vocalTexture": "bright",
+      "pitchRange": "mid_high",
+      "speakingRateRange": {
+        "minimum": 1,
+        "maximum": 1.4,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.55,
+        "maximum": 1
+      },
+      "expressiveRange": [
+        "animated",
+        "playful"
+      ],
+      "narrationSuitability": "unsuitable",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "unsuitable",
+      "characterRoleSuitability": [
+        "minor",
+        "group"
+      ],
+      "maximumRecommendedWords": 800,
+      "knownLimitations": [
+        "Intentional long-form suitability mismatch fixture."
+      ],
+      "rightsRecordId": "rights-synthetic-character-04",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-05",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-unavailable-model",
+      "providerVoiceId": "fixture-character-05",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 05 — Unavailable",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 40,
+        "maximum": 70
+      },
+      "vocalPresentation": "masculine",
+      "vocalTexture": "gravelly",
+      "pitchRange": "low",
+      "speakingRateRange": {
+        "minimum": 0.8,
+        "maximum": 1.1,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.2,
+        "maximum": 0.7
+      },
+      "expressiveRange": [
+        "stern"
+      ],
+      "narrationSuitability": "limited",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "limited",
+      "characterRoleSuitability": [
+        "supporting",
+        "minor"
+      ],
+      "maximumRecommendedWords": 5000,
+      "knownLimitations": [
+        "Unavailable model fixture."
+      ],
+      "rightsRecordId": "rights-synthetic-character-05",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "unavailable",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-06",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-character-model",
+      "providerVoiceId": "fixture-character-06",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 06 — Deprecated",
+      "language": "en",
+      "locale": "en-GB",
+      "accentOrDialect": "Northern British (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 45,
+        "maximum": 75
+      },
+      "vocalPresentation": "masculine",
+      "vocalTexture": "textured",
+      "pitchRange": "low_mid",
+      "speakingRateRange": {
+        "minimum": 0.75,
+        "maximum": 1.15,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.2,
+        "maximum": 0.8
+      },
+      "expressiveRange": [
+        "dry",
+        "stern"
+      ],
+      "narrationSuitability": "limited",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "limited",
+      "characterRoleSuitability": [
+        "supporting",
+        "minor"
+      ],
+      "maximumRecommendedWords": 8000,
+      "knownLimitations": [
+        "Deprecated voice fixture."
+      ],
+      "rightsRecordId": "rights-synthetic-character-06",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "0.9.0",
+      "state": "deprecated",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-07",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-character-model",
+      "providerVoiceId": "fixture-character-07",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 07 — Prohibited Rights",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 30,
+        "maximum": 55
+      },
+      "vocalPresentation": "neutral",
+      "vocalTexture": "smooth",
+      "pitchRange": "mid",
+      "speakingRateRange": {
+        "minimum": 0.8,
+        "maximum": 1.25,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.3,
+        "maximum": 0.9
+      },
+      "expressiveRange": [
+        "calm",
+        "intense"
+      ],
+      "narrationSuitability": "suitable",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "suitable",
+      "characterRoleSuitability": [
+        "lead"
+      ],
+      "maximumRecommendedWords": 20000,
+      "knownLimitations": [
+        "Prohibited rights fixture; never eligible for approval."
+      ],
+      "rightsRecordId": "rights-synthetic-character-07",
+      "rightsState": "prohibited",
+      "licenseScope": "prohibited fixture state",
+      "commercialUse": "prohibited",
+      "attributionRequired": false,
+      "voiceCloningClassification": "prohibited",
+      "consentStatus": "prohibited",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-08",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-character-model",
+      "providerVoiceId": "fixture-character-08",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 08 — Unknown Rights",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 18,
+        "maximum": 35
+      },
+      "vocalPresentation": "androgynous",
+      "vocalTexture": "airy",
+      "pitchRange": "high",
+      "speakingRateRange": {
+        "minimum": 0.9,
+        "maximum": 1.35,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.2,
+        "maximum": 0.85
+      },
+      "expressiveRange": [
+        "hesitant",
+        "hopeful"
+      ],
+      "narrationSuitability": "limited",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "limited",
+      "characterRoleSuitability": [
+        "supporting",
+        "minor"
+      ],
+      "maximumRecommendedWords": 6000,
+      "knownLimitations": [
+        "Unknown rights fixture; never eligible for final approval."
+      ],
+      "rightsRecordId": "rights-synthetic-character-08",
+      "rightsState": "unknown",
+      "licenseScope": "unknown fixture state",
+      "commercialUse": "unknown",
+      "attributionRequired": false,
+      "voiceCloningClassification": "unknown",
+      "consentStatus": "unknown",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-09",
+      "providerId": "synthetic-disabled-cloud",
+      "modelId": "synthetic-disabled-cloud-model",
+      "providerVoiceId": "fixture-character-09",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 09 — Provider Disabled",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 25,
+        "maximum": 45
+      },
+      "vocalPresentation": "feminine",
+      "vocalTexture": "crisp",
+      "pitchRange": "mid_high",
+      "speakingRateRange": {
+        "minimum": 0.85,
+        "maximum": 1.25,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.3,
+        "maximum": 0.9
+      },
+      "expressiveRange": [
+        "direct",
+        "urgent"
+      ],
+      "narrationSuitability": "limited",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "limited",
+      "characterRoleSuitability": [
+        "supporting"
+      ],
+      "maximumRecommendedWords": 5000,
+      "knownLimitations": [
+        "Cloud-capable fixture provider is disabled and must never be enabled by Phase 3A."
+      ],
+      "rightsRecordId": "rights-synthetic-character-09",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-10",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-character-model",
+      "providerVoiceId": "fixture-character-10",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 10 — Restricted",
+      "language": "en",
+      "locale": "en-GB",
+      "accentOrDialect": "Contemporary British (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 30,
+        "maximum": 60
+      },
+      "vocalPresentation": "masculine",
+      "vocalTexture": "resonant",
+      "pitchRange": "low_mid",
+      "speakingRateRange": {
+        "minimum": 0.78,
+        "maximum": 1.18,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.25,
+        "maximum": 0.85
+      },
+      "expressiveRange": [
+        "measured",
+        "commanding"
+      ],
+      "narrationSuitability": "suitable",
+      "dialogueSuitability": "preferred",
+      "longFormSuitability": "suitable",
+      "characterRoleSuitability": [
+        "lead",
+        "supporting"
+      ],
+      "maximumRecommendedWords": 18000,
+      "knownLimitations": [
+        "Restricted rights require explicit acknowledgement."
+      ],
+      "rightsRecordId": "rights-synthetic-character-10",
+      "rightsState": "restricted",
+      "licenseScope": "repository test and CI use only",
+      "commercialUse": "restricted",
+      "attributionRequired": true,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-11",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-narrative-model",
+      "providerVoiceId": "fixture-character-11",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 11 — Narrator Reuse",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 35,
+        "maximum": 65
+      },
+      "vocalPresentation": "neutral",
+      "vocalTexture": "warm",
+      "pitchRange": "low_mid",
+      "speakingRateRange": {
+        "minimum": 0.82,
+        "maximum": 1.16,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.2,
+        "maximum": 0.85
+      },
+      "expressiveRange": [
+        "reflective",
+        "suspense",
+        "tender",
+        "urgent"
+      ],
+      "narrationSuitability": "preferred",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "preferred",
+      "characterRoleSuitability": [
+        "lead"
+      ],
+      "maximumRecommendedWords": null,
+      "knownLimitations": [
+        "Intentionally reuses narrator provider voice metadata for conflict testing."
+      ],
+      "rightsRecordId": "rights-synthetic-character-11",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": "narrator-major-character-fixture",
+      "version": "1.0.0",
+      "state": "active",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "contractVersion": "3.0.0",
+      "voiceProfileId": "synthetic-character-12",
+      "providerId": "synthetic-local-fixture",
+      "modelId": "synthetic-character-model",
+      "providerVoiceId": "fixture-character-12",
+      "catalogRevisionId": "synthetic-voice-catalog-v1@1.0.0",
+      "displayLabel": "Synthetic Character 12 — Blocked",
+      "language": "en",
+      "locale": "en-US",
+      "accentOrDialect": "General American (declared fixture metadata)",
+      "agePresentationRange": {
+        "minimum": 55,
+        "maximum": 85
+      },
+      "vocalPresentation": "feminine",
+      "vocalTexture": "airy",
+      "pitchRange": "mid_high",
+      "speakingRateRange": {
+        "minimum": 0.75,
+        "maximum": 1.1,
+        "unit": "multiplier"
+      },
+      "energyRange": {
+        "minimum": 0.15,
+        "maximum": 0.7
+      },
+      "expressiveRange": [
+        "gentle",
+        "reflective"
+      ],
+      "narrationSuitability": "suitable",
+      "dialogueSuitability": "suitable",
+      "longFormSuitability": "suitable",
+      "characterRoleSuitability": [
+        "supporting",
+        "minor"
+      ],
+      "maximumRecommendedWords": 10000,
+      "knownLimitations": [
+        "Explicitly blocked fixture voice."
+      ],
+      "rightsRecordId": "rights-synthetic-character-12",
+      "rightsState": "verified",
+      "licenseScope": "repository-owned synthetic metadata fixture",
+      "commercialUse": "permitted",
+      "attributionRequired": false,
+      "voiceCloningClassification": "not_cloned_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "metadataSimilarityGroup": null,
+      "reuseRiskGroup": null,
+      "version": "1.0.0",
+      "state": "blocked",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      }
+    }
+  ],
+  "rights": [
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-narrator-01",
+      "voiceProfileId": "synthetic-narrator-01",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-narrator-02",
+      "voiceProfileId": "synthetic-narrator-02",
+      "providerId": "synthetic-local-fixture",
+      "state": "restricted",
+      "licenseIdentifier": "CSS-SYNTHETIC-RESTRICTED-1.0",
+      "rightsBasis": "Synthetic restriction fixture requiring acknowledgement.",
+      "commercialUsePermission": "restricted",
+      "attributionRequirement": "required",
+      "geographicLimitations": [],
+      "distributionLimitations": [
+        "test_and_ci_only"
+      ],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-restricted-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-01",
+      "voiceProfileId": "synthetic-character-01",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-02",
+      "voiceProfileId": "synthetic-character-02",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-03",
+      "voiceProfileId": "synthetic-character-03",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-04",
+      "voiceProfileId": "synthetic-character-04",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-05",
+      "voiceProfileId": "synthetic-character-05",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-06",
+      "voiceProfileId": "synthetic-character-06",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-07",
+      "voiceProfileId": "synthetic-character-07",
+      "providerId": "synthetic-local-fixture",
+      "state": "prohibited",
+      "licenseIdentifier": "CSS-SYNTHETIC-PROHIBITED-1.0",
+      "rightsBasis": "Synthetic prohibited-rights fixture.",
+      "commercialUsePermission": "prohibited",
+      "attributionRequirement": "prohibited",
+      "geographicLimitations": [],
+      "distributionLimitations": [
+        "all_use_prohibited"
+      ],
+      "voiceCloningStatus": "prohibited",
+      "consentStatus": "prohibited",
+      "effectiveDate": null,
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-prohibited-fixture",
+      "humanVerificationStatus": "rejected",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-08",
+      "voiceProfileId": "synthetic-character-08",
+      "providerId": "synthetic-local-fixture",
+      "state": "unknown",
+      "licenseIdentifier": "UNKNOWN",
+      "rightsBasis": "Synthetic unknown-rights fixture.",
+      "commercialUsePermission": "unknown",
+      "attributionRequirement": "unknown",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "unknown",
+      "consentStatus": "unknown",
+      "effectiveDate": null,
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-unknown-fixture",
+      "humanVerificationStatus": "pending",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-09",
+      "voiceProfileId": "synthetic-character-09",
+      "providerId": "synthetic-disabled-cloud",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; provider remains disabled.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-10",
+      "voiceProfileId": "synthetic-character-10",
+      "providerId": "synthetic-local-fixture",
+      "state": "restricted",
+      "licenseIdentifier": "CSS-SYNTHETIC-RESTRICTED-1.0",
+      "rightsBasis": "Synthetic restriction fixture requiring acknowledgement.",
+      "commercialUsePermission": "restricted",
+      "attributionRequirement": "required",
+      "geographicLimitations": [],
+      "distributionLimitations": [
+        "test_and_ci_only"
+      ],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-restricted-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-11",
+      "voiceProfileId": "synthetic-character-11",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    },
+    {
+      "contractVersion": "3.0.0",
+      "rightsRecordId": "rights-synthetic-character-12",
+      "voiceProfileId": "synthetic-character-12",
+      "providerId": "synthetic-local-fixture",
+      "state": "verified",
+      "licenseIdentifier": "CSS-SYNTHETIC-FIXTURE-1.0",
+      "rightsBasis": "Repository-owned fictional metadata fixture; no audio or person likeness.",
+      "commercialUsePermission": "permitted",
+      "attributionRequirement": "none",
+      "geographicLimitations": [],
+      "distributionLimitations": [],
+      "voiceCloningStatus": "not_applicable_synthetic_fixture",
+      "consentStatus": "not_applicable_synthetic_fixture",
+      "effectiveDate": "2026-01-01T00:00:00Z",
+      "expiresAt": null,
+      "evidenceReference": "repository-policy:synthetic-fixture",
+      "humanVerificationStatus": "not_required_fixture",
+      "provenance": {
+        "origin": "development_fixture",
+        "producerId": "repository-synthetic-voice-catalog",
+        "producerVersion": "1.0.0",
+        "recordedAt": "2026-01-01T00:00:00Z"
+      },
+      "revision": 1
+    }
+  ],
+  "fingerprint": "68d116d1f66e4ea4bcceabfd0520fd889cf9da3074ee1b9186c43c285575c25f"
+}

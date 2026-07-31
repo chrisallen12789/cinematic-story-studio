@@ -31,6 +31,28 @@ import type {
   AnalysisProfileReference,
   StoryAnalysisRun
 } from "./story-analysis.js";
+import type {
+  ApprovedCastSnapshot,
+  CastAssignment,
+  CastingCandidate,
+  CastingConflict,
+  CastingCorrection,
+  CastingCorrectionSelection,
+  CastingGateId,
+  CastingGateReview,
+  CastingProfile,
+  CastingReviewDecision,
+  CastingRun,
+  CastingVoiceProfile,
+  CustomProductionRole,
+  ProductionRole,
+  ProductionRoleRequirement,
+  VoiceCastingContractVersion,
+  VoiceCatalogRevision,
+  VoiceModelDescriptor,
+  VoiceProviderDescriptor,
+  VoiceRightsRecord
+} from "./voice-casting.js";
 
 export interface ApiError {
   readonly code: string;
@@ -243,6 +265,15 @@ export interface CastingPlaceholder {
   readonly voiceId: null;
 }
 
+export interface VoiceCastingProjectSummary {
+  readonly contractVersion: VoiceCastingContractVersion;
+  readonly currentRun: CastingRun | null;
+  readonly catalogRevision: VoiceCatalogRevision;
+  readonly catalogFingerprint: Sha256;
+  readonly profile: CastingProfile;
+  readonly gateReviews: readonly CastingGateReview[];
+}
+
 export interface ProjectDetail extends CorrelatedResponse {
   readonly project: Project;
   readonly sourceDocuments: readonly SourceDocument[];
@@ -262,6 +293,9 @@ export interface ProjectDetail extends CorrelatedResponse {
   readonly jobs: readonly Job[];
   readonly currentAnalysisRun: StoryAnalysisRun | null;
   readonly analysisGateReviews: readonly AnalysisGateReview[];
+  readonly voiceCasting: VoiceCastingProjectSummary;
+  readonly currentCastingRun: CastingRun | null;
+  readonly castingGateReviews: readonly CastingGateReview[];
 }
 
 export interface CorrectDialogueSpeakerRequest {
@@ -280,7 +314,8 @@ export interface CorrectDialogueSpeakerResponse extends CorrelatedResponse {
 export type JobType =
   | "extract_document"
   | "analyze_story"
-  | "analyze_whole_book";
+  | "analyze_whole_book"
+  | "analyze_casting";
 
 export type JobState =
   | "queued"
@@ -303,6 +338,14 @@ export interface Job {
   readonly projectId: EntityId;
   readonly type: JobType;
   readonly state: JobState;
+  readonly target: {
+    readonly type:
+      | "document_extraction"
+      | "story"
+      | "analysis_run"
+      | "casting_run";
+    readonly id: EntityId;
+  };
   readonly inputRevision: number;
   readonly inputFingerprint: Sha256;
   readonly attempt: number;
@@ -318,7 +361,7 @@ export interface Job {
 }
 
 export interface CreateJobRequest {
-  readonly type: JobType;
+  readonly type: "analyze_story";
   readonly inputRevision: number;
   readonly idempotencyKey: string;
 }
@@ -485,6 +528,178 @@ export interface DecideAnalysisGateResponse extends CorrelatedResponse {
   readonly run: StoryAnalysisRun;
 }
 
+export interface CastingCatalogPageRequest extends CursorPageRequest {
+  readonly expectedCatalogRevisionId?: EntityId;
+  readonly expectedCatalogFingerprint?: Sha256;
+}
+
+export interface CastingCatalogPageResponse extends CursorPageResponse {
+  readonly catalogRevision: VoiceCatalogRevision;
+  readonly providers: readonly VoiceProviderDescriptor[];
+  readonly models: readonly VoiceModelDescriptor[];
+  readonly items: readonly CastingVoiceProfile[];
+  readonly rights: readonly VoiceRightsRecord[];
+}
+
+export interface CreateCastingRunRequest {
+  readonly expectedAnalysisRunId: EntityId;
+  readonly expectedSnapshotId: EntityId;
+  readonly expectedSnapshotRevision: number;
+  readonly expectedSnapshotFingerprint: Sha256;
+  readonly expectedCorrectionSetFingerprint: Sha256;
+  readonly expectedImportReviewDecisionId: EntityId;
+  readonly expectedAnalysisGateDecisionIds: {
+    readonly storyStructureReview: EntityId;
+    readonly characterRegistryReview: EntityId;
+    readonly dialogueAttributionReview: EntityId;
+    readonly wholeBookAnalysisReview: EntityId;
+  };
+  readonly expectedCatalogRevisionId: EntityId;
+  readonly expectedCatalogFingerprint: Sha256;
+  readonly expectedCastingProfileFingerprint: Sha256;
+  readonly idempotencyKey: string;
+}
+
+export interface CreateCastingRunResponse extends CorrelatedResponse {
+  readonly run: CastingRun;
+  readonly job: Job;
+}
+
+export interface CastingRunResponse extends CorrelatedResponse {
+  readonly run: CastingRun;
+}
+
+export interface CastingRunPageResponse extends CursorPageResponse {
+  readonly items: readonly CastingRun[];
+}
+
+export interface CastingEvidenceRequest {
+  readonly expectedRunFingerprint: Sha256;
+  readonly expectedCatalogRevisionId: EntityId;
+  readonly expectedCatalogFingerprint: Sha256;
+  readonly expectedSnapshotId: EntityId;
+  readonly expectedSnapshotRevision: number;
+  readonly expectedSnapshotFingerprint: Sha256;
+}
+
+export type CastingEvidencePageRequest =
+  CastingEvidenceRequest & CursorPageRequest;
+
+export type ProductionRolePageRequest = CastingEvidencePageRequest;
+
+export interface ProductionRolePageResponse extends CursorPageResponse {
+  readonly castingRunId: EntityId;
+  readonly items: readonly ProductionRole[];
+}
+
+export interface CreateCustomProductionRoleRequest
+  extends CastingEvidenceRequest {
+  readonly definitionId: EntityId;
+  readonly label: string;
+  readonly performanceRequirements: ProductionRoleRequirement;
+  readonly reason: string;
+  readonly expectedCorrectionSetFingerprint: Sha256;
+  readonly expectedCastingProfileFingerprint: Sha256;
+  readonly idempotencyKey: string;
+}
+
+export interface CreateCustomProductionRoleResponse
+  extends CorrelatedResponse {
+  readonly role: CustomProductionRole;
+  readonly invalidatedGateIds: readonly CastingGateId[];
+  readonly run: CastingRun;
+  readonly reviews: readonly CastingGateReview[];
+}
+
+export interface CastingCandidatePageRequest
+  extends CastingEvidencePageRequest {
+  readonly expectedRoleRevision: number;
+}
+
+export interface CastingCandidatePageResponse extends CursorPageResponse {
+  readonly castingRunId: EntityId;
+  readonly items: readonly CastingCandidate[];
+}
+
+export type CastingConflictPageRequest = CastingEvidencePageRequest;
+
+export interface CastingConflictPageResponse extends CursorPageResponse {
+  readonly castingRunId: EntityId;
+  readonly items: readonly CastingConflict[];
+}
+
+export type CastAssignmentPageRequest = CastingEvidencePageRequest;
+
+export interface CastAssignmentPageResponse extends CursorPageResponse {
+  readonly castingRunId: EntityId;
+  readonly items: readonly CastAssignment[];
+}
+
+export type CastingCorrectionPageRequest = CastingEvidencePageRequest;
+
+export type CastingCorrectionRequestValue =
+  CastingCorrectionSelection["correctedValue"];
+
+export interface AppendCastingCorrectionRequest {
+  readonly operation: CastingCorrection["category"];
+  readonly targetRoleId: EntityId;
+  readonly expectedRoleRevision: number;
+  readonly expectedRunFingerprint: Sha256;
+  readonly expectedCatalogFingerprint: Sha256;
+  readonly expectedSnapshotFingerprint: Sha256;
+  readonly expectedCorrectionSetFingerprint: Sha256;
+  readonly previousEffectiveFingerprint: Sha256;
+  readonly voiceProfileId?: EntityId | null;
+  readonly correctedValue?: CastingCorrectionRequestValue | null;
+  readonly reason: string;
+  readonly supersedesCorrectionId?: EntityId | null;
+  readonly idempotencyKey: string;
+}
+
+export interface AppendCastingCorrectionResponse extends CorrelatedResponse {
+  readonly correction: CastingCorrection;
+  readonly assignment: CastAssignment | null;
+  readonly invalidatedGateIds: readonly CastingGateId[];
+  readonly run: CastingRun;
+  readonly reviews: readonly CastingGateReview[];
+}
+
+export interface CastingCorrectionPageResponse extends CursorPageResponse {
+  readonly castingRunId: EntityId;
+  readonly items: readonly CastingCorrection[];
+}
+
+export interface CastingReviewListRequest
+  extends CastingEvidenceRequest {
+  readonly expectedApprovedCastSnapshotId: EntityId;
+  readonly expectedApprovedCastSnapshotRevision: number;
+}
+
+export interface CastingGateReviewListResponse extends CorrelatedResponse {
+  readonly castingRunId: EntityId;
+  readonly items: readonly CastingGateReview[];
+}
+
+export interface DecideCastingReviewRequest {
+  readonly decision: "approve" | "request_changes" | "reject";
+  readonly expectedRevision: number;
+  readonly expectedEvidenceFingerprint: Sha256;
+  readonly expectedRunFingerprint: Sha256;
+  readonly expectedApprovedCastSnapshotId: EntityId;
+  readonly expectedApprovedCastSnapshotRevision: number;
+  readonly warningAcknowledgementIds?: readonly EntityId[];
+  readonly rationale: string;
+  readonly supersedesDecisionId?: EntityId | null;
+  readonly idempotencyKey: string;
+}
+
+export interface DecideCastingReviewResponse extends CorrelatedResponse {
+  readonly review: CastingGateReview;
+  readonly decision: CastingReviewDecision;
+  readonly snapshot: ApprovedCastSnapshot;
+  readonly run: CastingRun;
+}
+
 export const API_V1_PATHS = {
   health: "/api/v1/health",
   providerHealth: "/api/v1/providers/health",
@@ -529,6 +744,52 @@ export const API_V1_PATHS = {
     gateId: AnalysisGateId
   ) =>
     `/api/v1/projects/${projectId}/analysis-runs/${runId}/reviews/${gateId}/decisions`,
+  projectCastingCatalog: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/casting/catalog`,
+  projectCastingRuns: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/casting-runs`,
+  projectCastingRun: (
+    projectId: EntityId,
+    castingRunId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/casting-runs/${castingRunId}`,
+  projectCastingRunRoles: (
+    projectId: EntityId,
+    castingRunId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/casting-runs/${castingRunId}/roles`,
+  projectCastingRunCandidates: (
+    projectId: EntityId,
+    castingRunId: EntityId,
+    roleId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/casting-runs/${castingRunId}/roles/${roleId}/candidates`,
+  projectCastingRunConflicts: (
+    projectId: EntityId,
+    castingRunId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/casting-runs/${castingRunId}/conflicts`,
+  projectCastingRunAssignments: (
+    projectId: EntityId,
+    castingRunId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/casting-runs/${castingRunId}/assignments`,
+  projectCastingRunCorrections: (
+    projectId: EntityId,
+    castingRunId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/casting-runs/${castingRunId}/corrections`,
+  projectCastingRunReviews: (
+    projectId: EntityId,
+    castingRunId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/casting-runs/${castingRunId}/reviews`,
+  projectCastingRunReviewDecision: (
+    projectId: EntityId,
+    castingRunId: EntityId,
+    gateId: CastingGateId
+  ) =>
+    `/api/v1/projects/${projectId}/casting-runs/${castingRunId}/reviews/${gateId}/decisions`,
   dialogueSpeaker: (projectId: EntityId, lineId: EntityId) =>
     `/api/v1/projects/${projectId}/dialogue-lines/${lineId}/speaker`,
   projectJobs: (projectId: EntityId) =>

@@ -8,6 +8,9 @@ The installed application has three privilege tiers:
 2. **Preload** exposes a frozen, allow-listed, versioned API such as
    `projects.list`, `projects.importSelectedFile`, `analysis.createRun`,
    `analysis.listEntities`, `analysis.correct`, `analysis.decideReview`,
+   `casting.getCatalog`, `casting.createRun`, `casting.listRoles`,
+   `casting.listCandidates`, `casting.appendCorrection`,
+   `casting.decideReview`,
    `dialogue.correctSpeaker`, `jobs.cancel`, and typed event subscriptions.
 3. **React renderer** presents state. It has no Node.js globals, filesystem/process APIs, arbitrary IPC, service token, or direct service connection.
 
@@ -45,6 +48,17 @@ Phase 2 analysis IPC accepts only allow-listed collection, gate, correction,
 filter, cursor, revision, and fingerprint unions. Main validates the request
 and the bounded service response. There is no generic analysis route/path
 proxy, arbitrary JSON-patch method, or manuscript-text list response.
+
+Phase 3A casting IPC likewise has one named channel for catalog, run, role,
+candidate, conflict, assignment, correction, and review operations. Main and
+preload validate the exact contract version, project/run/role ownership,
+closed correction/gate unions, page/cursor bounds, catalog/snapshot/run/role/
+prior-effective fingerprints and revisions, explanation/warning limits, and
+bounded service response before forwarding it. Unknown keys, a stale or
+cross-project identity, an over-bound page/payload, and an unexpected response
+fail closed. There is no generic casting HTTP proxy, provider invocation,
+credential method, manuscript-text projection, audio method, playback, or
+waveform channel. See [voice casting architecture](voice-casting.md).
 
 For import, the renderer asks main to show a native picker with supported filters. Main opens the selected file safely, checks basic metadata, and streams it to the authenticated multipart endpoint. The service repeats authoritative validation. The renderer receives source metadata, not an authority to read the selected path.
 

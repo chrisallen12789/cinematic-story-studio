@@ -112,8 +112,8 @@ values, manuscript text, tokens, or absolute process paths. A fail-closed checkp
 before each potentially long stage and overwritten with the caught failure and post-cleanup state.
 The build-evidence generator validates this failed-result contract while keeping the packaged E2E
 failed and the overall evidence incomplete. It preserves a factual ownership-exit assertion only
-when both exact launches already proved clean exit, such as a later temporary-directory cleanup
-failure.
+when both exact launches already proved clean exit, such as a later evidence-generation or
+temporary-directory cleanup failure.
 
 A verification-harness failure is not automatically an application failure. For example, failure
 while CIM initializes before launch proves that the exact-artifact gate did not run; it does not

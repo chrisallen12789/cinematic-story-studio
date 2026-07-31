@@ -287,6 +287,117 @@ describe("desktop main active project session", () => {
       harness.dispose();
     }
   });
+
+  it("passes only bounded project-owned casting evidence through IPC", async () => {
+    const listCastingCandidates = vi.fn(async () => ({
+      items: [],
+      total: 0,
+      pageSize: 0
+    }));
+    const createCustomProductionRole = vi.fn(async () => ({
+      role: { roleId: "role-custom-a" },
+      run: {
+        castingRunId: "casting-run-a",
+        projectId: "project-a",
+        jobId: "job-casting-a"
+      },
+      reviews: []
+    }));
+    const api = {
+      openProject: vi.fn(async () =>
+        projectDetail("project-a", "job-project-a")
+      ),
+      listCastingCandidates,
+      createCustomProductionRole
+    } as unknown as BackendApiClient;
+    const harness = registerHarness(api, preferenceStore());
+    const request = {
+      projectId: "project-a",
+      runId: "casting-run-a",
+      expectedRunFingerprint: "a".repeat(64),
+      expectedCatalogRevisionId: "catalog-a",
+      expectedCatalogFingerprint: "b".repeat(64),
+      expectedSnapshotId: "snapshot-a",
+      expectedSnapshotRevision: 3,
+      expectedSnapshotFingerprint: "c".repeat(64),
+      roleId: "role-a",
+      expectedRoleRevision: 2,
+      limit: 12
+    };
+    const customRoleRequest = {
+      projectId: "project-a",
+      runId: "casting-run-a",
+      definitionId: "custom-role-a",
+      label: "Festival announcer",
+      performanceRequirements: {
+        language: "en",
+        locales: ["en-US"],
+        agePresentationRange: null,
+        vocalPresentations: ["neutral"],
+        preferredTextures: ["clear"],
+        speakingRateRange: null,
+        requiredExpressiveRange: ["authoritative"],
+        longFormRequired: false
+      },
+      reason: "Producer-defined role with no manuscript source.",
+      expectedRunFingerprint: "a".repeat(64),
+      expectedCatalogRevisionId: "catalog-a",
+      expectedCatalogFingerprint: "b".repeat(64),
+      expectedSnapshotId: "snapshot-a",
+      expectedSnapshotRevision: 3,
+      expectedSnapshotFingerprint: "c".repeat(64),
+      expectedCorrectionSetFingerprint: "d".repeat(64),
+      expectedCastingProfileFingerprint: "e".repeat(64),
+      idempotencyKey: "custom-role-create-1"
+    };
+
+    try {
+      await expect(
+        harness.invoke(IPC_CHANNELS.projectsOpen, {
+          projectId: "project-a"
+        })
+      ).resolves.toMatchObject({ ok: true });
+      await expect(
+        harness.invoke(IPC_CHANNELS.castingListCandidates, request)
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { total: 0, pageSize: 0 }
+      });
+      expect(listCastingCandidates).toHaveBeenCalledWith(request);
+      await expect(
+        harness.invoke(
+          IPC_CHANNELS.castingCreateCustomRole,
+          customRoleRequest
+        )
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { role: { roleId: "role-custom-a" } }
+      });
+      expect(createCustomProductionRole).toHaveBeenCalledWith(
+        customRoleRequest
+      );
+      await expect(
+        harness.invoke(IPC_CHANNELS.castingListCandidates, {
+          ...request,
+          projectId: "project-b"
+        })
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: "PROJECT_CONTEXT_MISMATCH" }
+      });
+      await expect(
+        harness.invoke(IPC_CHANNELS.castingListCandidates, {
+          ...request,
+          limit: 13
+        })
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: "INVALID_DESKTOP_REQUEST" }
+      });
+    } finally {
+      harness.dispose();
+    }
+  });
 });
 
 function preferenceStore(

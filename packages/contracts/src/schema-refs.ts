@@ -109,7 +109,53 @@ export const SCHEMA_REFS = {
   Phase2BuildEvidenceManifest:
     "https://schemas.cinematic-story-studio.dev/v2/phase-2-build-evidence-manifest.schema.json",
   Phase2PackagedE2eResult:
-    "https://schemas.cinematic-story-studio.dev/v2/phase-2-packaged-e2e-result.schema.json"
+    "https://schemas.cinematic-story-studio.dev/v2/phase-2-packaged-e2e-result.schema.json",
+  VoiceProviderDescriptor:
+    "https://schemas.cinematic-story-studio.dev/v3/voice-provider-descriptor.schema.json",
+  VoiceModelDescriptor:
+    "https://schemas.cinematic-story-studio.dev/v3/voice-model-descriptor.schema.json",
+  VoiceCapability:
+    "https://schemas.cinematic-story-studio.dev/v3/voice-capability.schema.json",
+  VoiceCatalogRevision:
+    "https://schemas.cinematic-story-studio.dev/v3/voice-catalog-revision.schema.json",
+  CastingVoiceProfile:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-voice-profile.schema.json",
+  VoiceRightsRecord:
+    "https://schemas.cinematic-story-studio.dev/v3/voice-rights-record.schema.json",
+  ProductionRole:
+    "https://schemas.cinematic-story-studio.dev/v3/production-role.schema.json",
+  NarratorRole:
+    "https://schemas.cinematic-story-studio.dev/v3/narrator-role.schema.json",
+  CharacterVoiceRole:
+    "https://schemas.cinematic-story-studio.dev/v3/character-voice-role.schema.json",
+  CustomProductionRole:
+    "https://schemas.cinematic-story-studio.dev/v3/custom-production-role.schema.json",
+  CastingProfile:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-profile.schema.json",
+  CastingRun:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-run.schema.json",
+  CastingCandidate:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-candidate.schema.json",
+  CastingCompatibilityAssessment:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-compatibility-assessment.schema.json",
+  CastingConflict:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-conflict.schema.json",
+  CastAssignment:
+    "https://schemas.cinematic-story-studio.dev/v3/cast-assignment.schema.json",
+  CastingCorrection:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-correction.schema.json",
+  CastingGateReview:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-gate-review.schema.json",
+  CastingReviewDecision:
+    "https://schemas.cinematic-story-studio.dev/v3/casting-review-decision.schema.json",
+  ApprovedCastSnapshot:
+    "https://schemas.cinematic-story-studio.dev/v3/approved-cast-snapshot.schema.json",
+  SyntheticVoiceCatalog:
+    "https://schemas.cinematic-story-studio.dev/v3/synthetic-voice-catalog.schema.json",
+  Phase3PackagedE2eResult:
+    "https://schemas.cinematic-story-studio.dev/v3/phase-3-packaged-e2e-result.schema.json",
+  Phase3BuildEvidenceManifest:
+    "https://schemas.cinematic-story-studio.dev/v3/phase-3-build-evidence-manifest.schema.json"
 } as const;
 
 export type PublicSchemaName = keyof typeof SCHEMA_REFS;

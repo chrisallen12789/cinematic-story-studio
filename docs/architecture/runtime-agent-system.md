@@ -61,6 +61,16 @@ Phase 2 expands story analysis into the controlled local subset documented in
 `analysis-synthesis`. They execute under this same envelope and do not create
 an independent orchestration authority.
 
+Phase 3A realizes the casting concept through
+`voice-casting-orchestrator@1.0.0`, a deterministic local producer inside the
+persisted `analyze_casting` job. It consumes only a fully approved exact Phase
+2 snapshot plus one immutable catalog/profile/correction input and emits typed
+production roles, bounded compatibility candidates, metadata-only conflicts,
+machine proposals, and a reviewable cast snapshot. It does not invoke a speech
+provider, model, network, credential store, synthesis, audio, or a review
+decision endpoint. Its candidate score has no assignment authority. See
+[voice casting architecture](voice-casting.md).
+
 ## Orchestration
 
 The orchestrator builds a versioned directed acyclic plan from registry definitions:
@@ -103,6 +113,15 @@ The first three Phase 2 gates are independently reviewable. All three are
 prerequisites only for `whole_book_analysis_review`. Historical terms such as
 “scene segmentation review” and “character review” are conceptual aliases, not
 persisted Phase 2 gate IDs.
+
+Phase 3A persists `narrator_casting_review`,
+`character_casting_review`, and `complete_cast_review` rather than the earlier
+generic `casting_approval` label. Complete Cast Review requires both current
+prerequisite decisions and current eligible assignment/rights/conflict
+evidence. It makes the exact cast eligible only for a separately implemented
+later phase and does not authorize or create speech/audio. Detailed
+invalidation and decision fields are in
+[approval gates](../agents/approval-gates.md).
 
 ## Human corrections and conflict handling
 

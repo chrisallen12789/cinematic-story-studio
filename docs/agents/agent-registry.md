@@ -69,6 +69,26 @@ an additive refinement of the existing governed model: no refined agent gains
 direct database/provider/tool authority, and later casting/audio agents remain
 disabled and out of scope.
 
+## Phase 3A casting subset
+
+Phase 3A implements the earlier Casting Director concept as the deterministic
+provider-neutral producer `voice-casting-orchestrator@1.0.0` under the durable
+`analyze_casting` job. Its accepted input is one exact approved Phase 2
+snapshot/correction/gate evidence set plus immutable catalog
+`synthetic-voice-catalog-v1@1.0.0` and governed profile
+`governed-voice-casting-v1@1.0.0`. Its typed output is production roles,
+bounded candidate compatibility assessments, metadata-only conflicts, machine
+assignment proposals, and a reviewable cast snapshot.
+
+The producer has no provider invocation, credential, network, model-download,
+synthesis, audio, database, or decision endpoint authority. The service
+orchestrator supplies frozen inputs and scoped cancellation/checkpoint ports,
+validates fingerprints and bounds, and publishes in one transaction. Human
+selections/locks are separate immutable corrections; narrator, character, and
+complete-cast decisions are separate human gates. The exact control envelope
+is in [voice casting architecture](../architecture/voice-casting.md) and
+[casting jobs and recovery](../architecture/casting-jobs-and-recovery.md).
+
 ## Confidence and warning rules
 
 Confidence is about the proposed output, not provider availability. Each score

@@ -93,6 +93,7 @@ async function testAll() {
       "tests/tooling/repository-policy.test.mjs",
       "tests/tooling/root-tooling.test.mjs",
       "tests/tooling/synthetic-fixture.test.mjs",
+      "tests/tooling/synthetic-voice-catalog.test.mjs",
     ],
     {
       cwd: repositoryRoot,

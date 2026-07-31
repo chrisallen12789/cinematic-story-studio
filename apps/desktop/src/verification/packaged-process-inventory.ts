@@ -354,17 +354,26 @@ export function adoptVerifiedProcessTree({
     if (
       containsStableProcessIdentity(baseline, item) ||
       containsStableProcessIdentity(result, item) ||
-      item.creationDate < root.creationDate ||
-      !matchesPackagedProcessPath(item, packaged)
+      item.creationDate < root.creationDate
     ) {
+      continue;
+    }
+    if (item.executablePath === null) {
+      throw new ProcessInventoryError(
+        "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        false
+      );
+    }
+    if (!matchesPackagedProcessPath(item, packaged)) {
       continue;
     }
     /*
      * A periodic inventory can miss a short-lived packaged intermediary. An
-     * exact-path descendant left behind by that intermediary would otherwise
-     * have an unknown parent and escape the owned set. Fail closed on every
-     * non-baseline exact packaged identity created during this launch window;
-     * callers never terminate identities that were not positively adopted.
+     * exact-path descendant left behind by that intermediary, or a relevant
+     * identity whose path CIM cannot expose, would otherwise escape the owned
+     * set. Fail closed on every such non-baseline identity created during the
+     * launch window; callers never terminate identities that were not
+     * positively adopted.
      */
     throw new ProcessInventoryError(
       "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",

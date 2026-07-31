@@ -7,6 +7,15 @@ versioned `VoiceProfile`. The profile records provider, voice id and version,
 local-or-cloud location, non-secret settings, usage-rights status, and a
 continuity key. Display names are not stable identity.
 
+Phase 3A is the planning prerequisite for that later production invariant. It
+permits explicit unresolved and intentionally-uncast roles during review and
+creates no synthesis settings or audio continuity record. A Phase 3A
+assignment pins project-independent profile version/fingerprint, provider/
+model/catalog identity, exact rights revision/fingerprint, role, Phase 2
+snapshot, casting profile, effective correction set, authority, and
+supersession. Complete Cast Review can approve only the current eligible cast
+evidence; its approval still does not authorize synthesis in Phase 3A.
+
 Human casting, pronunciation, and speaker corrections are authoritative,
 append-only, and locked against automation. An agent may flag a conflict or
 propose an alternative; it cannot silently recast a character, reassign a line,
@@ -36,6 +45,14 @@ the synthesis cache key. A cache hit is valid only when every component matches.
 Provider fallback is not automatic recasting. If an approved voice is
 unavailable, pause the affected work and offer retry or explicit human
 recasting. Never substitute a “similar” voice and continue.
+
+Phase 3A differentiation warnings use declared metadata only. They neither
+create an acoustic continuity key nor claim that two voices sound alike. A
+selected voice/profile/provider/model/rights change appends durable
+invalidation evidence for the affected assignment and its dependent reviews;
+catalog reversion does not silently reactivate it. An unrelated catalog change
+must not invalidate an unchanged pinned assignment or its independent
+role-gate approval.
 
 Cloud synthesis requires the project's explicit transmission authorization and
 provider disclosure. Credentials do not belong in profiles, manifests, logs, or

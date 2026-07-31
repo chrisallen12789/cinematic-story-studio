@@ -140,3 +140,26 @@ per-entity or per-later-agent partial resume is claimed. Only the final
 validated synthesis transaction may publish a reviewable snapshot; failure,
 cancellation, interruption, or stale input leaves the prior effective snapshot
 unchanged.
+
+Phase 3A adds the persisted `analyze_casting` job. Its frozen input binds the
+current approved Import Review and four Phase 2 gate decisions, source/
+extraction identity, Phase 2 run/snapshot/correction-set/character-registry
+fingerprints, voice-catalog revision/fingerprint, casting profile fingerprint,
+producer, and target casting-run ID. Its exact stages are:
+
+`validate_phase_2_approvals`, `freeze_source_analysis_evidence`,
+`load_voice_catalog_revision`, `create_production_roles`,
+`evaluate_role_constraints`, `generate_bounded_candidates`,
+`evaluate_differentiation_conflicts`, `publish_casting_run`, and
+`publish_reviewable_cast_snapshot`.
+
+Version 1 writes a bounded `voice_casting` result checkpoint after role,
+candidate, and conflict evaluation. Resume rechecks its schema, input revision
+and fingerprint, producer/profile, and catalog. Final publication atomically
+writes the validated run projections, reviewable cast snapshot, and pending
+casting reviews before marking success. Cancellation, failure, interruption,
+or stale evidence leaves the prior effective cast unchanged. Job events expose
+only states, stages, counts, progress, IDs, and redacted codes—never manuscript
+text, candidate rationale, correction values, rights documents, provider
+payloads, or credentials. See
+[casting jobs, recovery, and scale](casting-jobs-and-recovery.md).

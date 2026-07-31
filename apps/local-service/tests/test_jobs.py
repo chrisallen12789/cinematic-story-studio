@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import hashlib
+import sqlite3
 import sys
 import threading
 import time
@@ -12,6 +13,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from cinematic_story_service import ServiceSettings, create_app
@@ -1629,6 +1631,48 @@ def test_worker_stop_timeout_retains_live_thread_and_storage_ownership(
         app.state.worker.stop(timeout=5)
     assert app.state.worker._thread is None
     assert app.state.jobs.get_job(job["jobId"])["state"] == "interrupted"
+
+
+def test_worker_retries_transient_sqlite_claim_contention(tmp_path: Path) -> None:
+    claimed_after_contention = threading.Event()
+
+    class TransientContentionJobs:
+        def __init__(self) -> None:
+            self.claim_attempts = 0
+
+        def settle_pending_cancellation(self) -> bool:
+            return False
+
+        def claim_next(self) -> None:
+            self.claim_attempts += 1
+            if self.claim_attempts == 1:
+                raise OperationalError(
+                    "UPDATE jobs",
+                    {},
+                    sqlite3.OperationalError("database is locked"),
+                )
+            claimed_after_contention.set()
+            return None
+
+    jobs = TransientContentionJobs()
+    worker = JobWorker(
+        ServiceSettings(
+            data_dir=tmp_path / "transient-worker-contention",
+            bearer_token=TOKEN,
+            worker_poll_seconds=0.001,
+        ),
+        jobs,  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+    )
+    worker.start()
+    try:
+        assert claimed_after_contention.wait(timeout=2)
+        assert jobs.claim_attempts >= 2
+        worker_thread = worker._thread
+        assert worker_thread is not None
+        assert worker_thread.is_alive()
+    finally:
+        worker.stop()
 
 
 def test_incompatible_checkpoint_remains_inspectable_and_cannot_resume(

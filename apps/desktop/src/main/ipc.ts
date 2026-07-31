@@ -13,6 +13,7 @@ import type {
   ProjectDetail
 } from "@cinematic-story-studio/contracts/api";
 import type { StoryAnalysisRun } from "@cinematic-story-studio/contracts";
+import type { CastingRun } from "../shared/casting-api.js";
 
 import {
   IPC_CHANNELS,
@@ -33,6 +34,21 @@ import {
   parseListAnalysisReviewsRequest,
   parseListAnalysisRunsRequest
 } from "./analysis-validation.js";
+import {
+  parseAppendCastingCorrectionRequest,
+  parseCastingRunRequest,
+  parseCreateCastingRunRequest,
+  parseCreateCustomProductionRoleRequest,
+  parseDecideCastingReviewRequest,
+  parseListCastAssignmentsRequest,
+  parseListCastingCandidatesRequest,
+  parseListCastingConflictsRequest,
+  parseListCastingCorrectionsRequest,
+  parseListCastingReviewsRequest,
+  parseListCastingRunsRequest,
+  parseListProductionRolesRequest,
+  parseListVoiceCatalogRequest
+} from "./casting-validation.js";
 import { DesktopMainError } from "./errors.js";
 import type { PreferenceStore } from "./preferences.js";
 import type { ServiceManager } from "./service-manager.js";
@@ -246,6 +262,132 @@ export function registerDesktopIpc(options: DesktopIpcOptions): () => void {
       projectSession,
       request.payload.projectId,
       () => options.api.decideAnalysisReview(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingGetCatalog, async (raw) => {
+    const request = parseListVoiceCatalogRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.getVoiceCatalog(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingCreateRun, async (raw) => {
+    const request = parseCreateCastingRunRequest(raw);
+    const response = await forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.createCastingRun(request.payload)
+    );
+    projectSession.rememberJob(response.job);
+    projectSession.rememberCastingRun(response.run);
+    return response;
+  });
+
+  register(IPC_CHANNELS.castingListRuns, async (raw) => {
+    const request = parseListCastingRunsRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listCastingRuns(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingGetRun, async (raw) => {
+    const request = parseCastingRunRequest(raw);
+    const response = await forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.getCastingRun(request.payload)
+    );
+    projectSession.rememberCastingRun(response.run);
+    return response;
+  });
+
+  register(IPC_CHANNELS.castingListRoles, async (raw) => {
+    const request = parseListProductionRolesRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listProductionRoles(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingCreateCustomRole, async (raw) => {
+    const request = parseCreateCustomProductionRoleRequest(raw);
+    const response = await forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.createCustomProductionRole(request.payload)
+    );
+    projectSession.rememberCastingRun(response.run);
+    return response;
+  });
+
+  register(IPC_CHANNELS.castingListCandidates, async (raw) => {
+    const request = parseListCastingCandidatesRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listCastingCandidates(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingListConflicts, async (raw) => {
+    const request = parseListCastingConflictsRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listCastingConflicts(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingListAssignments, async (raw) => {
+    const request = parseListCastAssignmentsRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listCastAssignments(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingListCorrections, async (raw) => {
+    const request = parseListCastingCorrectionsRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listCastingCorrections(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingAppendCorrection, async (raw) => {
+    const request = parseAppendCastingCorrectionRequest(raw);
+    const response = await forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.appendCastingCorrection(request.payload)
+    );
+    projectSession.rememberCastingRun(response.run);
+    return response;
+  });
+
+  register(IPC_CHANNELS.castingListReviews, async (raw) => {
+    const request = parseListCastingReviewsRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listCastingReviews(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.castingDecideReview, async (raw) => {
+    const request = parseDecideCastingReviewRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.decideCastingReview(request.payload)
     );
   });
 
@@ -515,6 +657,27 @@ export class ActiveProjectSession {
       );
     }
     this.#jobs.set(run.jobId, expected);
+  }
+
+  rememberCastingRun(run: CastingRun): void {
+    this.assertJobProject(run.projectId);
+    const known = this.#jobs.get(run.jobId);
+    if (
+      known !== undefined &&
+      (known.jobId !== run.jobId || known.projectId !== run.projectId)
+    ) {
+      throw new DesktopMainError(
+        "PROJECT_CONTEXT_MISMATCH",
+        "The casting run and job projection are inconsistent.",
+        false
+      );
+    }
+    if (known === undefined) {
+      this.#jobs.set(run.jobId, {
+        jobId: run.jobId,
+        projectId: run.projectId
+      });
+    }
   }
 
   captureKnownJob(jobId: string): {

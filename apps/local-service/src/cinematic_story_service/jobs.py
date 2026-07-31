@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -7,10 +8,20 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import case, delete, func, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from .analysis import analyze_story, validate_analysis_entity_limit
+from .casting import (
+    CASTING_JOB_STAGES,
+    CASTING_PRODUCER_ID,
+    CASTING_PROFILE_FINGERPRINT,
+    MAX_CASTING_CHECKPOINT_BYTES,
+    generate_candidates,
+    production_roles,
+    validate_casting_result,
+)
+from .casting_repository import CastingRepository
 from .config import ServiceSettings
 from .database import Database
 from .document_ingest import (
@@ -61,12 +72,24 @@ from .whole_book_analysis import (
 _PROGRESS_SCALE = 1_000_000
 _ACTIVE_STATES = {"queued", "running", "cancel_requested"}
 _ACTIVE_JOB_SCOPE = "active_job"
+_MAX_JOB_ATTEMPTS = 3
 _EXTRACTION_PRODUCER_VERSION = f"document-ingest@{INGEST_CONTRACT_VERSION}"
 _EXTRACTION_TARGET_TYPE = "document_extraction"
 _ANALYSIS_RUN_TARGET_TYPE = "analysis_run"
+_CASTING_RUN_TARGET_TYPE = "casting_run"
 _WHOLE_BOOK_CHECKPOINT_SCHEMA_VERSION = 2
+_CASTING_CHECKPOINT_SCHEMA_VERSION = 1
 # Keep a bounded scheduling/unwind margin above SQLite's five-second lock wait.
 _WORKER_STOP_TIMEOUT_SECONDS = 15.0
+
+
+def _is_transient_sqlite_contention(error: OperationalError) -> bool:
+    if not isinstance(error.orig, sqlite3.OperationalError):
+        return False
+    message = str(error.orig).casefold()
+    return "locked" in message or "busy" in message
+
+
 WHOLE_BOOK_JOB_STAGES = (
     "validate_approved_input",
     "initialize_run",
@@ -175,6 +198,7 @@ class JobRepository:
         instance_id: str,
         parser_deadline_seconds: float = PARSER_DEADLINE_SECONDS,
         story_intelligence: StoryIntelligenceRepository | None = None,
+        casting: CastingRepository | None = None,
     ) -> None:
         self.database = database
         self.projects = projects
@@ -182,6 +206,7 @@ class JobRepository:
             database,
             projects,
         )
+        self.casting = casting
         self.instance_id = instance_id
         self.parser_deadline_seconds = parser_deadline_seconds
 
@@ -197,12 +222,16 @@ class JobRepository:
             return _EXTRACTION_PRODUCER_VERSION
         if job_type == "analyze_whole_book":
             return ANALYSIS_PRODUCER_VERSION
+        if job_type == "analyze_casting":
+            return CASTING_PRODUCER_ID
         return ANALYZER_VERSION
 
     @staticmethod
     def _checkpoint_contract(job_type: str) -> tuple[str, int]:
         if job_type == "analyze_whole_book":
             return "whole_book_analysis", _WHOLE_BOOK_CHECKPOINT_SCHEMA_VERSION
+        if job_type == "analyze_casting":
+            return "voice_casting", _CASTING_CHECKPOINT_SCHEMA_VERSION
         return "analysis_projection", CHECKPOINT_SCHEMA_VERSION
 
     @staticmethod
@@ -362,6 +391,12 @@ class JobRepository:
                     error_retryable=True,
                     finished_at=now,
                 )
+                if self.casting is not None:
+                    self.casting.mark_job_terminal(
+                        session,
+                        job=job,
+                        state="interrupted",
+                    )
                 self._append_event(
                     session,
                     job,
@@ -644,10 +679,7 @@ class JobRepository:
                         latest_correction_recorded_at.replace("Z", "+00:00")
                     )
                     now = (
-                        (
-                            latest_instant.astimezone(UTC)
-                            + timedelta(milliseconds=1)
-                        )
+                        (latest_instant.astimezone(UTC) + timedelta(milliseconds=1))
                         .isoformat(timespec="milliseconds")
                         .replace("+00:00", "Z")
                     )
@@ -1029,6 +1061,16 @@ class JobRepository:
                     "This job is not in a recoverable failed state.",
                     details={"state": job.state},
                 )
+            if job.current_attempt >= _MAX_JOB_ATTEMPTS:
+                raise ServiceError(
+                    409,
+                    "JOB_RETRY_EXHAUSTED",
+                    "This job has reached its maximum retry attempts.",
+                    details={
+                        "attempt": job.current_attempt,
+                        "maxAttempts": _MAX_JOB_ATTEMPTS,
+                    },
+                )
             active = self._active_conflict(
                 session,
                 project_id=job.project_id,
@@ -1053,12 +1095,14 @@ class JobRepository:
                 resume=False,
                 stage="queued_for_retry",
                 require_retryable=True,
+                maximum_attempts=_MAX_JOB_ATTEMPTS,
             )
             if queued is None:
                 raise ServiceError(
                     409,
-                    "JOB_STATE_CONFLICT",
-                    "This job is not in a recoverable failed state.",
+                    "JOB_RETRY_EXHAUSTED",
+                    "This job changed state or reached its maximum retry attempts.",
+                    details={"maxAttempts": _MAX_JOB_ATTEMPTS},
                 )
             return job_dict(queued)
 
@@ -1158,6 +1202,7 @@ class JobRepository:
         resume: bool,
         stage: str,
         require_retryable: bool = False,
+        maximum_attempts: int | None = None,
     ) -> JobRow | None:
         now = utc_now()
         conditions = [
@@ -1167,6 +1212,8 @@ class JobRepository:
         ]
         if require_retryable:
             conditions.append(JobRow.error_retryable.is_(True))
+        if maximum_attempts is not None:
+            conditions.append(JobRow.current_attempt < maximum_attempts)
         transitioned = session.execute(
             update(JobRow)
             .where(*conditions)
@@ -1276,6 +1323,12 @@ class JobRepository:
                     )
                     if source is not None and source.project_id == job.project_id:
                         source.extraction_status = "running"
+            if self.casting is not None and job.type == "analyze_casting":
+                self.casting.mark_job_terminal(
+                    session,
+                    job=job,
+                    state="running",
+                )
             self._append_event(
                 session,
                 job,
@@ -1353,18 +1406,23 @@ class JobRepository:
 
     def save_checkpoint(self, job_id: str, payload: dict[str, Any]) -> bool:
         payload_json = canonical_json(payload)
-        if len(payload_json.encode()) > MAX_WHOLE_BOOK_CHECKPOINT_BYTES:
-            raise ServiceError(
-                422,
-                "CHECKPOINT_LIMIT_EXCEEDED",
-                "The analysis checkpoint exceeded its durable size limit.",
-            )
         payload_sha256 = sha256_text(payload_json)
         with self.database.session() as session:
             self._begin_immediate(session)
             job = session.get(JobRow, job_id)
             if job is None:
                 return False
+            checkpoint_limit = (
+                MAX_CASTING_CHECKPOINT_BYTES
+                if job.type == "analyze_casting"
+                else MAX_WHOLE_BOOK_CHECKPOINT_BYTES
+            )
+            if len(payload_json.encode()) > checkpoint_limit:
+                raise ServiceError(
+                    422,
+                    "CHECKPOINT_LIMIT_EXCEEDED",
+                    "The job checkpoint exceeded its durable size limit.",
+                )
             if job.state == "cancel_requested" or job.cancellation_requested:
                 self._finish_cancelled(session, job.id)
                 return False
@@ -1916,6 +1974,80 @@ class JobRepository:
             self._release_active_key(session, job)
             return True
 
+    def publish_casting_and_finish(
+        self,
+        job_id: str,
+        *,
+        result: dict[str, Any],
+        after_write_claim: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Atomically publish a governed casting run and its review snapshot."""
+
+        if self.casting is None:
+            raise ServiceError(
+                500,
+                "CASTING_REPOSITORY_UNAVAILABLE",
+                "The governed casting repository is unavailable.",
+            )
+        with self.database.session() as session:
+            write_claim = session.execute(
+                update(JobRow)
+                .where(
+                    JobRow.id == job_id,
+                    JobRow.type == "analyze_casting",
+                    JobRow.target_type == _CASTING_RUN_TARGET_TYPE,
+                    JobRow.state == "running",
+                    JobRow.cancellation_requested.is_(False),
+                )
+                .values(updated_at=JobRow.updated_at)
+                .returning(JobRow.id)
+                .execution_options(synchronize_session=False)
+            )
+            if write_claim.scalar_one_or_none() is None:
+                job = session.get(JobRow, job_id, populate_existing=True)
+                if job is not None and (
+                    job.state == "cancel_requested" or job.cancellation_requested
+                ):
+                    self._finish_cancelled(session, job.id)
+                return False
+            if after_write_claim is not None and not after_write_claim():
+                return False
+            job = session.get(JobRow, job_id)
+            if job is None:
+                return False
+            self.casting.publish_result(
+                session=session,
+                job=job,
+                result=result,
+            )
+            now = utc_now()
+            job.state = "succeeded"
+            job.stage = "complete"
+            job.progress = _PROGRESS_SCALE
+            job.cancellation_requested = False
+            job.resume_requested = False
+            job.updated_at = now
+            job.terminal_at = now
+            attempt = session.get(
+                JobAttemptRow,
+                {"job_id": job.id, "number": job.current_attempt},
+            )
+            if attempt is not None:
+                attempt.ended_at = now
+                attempt.outcome = "succeeded"
+            self._append_event(
+                session,
+                job,
+                event_type="completed",
+                state="succeeded",
+                stage="complete",
+                progress=_PROGRESS_SCALE,
+                completed_units=len(CASTING_JOB_STAGES),
+                total_units=len(CASTING_JOB_STAGES),
+            )
+            self._release_active_key(session, job)
+            return True
+
     def finish_failed(
         self,
         job_id: str,
@@ -1979,6 +2111,12 @@ class JobRepository:
                 error_retryable=retryable,
                 finished_at=now,
             )
+            if self.casting is not None:
+                self.casting.mark_job_terminal(
+                    session,
+                    job=job,
+                    state="failed",
+                )
             self._append_event(
                 session,
                 job,
@@ -2042,6 +2180,12 @@ class JobRepository:
                 error_retryable=True,
                 finished_at=now,
             )
+            if self.casting is not None:
+                self.casting.mark_job_terminal(
+                    session,
+                    job=job,
+                    state="interrupted",
+                )
             self._append_event(
                 session,
                 job,
@@ -2098,6 +2242,12 @@ class JobRepository:
             error_retryable=False,
             finished_at=now,
         )
+        if self.casting is not None:
+            self.casting.mark_job_terminal(
+                session,
+                job=job,
+                state="cancelled",
+            )
         self._append_event(
             session,
             job,
@@ -2270,13 +2420,20 @@ class JobWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            if self.jobs.settle_pending_cancellation():
+            try:
+                if self.jobs.settle_pending_cancellation():
+                    continue
+                if not self.controls.claim_gate.wait(self.settings.worker_poll_seconds):
+                    continue
+                if self._stop.is_set():
+                    break
+                claimed = self.jobs.claim_next()
+            except OperationalError as error:
+                if not _is_transient_sqlite_contention(error):
+                    raise
+                self._wake.wait(self.settings.worker_poll_seconds)
+                self._wake.clear()
                 continue
-            if not self.controls.claim_gate.wait(self.settings.worker_poll_seconds):
-                continue
-            if self._stop.is_set():
-                break
-            claimed = self.jobs.claim_next()
             if claimed is None:
                 self._wake.wait(self.settings.worker_poll_seconds)
                 self._wake.clear()
@@ -2289,6 +2446,8 @@ class JobWorker:
                     self._run_analysis(claimed)
                 elif claimed["type"] == "analyze_whole_book":
                     self._run_whole_book_analysis(claimed)
+                elif claimed["type"] == "analyze_casting":
+                    self._run_casting(claimed)
                 else:
                     self.jobs.finish_failed(
                         claimed["jobId"],
@@ -2739,6 +2898,174 @@ class JobWorker:
                 job_id,
                 code="ANALYSIS_FAILED",
                 message="Whole-book analysis could not be completed safely.",
+                retryable=True,
+            )
+
+    def _run_casting(self, claimed: dict[str, Any]) -> None:
+        job_id = claimed["jobId"]
+        target = claimed.get("target")
+        try:
+            if self.jobs.casting is None:
+                raise ServiceError(
+                    500,
+                    "CASTING_REPOSITORY_UNAVAILABLE",
+                    "The governed casting repository is unavailable.",
+                    retryable=False,
+                )
+            if (
+                not isinstance(target, dict)
+                or target.get("type") != _CASTING_RUN_TARGET_TYPE
+                or not isinstance(target.get("id"), str)
+            ):
+                raise ServiceError(
+                    409,
+                    "CASTING_RUN_INPUT_INVALID",
+                    "The frozen casting target is invalid.",
+                    retryable=False,
+                )
+            if not self._wait_at_boundary(self.controls.execution_gate, job_id):
+                return
+            run_id = str(target["id"])
+            run, entities = self.jobs.casting.load_run_input(
+                run_id=run_id,
+                job_id=job_id,
+            )
+            if (
+                run.input_fingerprint != claimed["inputFingerprint"]
+                or run.analysis_snapshot_revision != claimed["inputRevision"]
+                or run.catalog_fingerprint != self.jobs.casting.catalog.fingerprint
+                or run.casting_profile_fingerprint != CASTING_PROFILE_FINGERPRINT
+            ):
+                raise ServiceError(
+                    409,
+                    "CASTING_RUN_INPUT_CHANGED",
+                    "The frozen casting evidence changed.",
+                    retryable=False,
+                )
+            for ordinal, stage in enumerate(CASTING_JOB_STAGES[:5]):
+                if not self.jobs.update_progress(
+                    job_id,
+                    stage=stage,
+                    progress=0.08 + (ordinal * 0.08),
+                    completed_units=ordinal,
+                    total_units=len(CASTING_JOB_STAGES),
+                ):
+                    return
+                if not self._continue_after_bounded_work(job_id):
+                    return
+
+            result = self.jobs.load_resume_checkpoint(job_id)
+            if result is None:
+                roles = production_roles(
+                    project_id=run.project_id,
+                    casting_evidence_fingerprint=run.input_fingerprint,
+                    analysis_run_id=run.analysis_run_id,
+                    snapshot_id=run.analysis_snapshot_id,
+                    snapshot_fingerprint=run.analysis_snapshot_fingerprint,
+                    entities=entities,
+                )
+                if not self.jobs.update_progress(
+                    job_id,
+                    stage=CASTING_JOB_STAGES[5],
+                    progress=0.56,
+                    completed_units=5,
+                    total_units=len(CASTING_JOB_STAGES),
+                ):
+                    return
+                if not self._continue_after_bounded_work(job_id):
+                    return
+                candidates, conflicts = generate_candidates(
+                    roles=roles,
+                    catalog=self.jobs.casting.catalog,
+                    input_fingerprint=run.input_fingerprint,
+                )
+                if not self.jobs.update_progress(
+                    job_id,
+                    stage=CASTING_JOB_STAGES[6],
+                    progress=0.68,
+                    completed_units=6,
+                    total_units=len(CASTING_JOB_STAGES),
+                ):
+                    return
+                result_values: dict[str, Any] = {
+                    "contractVersion": "3.0.0",
+                    "castingRunId": run.id,
+                    "inputFingerprint": run.input_fingerprint,
+                    "catalogRevisionId": self.jobs.casting.catalog.revision_id,
+                    "catalogFingerprint": run.catalog_fingerprint,
+                    "castingProfileFingerprint": (run.casting_profile_fingerprint),
+                    "stages": list(CASTING_JOB_STAGES),
+                    "roles": roles,
+                    "candidates": candidates,
+                    "conflicts": conflicts,
+                }
+                result = result_values | {"outputFingerprint": request_fingerprint(result_values)}
+                validate_casting_result(
+                    result,
+                    expected_input_fingerprint=run.input_fingerprint,
+                    expected_catalog_fingerprint=run.catalog_fingerprint,
+                    expected_profile_fingerprint=(run.casting_profile_fingerprint),
+                )
+                if not self.jobs.save_checkpoint(job_id, result):
+                    return
+            else:
+                validate_casting_result(
+                    result,
+                    expected_input_fingerprint=run.input_fingerprint,
+                    expected_catalog_fingerprint=run.catalog_fingerprint,
+                    expected_profile_fingerprint=(run.casting_profile_fingerprint),
+                )
+            if not self._wait_after_checkpoint_boundary(job_id):
+                return
+            if self._consume_injected_failure():
+                self.jobs.finish_failed(
+                    job_id,
+                    code="CASTING_FAILED",
+                    message="Voice casting could not be completed safely.",
+                    retryable=True,
+                )
+                return
+            if not self.jobs.update_progress(
+                job_id,
+                stage=CASTING_JOB_STAGES[7],
+                progress=0.88,
+                completed_units=7,
+                total_units=len(CASTING_JOB_STAGES),
+            ):
+                return
+            if not self.jobs.update_progress(
+                job_id,
+                stage=CASTING_JOB_STAGES[8],
+                progress=0.94,
+                completed_units=8,
+                total_units=len(CASTING_JOB_STAGES),
+            ):
+                return
+            if not self._wait_at_boundary(
+                self.controls.before_publication_gate,
+                job_id,
+            ):
+                return
+            self.controls.publication_claimed.clear()
+            published = self.jobs.publish_casting_and_finish(
+                job_id,
+                result=result,
+                after_write_claim=self._wait_after_publication_claim,
+            )
+            if not published and self._stop.is_set():
+                self.jobs.interrupt_active(job_id)
+        except ServiceError as exc:
+            self.jobs.finish_failed(
+                job_id,
+                code=exc.code,
+                message="Voice casting could not be completed safely.",
+                retryable=exc.retryable,
+            )
+        except Exception:
+            self.jobs.finish_failed(
+                job_id,
+                code="CASTING_FAILED",
+                message="Voice casting could not be completed safely.",
                 retryable=True,
             )
 

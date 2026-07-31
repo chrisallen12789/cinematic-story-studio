@@ -42,6 +42,24 @@ Provider secrets are set/read/delete through Windows Credential Manager (or an e
 
 Cloud adapters default disabled. Before story text/audio/metadata leaves the machine, a durable decision records provider, destination class, content category, purpose/scope, policy/retention link shown, project, actor, and time. Only minimum approved data is transmitted. Health checks send no content. Consent is renewed for a changed provider/category/purpose/policy and can be revoked.
 
+## Phase 3A voice catalog and rights
+
+Phase 3A composes only a repository-owned fictional catalog. Provider/model
+descriptors are metadata, not invocation authority: synthesis is false, the
+cloud-capable fixture remains disabled, and there is no transport, SDK,
+credential operation, model download, voice sample, biometric feature, or
+manuscript-bearing request.
+
+Every candidate binds a revisioned rights record. Unknown and prohibited
+rights fail final approval; restricted rights require an explicit human
+acknowledgement against the exact record/revision and warning. That
+acknowledgement records review but does not grant rights or claim legal
+certainty. Selected voice/profile/rights fingerprints flow into assignments,
+cast snapshots, and approval evidence so an affected change becomes
+non-current without deleting history. Declared presentation and similarity
+metadata are not facts about a person or acoustic claims. See
+[voice rights, consent, and casting threat model](../security/voice-rights-and-consent.md).
+
 ## File, path, process, and network controls
 
 - Native picker selection is streamed; the service never accepts a renderer-controlled arbitrary read path.
@@ -49,6 +67,11 @@ Cloud adapters default disabled. Before story text/audio/metadata leaves the mac
 - Imports and provider/tool artifacts enter unique restrictive staging, are validated/hashes checked, and publish atomically.
 - The import boundary applies its separately named source-size ceiling, then document adapters apply the fixed `secure-ingest-v1` archive/text/section/page/deadline/process-memory profile. Each extraction runs in a spawned child with bounded typed IPC. On Windows, a named Job Object applies kill-on-close ownership and a 768 MiB per-process ceiling to the launcher and actual parser target. Adapters disable XML entity/network/DTD behavior, never execute document active content, and never fetch EPUB/PDF references. This is not a low-integrity process or an OS-enforced outbound-network sandbox. See the [document ingest threat model](../security/document-ingest-threat-model.md).
 - Downloads/models, if later supported, require explicit action, size/hash/signature/license metadata, safe staging, and cancellation. CI never downloads large models.
+- Casting APIs and IPC are authenticated, project-scoped, strictly validated,
+  paginated, and fingerprint/revision conditioned. List responses contain no
+  manuscript text; logs, job events, diagnostics, and build evidence omit
+  candidate rationale, correction values, rights documents, real-person data,
+  and personal paths.
 - FFmpeg and local runtimes are invoked only through reviewed wrappers with safe arrays, resource bounds, sanitized output, and verified owned-process termination.
 - No inbound listener other than authenticated loopback. Outbound network is adapter-specific, policy-gated, TLS-validated, and destination allow-listed where practical.
 

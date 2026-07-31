@@ -204,7 +204,10 @@ gates whose enumerated evidence fingerprint changed. A rerun never reapproves
 itself.
 
 Later casting eligibility requires all relevant current gates to be approved,
-but casting and voice work remain outside Phase 2.
+but casting and voice work remain outside Phase 2. Phase 3A consumes those
+approvals only through the exact frozen prerequisite contract documented in
+[voice catalog and casting architecture](voice-casting.md); it does not weaken
+or retroactively extend Phase 2 authority.
 
 ## Detailed governed models
 

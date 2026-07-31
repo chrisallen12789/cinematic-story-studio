@@ -34,6 +34,53 @@ Executables/native modules that cannot run inside ASAR are unpacked into immutab
 
 No signing key, provider credential, source fixture beyond synthetic content, database, model, audio, or personal path enters an artifact. Build/test scripts do not download large models.
 
+## Phase 3A exact-artifact gate
+
+The Windows CI verification artifact remains the unpacked application, not an
+installer or release. After `pnpm build`, the mandatory packaged E2E launches
+the exact
+`apps/desktop/release/<version>/win-unpacked/Cinematic Story Studio.exe` with
+isolated `APPDATA`, `LOCALAPPDATA`, `TEMP`, and `TMP`. It completes the public
+synthetic import and Phase 2 reviews, creates and approves a governed cast,
+closes, relaunches the same executable, and restores all Phase 0-3A evidence.
+
+The test establishes Electron and service ownership from the launched process
+identity, creation identity, ancestry, and owned-service handshake. It records
+only PIDs created by the test, terminates no unrelated process, and fails
+safely if ownership is ambiguous. On each close it requires the exact Electron
+launcher to exit with code `0`, confirms two inventories in which every owned
+PID is absent, and reads a bounded sidecar written beneath the isolated
+`userData` directory by Electron main. That sidecar must bind the direct-child
+service PID to a ServiceManager stdin-EOF shutdown with exit code `0`, no
+signal, and `forceKillUsed=false`. Both closes must end with no forced or
+remaining owned PID.
+
+The generated manifest records the workflow head, runner/time, relative paths,
+sizes and SHA-256 for the application and staged/embedded service, exact
+staged/embedded equality, Phase 2 prerequisites, Phase 3A
+profile/catalog/provider/model/rights identities, role/candidate/conflict/
+assignment/correction/gate/restart assertions, and process exit proof. It and
+the screenshot/result are short-lived workflow artifacts only. See
+[Phase 3A verification](../evidence/phase-3a-verification.md).
+
+Artifact upload is conditional on the packaged E2E succeeding, build-evidence
+generation and schema validation succeeding, the post-build tracked-content
+rescan succeeding, the clean-tree check succeeding, and a final manifest
+revalidation proving that the exact application and evidence bytes did not
+change after the initial validation. Upload paths are scoped to the validated
+application version and the exact staged service executable.
+Failure of any gate prevents upload; an archive is not presented as evidence
+for a partially verified build.
+
+The workflow is `Phase 3A Windows CI`; uploaded artifact names begin
+`cinematic-story-studio-phase-3a-windows-unpacked-`. The build manifest is
+schema `4.0.0`, retains the top-level Phase 2 `packagedE2e` schema `4.0.0`,
+and adds `voiceCastingContract.packagedE2e` for the Phase 3A result schema
+`5.0.0`. The runner and evidence generator write
+`phase-3-packaged-e2e-result.json` and
+`phase-3-voice-casting-evidence.json` only to their CI-provided generated
+paths; neither file is committed.
+
 ## Install and launch behavior
 
 The NSIS target is initially per-user install without elevation unless a reviewed requirement demands otherwise. It creates Start-menu entries and offers a desktop shortcut. Launch has no console window and needs no PowerShell, Python, Node, Docker, FastAPI, FFmpeg, or manual port configuration from the user.

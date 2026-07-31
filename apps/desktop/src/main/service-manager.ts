@@ -59,6 +59,24 @@ export interface ServiceManagerDependencies {
   readonly forcedTerminationTimeoutMs: number;
 }
 
+export type ServiceTerminationMethod =
+  | "already_exited"
+  | "stdin_eof"
+  | "force_kill";
+
+export interface ServiceProcessTermination {
+  readonly pid: number;
+  readonly method: ServiceTerminationMethod;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+}
+
+export interface ServiceStopResult {
+  readonly processes: readonly ServiceProcessTermination[];
+  readonly forceKillUsed: boolean;
+  readonly allProcessesExitedGracefully: boolean;
+}
+
 class ServiceStartCancelledError extends DesktopMainError {
   constructor() {
     super(
@@ -74,8 +92,11 @@ export class ServiceManager {
   readonly #expectedExits = new WeakSet<ChildProcessWithoutNullStreams>();
   readonly #terminationPromises = new WeakMap<
     ChildProcessWithoutNullStreams,
-    Promise<void>
+    Promise<ServiceProcessTermination>
   >();
+  readonly #recordedTerminations =
+    new WeakSet<ChildProcessWithoutNullStreams>();
+  readonly #terminationHistory: ServiceProcessTermination[] = [];
   readonly #dependencies: ServiceManagerDependencies;
   readonly #options: ServiceManagerOptions;
   #snapshot: BackendSnapshot = createSnapshot(
@@ -86,7 +107,7 @@ export class ServiceManager {
   #credentials: ServiceCredentials | null = null;
   #startPromise: Promise<BackendSnapshot> | null = null;
   #startAbortController: AbortController | null = null;
-  #stopPromise: Promise<void> | null = null;
+  #stopPromise: Promise<ServiceStopResult> | null = null;
   #healthTimer: NodeJS.Timeout | null = null;
   #restartTimer: NodeJS.Timeout | null = null;
   #restartHistory: number[] = [];
@@ -189,7 +210,7 @@ export class ServiceManager {
     return this.start();
   }
 
-  async stop(finalShutdown = true): Promise<void> {
+  async stop(finalShutdown = true): Promise<ServiceStopResult> {
     if (finalShutdown) {
       this.#shuttingDown = true;
     }
@@ -205,7 +226,7 @@ export class ServiceManager {
     const operation = this.#stopOwnedService();
     this.#stopPromise = operation;
     try {
-      await operation;
+      return await operation;
     } finally {
       if (this.#stopPromise === operation) {
         this.#stopPromise = null;
@@ -213,7 +234,7 @@ export class ServiceManager {
     }
   }
 
-  async #stopOwnedService(): Promise<void> {
+  async #stopOwnedService(): Promise<ServiceStopResult> {
     if (this.#child !== null || this.#startPromise !== null) {
       this.#setSnapshot(
         createSnapshot("stopping", "Stopping the local service...")
@@ -258,6 +279,7 @@ export class ServiceManager {
           : "Local service disconnected."
       )
     );
+    return serviceStopResult(this.#terminationHistory);
   }
 
   async #startOwnedService(
@@ -423,12 +445,15 @@ export class ServiceManager {
 
   async #terminateChild(
     child: ChildProcessWithoutNullStreams
-  ): Promise<void> {
+  ): Promise<ServiceProcessTermination> {
     if (hasChildExited(child)) {
       if (this.#child === child) {
         this.#child = null;
       }
-      return;
+      return this.#recordTermination(
+        child,
+        serviceProcessTermination(child, "already_exited")
+      );
     }
     const existing = this.#terminationPromises.get(child);
     if (existing !== undefined) {
@@ -438,7 +463,7 @@ export class ServiceManager {
     const operation = this.#terminateOwnedChild(child);
     this.#terminationPromises.set(child, operation);
     try {
-      await operation;
+      return this.#recordTermination(child, await operation);
     } finally {
       if (this.#terminationPromises.get(child) === operation) {
         this.#terminationPromises.delete(child);
@@ -448,17 +473,19 @@ export class ServiceManager {
 
   async #terminateOwnedChild(
     child: ChildProcessWithoutNullStreams
-  ): Promise<void> {
+  ): Promise<ServiceProcessTermination> {
     this.#expectedExits.add(child);
     if (!child.stdin.destroyed && !child.stdin.writableEnded) {
       child.stdin.end();
     }
+    let method: ServiceTerminationMethod = "stdin_eof";
     if (
       !(await waitForChildExit(
         child,
         this.#dependencies.shutdownTimeoutMs
       ))
     ) {
+      method = "force_kill";
       child.kill();
       if (
         !(await waitForChildExit(
@@ -472,6 +499,18 @@ export class ServiceManager {
     if (this.#child === child) {
       this.#child = null;
     }
+    return serviceProcessTermination(child, method);
+  }
+
+  #recordTermination(
+    child: ChildProcessWithoutNullStreams,
+    value: ServiceProcessTermination
+  ): ServiceProcessTermination {
+    if (!this.#recordedTerminations.has(child)) {
+      this.#recordedTerminations.add(child);
+      this.#terminationHistory.push(value);
+    }
+    return value;
   }
 
   async #resolveLaunchCommand(): Promise<LaunchCommand> {
@@ -984,6 +1023,43 @@ function abortable<T>(
 
 function hasChildExited(child: ChildProcessWithoutNullStreams): boolean {
   return child.exitCode !== null || child.signalCode !== null;
+}
+
+function serviceProcessTermination(
+  child: ChildProcessWithoutNullStreams,
+  method: ServiceTerminationMethod
+): ServiceProcessTermination {
+  if (
+    child.pid === undefined ||
+    !Number.isSafeInteger(child.pid) ||
+    child.pid <= 0
+  ) {
+    throw terminationFailedError();
+  }
+  return {
+    pid: child.pid,
+    method,
+    exitCode: child.exitCode,
+    signalCode: child.signalCode
+  };
+}
+
+function serviceStopResult(
+  values: readonly ServiceProcessTermination[]
+): ServiceStopResult {
+  const processes = values.map((value) => ({ ...value }));
+  return {
+    processes,
+    forceKillUsed: processes.some(
+      (value) => value.method === "force_kill"
+    ),
+    allProcessesExitedGracefully: processes.every(
+      (value) =>
+        value.method === "stdin_eof" &&
+        value.exitCode === 0 &&
+        value.signalCode === null
+    )
+  };
 }
 
 async function waitForChildExit(

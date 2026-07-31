@@ -30,6 +30,9 @@ literary understanding or production readiness.
   remapping; Phase 2 does not claim automatic cross-revision registry matching.
 - There is no in-place schema-v3-to-v2 downgrade. Recovery uses a separately
   verified pre-migration v2 backup with a matching older application.
-- Casting, voice selection, pronunciation production, speech synthesis,
-  ambience/Foley/music, mixing, audio QC, export, installer signing, updates,
-  releases, and Phase 3 work are not implemented.
+- Phase 2 itself does not implement casting, voice selection, pronunciation
+  production, speech synthesis, ambience/Foley/music, mixing, audio QC, export,
+  installer signing, updates, or releases. Phase 3A may consume an approved
+  Phase 2 snapshot only through a separate governed contract; its limitations
+  are documented in
+  [Phase 3A known limitations](phase-3a-known-limitations.md).

@@ -80,16 +80,16 @@ def _snapshot_rows(
     return tuple(dict(zip(columns, row, strict=True)) for row in rows)
 
 
-def test_fresh_v3_schema_is_frozen_and_reopens_cleanly(tmp_path: Path) -> None:
+def test_fresh_v4_preserves_frozen_v3_analysis_schema_and_reopens(tmp_path: Path) -> None:
     path = tmp_path / "fresh" / "studio.sqlite3"
     database = Database(path)
     database.close()
 
-    assert _value(path, "PRAGMA user_version") == 3
+    assert _value(path, "PRAGMA user_version") == 4
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,)]
         analysis_tables = {
             row[0]
             for row in connection.execute(
@@ -135,7 +135,7 @@ def test_fresh_v3_schema_is_frozen_and_reopens_cleanly(tmp_path: Path) -> None:
     reopened.close()
 
 
-def test_v1_to_v2_to_v3_preserves_history_and_does_not_fabricate_analysis(
+def test_v1_to_v2_to_v3_to_v4_preserves_history_and_does_not_fabricate_analysis(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "upgrade" / "studio.sqlite3"
@@ -144,11 +144,13 @@ def test_v1_to_v2_to_v3_preserves_history_and_does_not_fabricate_analysis(
     database = Database(path)
     v1_backup = database.v1_backup_path
     v2_backup = database.v2_backup_path
+    v3_backup = database.v3_backup_path
     database.close()
 
     assert _value(v1_backup, "PRAGMA user_version") == 1
     assert _value(v2_backup, "PRAGMA user_version") == 2
-    assert _value(path, "PRAGMA user_version") == 3
+    assert _value(v3_backup, "PRAGMA user_version") == 3
+    assert _value(path, "PRAGMA user_version") == 4
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT exact_text FROM imported_stories WHERE id = 'story-2'"
@@ -210,7 +212,7 @@ def test_v2_blank_legacy_correction_reason_gets_deterministic_fallback(
             )
 
 
-def test_verified_v2_backup_migrates_directly_to_v3(tmp_path: Path) -> None:
+def test_verified_v2_backup_migrates_through_v3_to_v4(tmp_path: Path) -> None:
     direct = tmp_path / "direct-v2" / "studio.sqlite3"
     _create_frozen_v2(direct)
 
@@ -408,8 +410,10 @@ def test_verified_v2_backup_migrates_directly_to_v3(tmp_path: Path) -> None:
     migrated.close()
 
     backup = direct.with_name("studio.v2-backup.sqlite3")
-    assert _value(direct, "PRAGMA user_version") == 3
+    v3_backup = direct.with_name("studio.v3-backup.sqlite3")
+    assert _value(direct, "PRAGMA user_version") == 4
     assert _value(backup, "PRAGMA user_version") == 2
+    assert _value(v3_backup, "PRAGMA user_version") == 3
     assert _legacy_table_snapshots(direct) == before
     assert _legacy_table_snapshots(backup) == before
     with sqlite3.connect(direct) as connection:
@@ -418,7 +422,7 @@ def test_verified_v2_backup_migrates_directly_to_v3(tmp_path: Path) -> None:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,)]
         assert connection.execute("SELECT count(*) FROM analysis_runs").fetchone() == (0,)
         assert connection.execute("SELECT count(*) FROM analysis_snapshots").fetchone() == (0,)
         assert connection.execute("SELECT count(*) FROM analysis_review_decisions").fetchone() == (
@@ -510,7 +514,7 @@ def test_v2_ledger_and_future_version_mismatches_are_rejected(
         if drift == "ledger":
             connection.execute("DELETE FROM schema_migrations WHERE version = 2")
         else:
-            connection.execute("PRAGMA user_version = 4")
+            connection.execute("PRAGMA user_version = 5")
     before = path.read_bytes()
 
     with pytest.raises(ServiceError) as raised:

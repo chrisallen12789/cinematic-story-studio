@@ -63,9 +63,14 @@ describe("ServiceManager lifecycle", () => {
     try {
       const startup = captureError(manager.start());
       await entered;
-      await manager.stop(true);
+      const result = await manager.stop(true);
 
       expect(spawnService).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        processes: [],
+        forceKillUsed: false,
+        allProcessesExitedGracefully: true
+      });
       expect(manager.snapshot.state).toBe("stopped");
       expect(await startup).toMatchObject({
         code: "SERVICE_START_CANCELLED"
@@ -74,6 +79,51 @@ describe("ServiceManager lifecycle", () => {
         code: "SERVICE_STOPPED"
       });
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("records a zero-code stdin-EOF shutdown as graceful", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "css-service-race-"));
+    const child = new FakeChild();
+    const spawnService = vi.fn(createSpawner(child));
+    const manager = new ServiceManager(options(directory), {
+      spawnService,
+      shutdownTimeoutMs: 100,
+      forcedTerminationTimeoutMs: 50
+    });
+
+    try {
+      const startup = captureError(manager.start());
+      await vi.waitFor(() => {
+        expect(spawnService).toHaveBeenCalledOnce();
+      });
+      child.stdin.once("finish", () => {
+        child.confirmExit(0);
+      });
+
+      const result = await manager.stop(false);
+
+      expect(result).toEqual({
+        processes: [
+          {
+            pid: child.pid,
+            method: "stdin_eof",
+            exitCode: 0,
+            signalCode: null
+          }
+        ],
+        forceKillUsed: false,
+        allProcessesExitedGracefully: true
+      });
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(manager.snapshot.state).toBe("disconnected");
+      expect(await startup).toMatchObject({
+        code: "SERVICE_START_CANCELLED"
+      });
+    } finally {
+      child.confirmExit(0);
+      await manager.stop(false).catch(() => undefined);
       await rm(directory, { recursive: true, force: true });
     }
   });
@@ -100,9 +150,21 @@ describe("ServiceManager lifecycle", () => {
       expect(manager.snapshot.state).toBe("stopping");
 
       child.confirmExit(0);
-      await stopping;
+      const result = await stopping;
 
       expect(manager.snapshot.state).toBe("disconnected");
+      expect(result).toEqual({
+        processes: [
+          {
+            pid: child.pid,
+            method: "force_kill",
+            exitCode: 0,
+            signalCode: null
+          }
+        ],
+        forceKillUsed: true,
+        allProcessesExitedGracefully: false
+      });
       expect(await startup).toMatchObject({
         code: "SERVICE_START_CANCELLED"
       });
@@ -152,6 +214,7 @@ describe("ServiceManager lifecycle", () => {
 });
 
 class FakeChild extends EventEmitter {
+  readonly pid = 42_424;
   readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();

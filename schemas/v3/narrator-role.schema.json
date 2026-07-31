@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/narrator-role.schema.json",
+  "title": "NarratorRole",
+  "$ref": "definitions.schema.json#/$defs/NarratorRole"
+}

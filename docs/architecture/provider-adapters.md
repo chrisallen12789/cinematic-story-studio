@@ -100,6 +100,23 @@ is enabled by the Phase 2 composition root. A future implementation must
 preserve the exact approved-input, evidence, confidence, correction, gate,
 privacy, and provenance contracts and requires separate executable evidence.
 
+Phase 3A adds versioned `VoiceProviderDescriptor` and
+`VoiceModelDescriptor` catalog metadata without enabling the `SpeechProvider`
+invocation surface. Descriptors separately declare runtime/catalog
+availability, synthesis implementation, network/credential requirements,
+languages, output metadata, rights-metadata capability, execution location,
+license classification, health, deprecation, and provenance. Catalog
+availability never means synthesis is available.
+
+The repository-owned fixture contains one available local development
+descriptor and one disabled cloud-capable descriptor. Both report
+`synthesisImplemented: false`; no model implementation, transport, credential
+operation, provider SDK, content disclosure, or manuscript-bearing request is
+composed. The disabled descriptor and remote model are governance test data
+only. Exact fields, identities, and claim limits are in
+[voice catalog and casting architecture](voice-casting.md) and
+[voice rights and consent](../security/voice-rights-and-consent.md).
+
 FFmpeg is a managed application tool behind `AudioToolchain`, not a creative provider, but uses the same typed health/result/error discipline.
 
 ## Adapter verification

@@ -31,6 +31,7 @@ import {
   type DesktopResult
 } from "../shared/desktop-api";
 import { AnalysisWorkspace } from "./AnalysisWorkspace";
+import { CastingWorkspace } from "./CastingWorkspace";
 
 type WorkspaceView = "studio" | "analysis" | "casting" | "systems";
 
@@ -977,9 +978,19 @@ export function App({ api = window.cinematicStory }: AppProps) {
             onNotice={setNotice}
             onError={setError}
             onRunChange={applyAnalysisRun}
+            onProjectRefresh={() =>
+              openProject(project.project.projectId, false)
+            }
           />
         ) : view === "casting" ? (
-          <CastingWorkspace project={project} />
+          <CastingWorkspace
+            key={project.project.projectId}
+            project={project}
+            api={api}
+            connected={connected}
+            onNotice={setNotice}
+            onError={setError}
+          />
         ) : (
           <SystemsWorkspace
             providerHealth={providerHealth}
@@ -1871,63 +1882,6 @@ function JobsInspector({
               </div>
             </article>
           ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function CastingWorkspace({ project }: { readonly project: ProjectDetail }) {
-  const charactersById = new Map(
-    project.characters.map((character) => [character.characterId, character])
-  );
-  return (
-    <section className="full-workspace">
-      <header className="workspace-heading">
-        <div>
-          <span className="eyebrow">Voice continuity</span>
-          <h2>Casting board</h2>
-          <p>
-            Every detected character receives a typed casting slot. Phase 0
-            leaves provider and voice identifiers explicitly unassigned.
-          </p>
-        </div>
-        <span className="large-count">
-          {project.castingPlaceholders.length}
-        </span>
-      </header>
-      {project.castingPlaceholders.length === 0 ? (
-        <div className="empty-panel">
-          No typed casting placeholders are available yet. Analyze the story to
-          detect characters.
-        </div>
-      ) : (
-        <div className="casting-grid">
-          {project.castingPlaceholders.map((placeholder) => {
-            const character = charactersById.get(placeholder.characterId);
-            return (
-              <article
-                className="casting-card"
-                key={placeholder.characterId}
-              >
-                <span className="casting-avatar" aria-hidden="true">
-                  {(character?.displayName ?? "?").slice(0, 1).toUpperCase()}
-                </span>
-                <div>
-                  <span className="eyebrow">Character</span>
-                  <h3>{character?.displayName ?? "Unknown character"}</h3>
-                  <p>{character?.description ?? "No description available."}</p>
-                </div>
-                <div className="assignment">
-                  <span className="unassigned-dot" aria-hidden="true" />
-                  <div>
-                    <strong>Unassigned</strong>
-                    <small>No provider or voice selected.</small>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
         </div>
       )}
     </section>

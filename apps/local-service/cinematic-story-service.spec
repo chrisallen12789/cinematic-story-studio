@@ -18,7 +18,17 @@ analysis = Analysis(
     [str(source_root / "cinematic_story_service" / "launcher.py")],
     pathex=[str(source_root)],
     binaries=[],
-    datas=[],
+    datas=[
+        (
+            str(
+                source_root
+                / "cinematic_story_service"
+                / "catalogs"
+                / "synthetic_voice_catalog.v1.json"
+            ),
+            "cinematic_story_service/catalogs",
+        )
+    ],
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},

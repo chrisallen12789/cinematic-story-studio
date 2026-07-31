@@ -74,9 +74,61 @@ If another edit won, the service returns `409 REVISION_CONFLICT` with the curren
    authority and never silently reapproves.
 
 The four current gate projections are queryable and form prerequisites for
-future casting eligibility. No casting workflow or casting-eligibility endpoint
-exists in Phase 2; voice selection, speech generation, and audio production
-also remain unavailable.
+Phase 3A casting eligibility. The Phase 2 boundary itself has no casting
+authority; voice selection, speech generation, and audio production remain
+unavailable until an explicitly implemented later phase supplies the applicable
+governed boundary.
+
+## 4B. Build and approve a governed cast
+
+1. With Import Review and all four current Phase 2 reviews approved, the user
+   opens Casting. The workspace shows prerequisite decision IDs, the current
+   analysis snapshot/correction fingerprint, profile
+   `governed-voice-casting-v1@1.0.0`, and synthetic catalog
+   `synthetic-voice-catalog-v1@1.0.0`.
+2. Starting casting submits every current snapshot, correction, gate, catalog,
+   and profile precondition plus an idempotency key. The service rejects stale
+   or mismatched evidence rather than applying an old cast to changed analysis.
+3. A durable job progresses through Phase 2 validation, evidence freeze,
+   catalog load, role creation, constraint evaluation, bounded candidates,
+   metadata-only conflicts, and atomic run/snapshot publication. The user can
+   cancel, retry, or resume only when the persisted job state permits it.
+4. The workspace pages narrator and character roles and shows dialogue,
+   narration, approximate-word, chapter, and scene workload. Unresolved
+   material is a role only when the approved analysis represented it
+   explicitly. Character roles retain stable Character Registry identity;
+   importance and language/locale/performance requirements stay conservative
+   when approved evidence is absent or conflicting.
+5. For one role at a time, the user inspects at most 12 candidates. Hard
+   constraints, soft preferences, language, rights/consent,
+   provider/model availability, long-form suitability, confidence, warnings,
+   and bounded explanations remain separate. The highest score is not selected
+   automatically. Candidate warnings refer to actual persisted conflict rows.
+6. The user appends a human selection and optional lock for the narrator and
+   characters. Clear, unlock, intentionally uncast, label/requirement changes,
+   restricted-rights acknowledgement, planned reuse approval, candidate
+   rejection, and custom rationale create immutable superseding corrections;
+   machine rows and older assignments remain inspectable.
+7. The user reviews metadata differentiation, reuse, availability,
+   suitability, and rights conflicts. The UI calls them metadata risks, never
+   acoustic similarity. Unknown or prohibited rights cannot receive final
+   approval; restricted rights require an exact acknowledgement.
+8. The user approves Narrator Casting Review and Character Casting Review, then
+   Complete Cast Review. Each decision carries a nonblank rationale,
+   acknowledged warnings, current cast-snapshot revision, evidence fingerprint,
+   and idempotency key.
+9. Closing and reopening restores the exact catalog revision, roles, run,
+   candidates, assignments, correction history, conflict dispositions,
+   reviewable cast snapshot, and all three decisions. Selected
+   catalog/provider/model/profile/rights drift appends durable invalidation
+   evidence and system-invalidates only the affected role gate and Complete
+   gate. Reverting the catalog does not restore authority; the user must
+   explicitly reselect and reapprove. Unrelated changes preserve unaffected
+   assignments and approvals.
+
+This workflow uses fictional metadata only and produces no audio. There is no
+audition, playback, waveform, provider credential, model download, cloud
+transmission, or synthesis control in the Phase 3A workspace.
 
 ## 5. Observe, cancel, retry, and resume work
 

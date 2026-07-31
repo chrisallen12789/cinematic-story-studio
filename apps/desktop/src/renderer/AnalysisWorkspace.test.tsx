@@ -764,6 +764,7 @@ describe("Phase 2 Analysis workspace", () => {
 
   it("requires warning acknowledgement while source gates remain independent", async () => {
     const fixture = createFixture({ gateWarning: true });
+    const onProjectRefresh = vi.fn(async () => undefined);
 
     render(
       <AnalysisWorkspace
@@ -772,6 +773,7 @@ describe("Phase 2 Analysis workspace", () => {
         connected
         onNotice={vi.fn()}
         onError={vi.fn()}
+        onProjectRefresh={onProjectRefresh}
       />
     );
 
@@ -827,6 +829,9 @@ describe("Phase 2 Analysis workspace", () => {
         rationale: "The reviewed evidence supports approval."
       })
     );
+    await waitFor(() => {
+      expect(onProjectRefresh).toHaveBeenCalledOnce();
+    });
   });
 
   it("keeps gate actions available to append a superseding decision", async () => {

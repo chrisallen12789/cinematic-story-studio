@@ -705,6 +705,19 @@ describe("BackendApiClient job response boundary", () => {
         expect(response.job.type).toBe("analyze_whole_book");
       }
     );
+
+    await withJsonResponse(
+      validJobWire("analyze_casting"),
+      async (client) => {
+        const response = await client.getJob("job-1", {
+          projectId: "project-1",
+          type: "analyze_casting",
+          inputRevision: 4,
+          inputFingerprint: "a".repeat(64)
+        });
+        expect(response.job.target.type).toBe("casting_run");
+      }
+    );
   });
 
   it.each([
@@ -835,6 +848,302 @@ describe("BackendApiClient job response boundary", () => {
         await expect(client.getJobEvents("job-1", 4)).rejects.toThrow();
       }
     );
+  });
+});
+
+describe("BackendApiClient casting routes", () => {
+  it("uses the fixed project catalog and role-candidate routes with bounded queries", async () => {
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(`${request.method} ${request.url}`);
+      request.resume();
+      request.once("end", () => sendJson(response, {}));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const client = new BackendApiClient(serviceForServer(server));
+    const evidence = {
+      projectId: "project-1",
+      runId: "casting-run-1",
+      expectedRunFingerprint: "a".repeat(64),
+      expectedCatalogRevisionId: "catalog-1",
+      expectedCatalogFingerprint: "b".repeat(64),
+      expectedSnapshotId: "snapshot-1",
+      expectedSnapshotRevision: 2,
+      expectedSnapshotFingerprint: "c".repeat(64)
+    };
+
+    try {
+      await client
+        .getVoiceCatalog({
+          projectId: "project-1",
+          expectedCatalogRevisionId: "catalog-1",
+          expectedCatalogFingerprint: "b".repeat(64),
+          limit: 50
+        })
+        .catch(() => undefined);
+      await client
+        .listCastingCandidates({
+          ...evidence,
+          roleId: "role-primary-narrator",
+          expectedRoleRevision: 3,
+          limit: 12
+        })
+        .catch(() => undefined);
+      await client
+        .listCastingReviews({
+          ...evidence,
+          expectedApprovedCastSnapshotId: "cast-snapshot-1",
+          expectedApprovedCastSnapshotRevision: 4
+        })
+        .catch(() => undefined);
+      expect(requests).toEqual([
+        `GET /api/v1/projects/project-1/casting/catalog?limit=50&expectedCatalogRevisionId=catalog-1&expectedCatalogFingerprint=${"b".repeat(64)}`,
+        `GET /api/v1/projects/project-1/casting-runs/casting-run-1/roles/role-primary-narrator/candidates?limit=12&expectedRunFingerprint=${"a".repeat(64)}&expectedCatalogRevisionId=catalog-1&expectedCatalogFingerprint=${"b".repeat(64)}&expectedSnapshotId=snapshot-1&expectedSnapshotRevision=2&expectedSnapshotFingerprint=${"c".repeat(64)}&expectedRoleRevision=3`,
+        `GET /api/v1/projects/project-1/casting-runs/casting-run-1/reviews?expectedRunFingerprint=${"a".repeat(64)}&expectedCatalogRevisionId=catalog-1&expectedCatalogFingerprint=${"b".repeat(64)}&expectedSnapshotId=snapshot-1&expectedSnapshotRevision=2&expectedSnapshotFingerprint=${"c".repeat(64)}&expectedApprovedCastSnapshotId=cast-snapshot-1&expectedApprovedCastSnapshotRevision=4`
+      ]);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("posts an idempotent run with only the frozen casting prerequisites", async () => {
+    let observedPath = "";
+    let observedAuthorization = "";
+    let observedIdempotency = "";
+    let observedBody: unknown;
+    const server = createServer((request, response) => {
+      observedPath = `${request.method} ${request.url}`;
+      observedAuthorization = String(request.headers.authorization ?? "");
+      observedIdempotency = String(
+        request.headers["idempotency-key"] ?? ""
+      );
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.once("end", () => {
+        observedBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        sendJson(response, {});
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const client = new BackendApiClient(serviceForServer(server));
+
+    try {
+      await client
+        .createCastingRun({
+          projectId: "project-1",
+          expectedAnalysisRunId: "analysis-run-1",
+          expectedSnapshotId: "snapshot-1",
+          expectedSnapshotRevision: 2,
+          expectedSnapshotFingerprint: "a".repeat(64),
+          expectedCorrectionSetFingerprint: "b".repeat(64),
+          expectedImportReviewDecisionId: "import-decision-1",
+          expectedAnalysisGateDecisionIds: {
+            storyStructureReview: "structure-decision-1",
+            characterRegistryReview: "character-decision-1",
+            dialogueAttributionReview: "dialogue-decision-1",
+            wholeBookAnalysisReview: "whole-book-decision-1"
+          },
+          expectedCatalogRevisionId: "catalog-1",
+          expectedCatalogFingerprint: "c".repeat(64),
+          expectedCastingProfileFingerprint: "d".repeat(64),
+          idempotencyKey: "create-casting-run-1"
+        })
+        .catch(() => undefined);
+
+      expect(observedPath).toBe(
+        "POST /api/v1/projects/project-1/casting-runs"
+      );
+      expect(observedAuthorization).toBe("Bearer test-token");
+      expect(observedIdempotency).toBe("create-casting-run-1");
+      expect(observedBody).toEqual({
+        expectedAnalysisRunId: "analysis-run-1",
+        expectedSnapshotId: "snapshot-1",
+        expectedSnapshotRevision: 2,
+        expectedSnapshotFingerprint: "a".repeat(64),
+        expectedCorrectionSetFingerprint: "b".repeat(64),
+        expectedImportReviewDecisionId: "import-decision-1",
+        expectedAnalysisGateDecisionIds: {
+          storyStructureReview: "structure-decision-1",
+          characterRegistryReview: "character-decision-1",
+          dialogueAttributionReview: "dialogue-decision-1",
+          wholeBookAnalysisReview: "whole-book-decision-1"
+        },
+        expectedCatalogRevisionId: "catalog-1",
+        expectedCatalogFingerprint: "c".repeat(64),
+        expectedCastingProfileFingerprint: "d".repeat(64),
+        idempotencyKey: "create-casting-run-1"
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("posts custom roles, corrections, and reviews with canonical backend payloads", async () => {
+    const observed: Array<{
+      readonly path: string;
+      readonly idempotency: string;
+      readonly body: unknown;
+    }> = [];
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.once("end", () => {
+        observed.push({
+          path: `${request.method} ${request.url}`,
+          idempotency: String(
+            request.headers["idempotency-key"] ?? ""
+          ),
+          body: JSON.parse(Buffer.concat(chunks).toString("utf8"))
+        });
+        sendJson(response, {});
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const client = new BackendApiClient(serviceForServer(server));
+
+    try {
+      await client
+        .createCustomProductionRole({
+          projectId: "project-1",
+          runId: "casting-run-1",
+          definitionId: "custom-role-a",
+          label: "Festival announcer",
+          performanceRequirements: {
+            language: "en",
+            locales: ["en-US"],
+            agePresentationRange: null,
+            vocalPresentations: ["neutral"],
+            preferredTextures: ["clear"],
+            speakingRateRange: null,
+            requiredExpressiveRange: ["authoritative"],
+            longFormRequired: false
+          },
+          reason: "Producer-defined role with no manuscript source.",
+          expectedRunFingerprint: "a".repeat(64),
+          expectedCatalogRevisionId: "catalog-1",
+          expectedCatalogFingerprint: "b".repeat(64),
+          expectedSnapshotId: "snapshot-1",
+          expectedSnapshotRevision: 2,
+          expectedSnapshotFingerprint: "c".repeat(64),
+          expectedCorrectionSetFingerprint: "d".repeat(64),
+          expectedCastingProfileFingerprint: "e".repeat(64),
+          idempotencyKey: "custom-role-create-1"
+        })
+        .catch(() => undefined);
+      await client
+        .appendCastingCorrection({
+          projectId: "project-1",
+          runId: "casting-run-1",
+          operation: "select_voice",
+          targetRoleId: "role-1",
+          expectedRoleRevision: 3,
+          expectedRunFingerprint: "a".repeat(64),
+          expectedCatalogFingerprint: "b".repeat(64),
+          expectedSnapshotFingerprint: "c".repeat(64),
+          expectedCorrectionSetFingerprint: "d".repeat(64),
+          previousEffectiveFingerprint: "e".repeat(64),
+          voiceProfileId: "voice-1",
+          correctedValue: { voiceProfileId: "voice-1" },
+          reason: "Human-selected fixture voice.",
+          supersedesCorrectionId: null,
+          idempotencyKey: "casting-correction-1"
+        })
+        .catch(() => undefined);
+      await client
+        .decideCastingReview({
+          projectId: "project-1",
+          runId: "casting-run-1",
+          gateId: "narrator_casting_review",
+          decision: "approve",
+          expectedRevision: 2,
+          expectedEvidenceFingerprint: "f".repeat(64),
+          expectedRunFingerprint: "a".repeat(64),
+          expectedApprovedCastSnapshotId: "cast-snapshot-1",
+          expectedApprovedCastSnapshotRevision: 4,
+          warningAcknowledgementIds: ["warning-1"],
+          rationale: "Reviewed the narrator cast and rights.",
+          supersedesDecisionId: null,
+          idempotencyKey: "casting-review-1"
+        })
+        .catch(() => undefined);
+
+      expect(observed).toEqual([
+        {
+          path:
+            "POST /api/v1/projects/project-1/casting-runs/casting-run-1/roles",
+          idempotency: "custom-role-create-1",
+          body: {
+            definitionId: "custom-role-a",
+            label: "Festival announcer",
+            performanceRequirements: {
+              language: "en",
+              locales: ["en-US"],
+              agePresentationRange: null,
+              vocalPresentations: ["neutral"],
+              preferredTextures: ["clear"],
+              speakingRateRange: null,
+              requiredExpressiveRange: ["authoritative"],
+              longFormRequired: false
+            },
+            reason: "Producer-defined role with no manuscript source.",
+            expectedRunFingerprint: "a".repeat(64),
+            expectedCatalogRevisionId: "catalog-1",
+            expectedCatalogFingerprint: "b".repeat(64),
+            expectedSnapshotId: "snapshot-1",
+            expectedSnapshotRevision: 2,
+            expectedSnapshotFingerprint: "c".repeat(64),
+            expectedCorrectionSetFingerprint: "d".repeat(64),
+            expectedCastingProfileFingerprint: "e".repeat(64),
+            idempotencyKey: "custom-role-create-1"
+          }
+        },
+        {
+          path:
+            "POST /api/v1/projects/project-1/casting-runs/casting-run-1/corrections",
+          idempotency: "casting-correction-1",
+          body: {
+            operation: "select_voice",
+            targetRoleId: "role-1",
+            expectedRoleRevision: 3,
+            expectedRunFingerprint: "a".repeat(64),
+            expectedCatalogFingerprint: "b".repeat(64),
+            expectedSnapshotFingerprint: "c".repeat(64),
+            expectedCorrectionSetFingerprint: "d".repeat(64),
+            previousEffectiveFingerprint: "e".repeat(64),
+            voiceProfileId: "voice-1",
+            correctedValue: { voiceProfileId: "voice-1" },
+            reason: "Human-selected fixture voice.",
+            supersedesCorrectionId: null,
+            idempotencyKey: "casting-correction-1"
+          }
+        },
+        {
+          path:
+            "POST /api/v1/projects/project-1/casting-runs/casting-run-1/reviews/narrator_casting_review/decisions",
+          idempotency: "casting-review-1",
+          body: {
+            decision: "approve",
+            expectedRevision: 2,
+            expectedEvidenceFingerprint: "f".repeat(64),
+            expectedRunFingerprint: "a".repeat(64),
+            expectedApprovedCastSnapshotId: "cast-snapshot-1",
+            expectedApprovedCastSnapshotRevision: 4,
+            warningAcknowledgementIds: ["warning-1"],
+            rationale: "Reviewed the narrator cast and rights.",
+            supersedesDecisionId: null,
+            idempotencyKey: "casting-review-1"
+          }
+        }
+      ]);
+    } finally {
+      await closeServer(server);
+    }
   });
 });
 
@@ -1026,8 +1335,14 @@ function sha256(value: Uint8Array): string {
 }
 
 function validJobWire(
-  type: "analyze_story" | "analyze_whole_book"
+  type: "analyze_story" | "analyze_whole_book" | "analyze_casting"
 ): Record<string, unknown> {
+  const target =
+    type === "analyze_story"
+      ? { type: "story", id: "story-1" }
+      : type === "analyze_casting"
+        ? { type: "casting_run", id: "casting-run-1" }
+        : { type: "analysis_run", id: "run-1" };
   return {
     correlationId: "correlation-job",
     job: {
@@ -1035,17 +1350,16 @@ function validJobWire(
       projectId: "project-1",
       type,
       state: "running",
-      target: {
-        type: type === "analyze_story" ? "story" : "analysis_run",
-        id: type === "analyze_story" ? "story-1" : "run-1"
-      },
+      target,
       inputRevision: 4,
       inputFingerprint: "a".repeat(64),
       attempt: 1,
       stage:
         type === "analyze_story"
           ? "analyze_story"
-          : "analyze_structure",
+          : type === "analyze_casting"
+            ? "evaluate_role_constraints"
+            : "analyze_structure",
       progress: 0.5,
       checkpointAvailable: false,
       cancellationRequested: false,

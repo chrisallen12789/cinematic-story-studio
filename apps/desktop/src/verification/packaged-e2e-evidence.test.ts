@@ -250,6 +250,12 @@ describe("packaged E2E machine evidence", () => {
       1024 * 1024
     );
   });
+
+  it("reports evidence-generation failures after verified shutdown", () => {
+    expect(
+      packagedFailureCode("evidence_generation", undefined)
+    ).toBe("EVIDENCE_GENERATION_FAILED");
+  });
 });
 
 function storyAnalysisEvidence(): PackagedStoryAnalysisEvidence {

@@ -13,6 +13,11 @@ const phase2DefinitionsPath = path.join(
   phase2Directory,
   "definitions.schema.json",
 );
+const phase3Directory = path.resolve(testDirectory, "..", "v3");
+const phase3DefinitionsPath = path.join(
+  phase3Directory,
+  "definitions.schema.json",
+);
 
 const entityEntries = {
   Project: "project.schema.json",
@@ -87,6 +92,35 @@ const phase2Entries = {
     "phase-2-build-evidence-manifest.schema.json",
   Phase2PackagedE2eResult:
     "phase-2-packaged-e2e-result.schema.json",
+};
+
+const phase3Entries = {
+  VoiceProviderDescriptor: "voice-provider-descriptor.schema.json",
+  VoiceModelDescriptor: "voice-model-descriptor.schema.json",
+  VoiceCapability: "voice-capability.schema.json",
+  VoiceCatalogRevision: "voice-catalog-revision.schema.json",
+  CastingVoiceProfile: "casting-voice-profile.schema.json",
+  VoiceRightsRecord: "voice-rights-record.schema.json",
+  ProductionRole: "production-role.schema.json",
+  NarratorRole: "narrator-role.schema.json",
+  CharacterVoiceRole: "character-voice-role.schema.json",
+  CustomProductionRole: "custom-production-role.schema.json",
+  CastingProfile: "casting-profile.schema.json",
+  CastingRun: "casting-run.schema.json",
+  CastingCandidate: "casting-candidate.schema.json",
+  CastingCompatibilityAssessment:
+    "casting-compatibility-assessment.schema.json",
+  CastingConflict: "casting-conflict.schema.json",
+  CastAssignment: "cast-assignment.schema.json",
+  CastingCorrection: "casting-correction.schema.json",
+  CastingGateReview: "casting-gate-review.schema.json",
+  CastingReviewDecision: "casting-review-decision.schema.json",
+  ApprovedCastSnapshot: "approved-cast-snapshot.schema.json",
+  SyntheticVoiceCatalog: "synthetic-voice-catalog.schema.json",
+  Phase3PackagedE2eResult:
+    "phase-3-packaged-e2e-result.schema.json",
+  Phase3BuildEvidenceManifest:
+    "phase-3-build-evidence-manifest.schema.json",
 };
 
 async function readJson(filePath) {
@@ -1484,6 +1518,793 @@ test("Phase 2 CI schemas pin packaged v4 and complete manifest proof", async () 
     "manuscript",
     "sourceText",
     "textContent",
+  ]) {
+    assert.equal(
+      serializedProofSchemas.includes(`"${privateContentField}"`),
+      false,
+      `CI proof schemas must not admit ${privateContentField}`,
+    );
+  }
+});
+
+test("Phase 3A contracts have stable closed JSON Schema 2020-12 entry points", async () => {
+  const fileNames = (await readdir(phase3Directory)).filter((name) =>
+    name.endsWith(".schema.json")
+  );
+  assert.equal(fileNames.length, Object.keys(phase3Entries).length + 1);
+  const definitions = await readJson(phase3DefinitionsPath);
+
+  for (const fileName of fileNames) {
+    const schema = await readJson(path.join(phase3Directory, fileName));
+    assert.equal(
+      schema.$schema,
+      "https://json-schema.org/draft/2020-12/schema",
+    );
+    assert.match(
+      schema.$id,
+      /^https:\/\/schemas\.cinematic-story-studio\.dev\/v3\//,
+    );
+  }
+
+  for (const [definitionName, fileName] of Object.entries(
+    phase3Entries,
+  )) {
+    const definition = definitions.$defs[definitionName];
+    assert.ok(
+      definition,
+      `missing Phase 3A $defs/${definitionName}`,
+    );
+    assert.equal(
+      definition.additionalProperties === false ||
+        definition.unevaluatedProperties === false,
+      true,
+      `${definitionName} must reject unknown fields`,
+    );
+    const entry = await readJson(path.join(phase3Directory, fileName));
+    assert.equal(entry.title, definitionName);
+    assert.equal(
+      entry.$ref,
+      `definitions.schema.json#/$defs/${definitionName}`,
+    );
+  }
+});
+
+test("all Phase 3A internal definition references resolve", async () => {
+  const definitions = await readJson(phase3DefinitionsPath);
+  for (const reference of collectReferences(definitions).filter((entry) =>
+    entry.startsWith("#/$defs/")
+  )) {
+    const definitionName = reference
+      .slice("#/$defs/".length)
+      .split("/")[0];
+    assert.ok(
+      Object.hasOwn(definitions.$defs, definitionName),
+      `unresolved Phase 3A reference ${reference}`,
+    );
+  }
+});
+
+test("Phase 3A governed profile, producer, rights policy, and bounds are pinned", async () => {
+  const definitions = await readJson(phase3DefinitionsPath);
+  const profile =
+    definitions.$defs.CastingProfile.properties.values.properties;
+  const limits = definitions.$defs.CastingLimits.properties;
+
+  assert.equal(
+    profile.profileId.const,
+    "governed-voice-casting-v1@1.0.0",
+  );
+  assert.equal(
+    profile.producerId.const,
+    "voice-casting-orchestrator@1.0.0",
+  );
+  assert.equal(
+    profile.rightsPolicyId.const,
+    "voice-rights-policy-v1",
+  );
+  assert.equal(profile.deterministic.const, true);
+  assert.equal(profile.providerNeutral.const, true);
+  assert.equal(profile.externalSemanticDependency.const, false);
+  assert.equal(profile.explanationRequired.const, true);
+  assert.deepEqual(
+    definitions.$defs.CastingCompatibilityRules.prefixItems.map(
+      (item) => item.const,
+    ),
+    [
+      "hard_constraints_fail_closed",
+      "soft_preferences_score_separately",
+      "unknown_remains_unknown",
+      "no_automatic_assignment",
+      "declared_metadata_only",
+    ],
+  );
+  assert.deepEqual(
+    definitions.$defs.CastingRightsEligibilityRules.prefixItems.map(
+      (item) => item.const,
+    ),
+    [
+      "verified_eligible",
+      "restricted_requires_acknowledgement",
+      "unknown_ineligible",
+      "prohibited_ineligible",
+    ],
+  );
+  assert.equal(
+    definitions.$defs.CastingProfile.properties.fingerprint.const,
+    "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6",
+  );
+  assert.equal(
+    createHash("sha256")
+      .update(
+        definitions.$defs.CastingProfile.properties.canonicalJson.const,
+        "utf8",
+      )
+      .digest("hex"),
+    definitions.$defs.CastingProfile.properties.fingerprint.const,
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(limits).map(([name, property]) => [
+        name,
+        property.const,
+      ]),
+    ),
+    {
+      maximumProductionRoles: 300,
+      maximumVoiceProfiles: 5000,
+      maximumPreReductionCandidatesPerRole: 50,
+      maximumFinalCandidatesPerRole: 12,
+      defaultPageSize: 50,
+      maximumPageSize: 200,
+      maximumExplanationCodePoints: 2000,
+      maximumWarningsPerEntity: 32,
+      maximumHardConstraintResults: 16,
+      maximumSoftPreferenceResults: 16,
+      maximumConflictsPerRun: 10000,
+      maximumVoiceReusePerProfile: 2,
+    },
+  );
+  assert.equal(
+    definitions.$defs.CastingCompatibilityAssessment.properties
+      .explanation.$ref,
+    "#/$defs/NonblankText",
+  );
+  assert.equal(definitions.$defs.NonblankText.maxLength, 2000);
+});
+
+test("Phase 3A rights, roles, compatibility, conflicts, corrections, and gates are explicit", async () => {
+  const definitions = await readJson(phase3DefinitionsPath);
+
+  assert.deepEqual(definitions.$defs.Warning.required, [
+    "code",
+    "severity",
+    "message",
+    "requiresHumanReview",
+    "relatedEntityIds",
+    "evidence",
+  ]);
+  assert.deepEqual(
+    Object.keys(definitions.$defs.Warning.properties),
+    [
+      "code",
+      "severity",
+      "message",
+      "requiresHumanReview",
+      "relatedEntityIds",
+      "evidence",
+    ],
+  );
+  assert.equal(
+    Object.hasOwn(definitions.$defs.Warning.properties, "warningId"),
+    false,
+  );
+  assert.equal(
+    definitions.$defs.Warning.properties.code.pattern,
+    "^[A-Z][A-Z0-9_]{2,79}$",
+  );
+  assert.equal(
+    definitions.$defs.Warning.properties.message.maxLength,
+    1000,
+  );
+  assert.equal(
+    definitions.$defs.Warning.properties.relatedEntityIds.maxItems,
+    16,
+  );
+  assert.equal(
+    definitions.$defs.Warning.properties.relatedEntityIds.uniqueItems,
+    true,
+  );
+  assert.equal(
+    definitions.$defs.Warning.properties.evidence.maxItems,
+    16,
+  );
+  assert.equal(
+    definitions.$defs.Warning.properties.evidence.items.$ref,
+    "../v2/definitions.schema.json#/$defs/AnalysisEvidenceSpan",
+  );
+  assert.deepEqual(definitions.$defs.VoiceRightsState.enum, [
+    "verified",
+    "restricted",
+    "unknown",
+    "prohibited",
+  ]);
+  assert.deepEqual(definitions.$defs.ProductionRoleType.enum, [
+    "primary_narrator",
+    "secondary_narrator",
+    "named_character",
+    "unresolved_speaker",
+    "group_or_crowd",
+    "quoted_document_or_announcement",
+    "internal_thought",
+    "custom",
+  ]);
+  assert.equal(
+    definitions.$defs.CustomProductionRole.allOf[1].properties.roleType.const,
+    "custom",
+  );
+  assert.equal(
+    definitions.$defs.CustomProductionRole.allOf[1].properties.phase2EntityId
+      .type,
+    "null",
+  );
+  assert.deepEqual(
+    definitions.$defs.CastingCompatibilityAssessment.properties
+      .rightsEligibility.enum,
+    [
+      "eligible",
+      "restricted_requires_acknowledgement",
+      "ineligible_unknown",
+      "ineligible_prohibited",
+    ],
+  );
+  for (const definitionName of [
+    "CastingCompatibilityAssessment",
+    "CastingCandidate",
+    "CastingConflict",
+  ]) {
+    const definition = definitions.$defs[definitionName];
+    assert.ok(
+      definition.required.includes("baseEvidenceFingerprint"),
+      `${definitionName} must expose immutable base evidence separately`,
+    );
+    assert.equal(
+      definition.properties.baseEvidenceFingerprint.$ref,
+      "#/$defs/Sha256",
+    );
+    assert.ok(
+      definition.required.includes("outputFingerprint"),
+      `${definitionName} must fingerprint its public projection`,
+    );
+  }
+  assert.equal(
+    definitions.$defs.CastingConflict.properties.metadataOnly.const,
+    true,
+  );
+  assert.equal(
+    definitions.$defs.CastingConflict.properties
+      .acousticSimilarityClaimed.const,
+    false,
+  );
+  assert.equal(
+    definitions.$defs.CastingConflict.properties.roleIds.maxItems,
+    300,
+  );
+  assert.equal(
+    definitions.$defs.CastingConflict.properties.voiceProfileIds.maxItems,
+    300,
+  );
+  const voiceReuseCorrection =
+    definitions.$defs.CastingCorrection.properties.correctedValue.oneOf.find(
+      (value) => Object.hasOwn(value.properties, "approvedRoleIds"),
+    );
+  assert.equal(voiceReuseCorrection.properties.approvedRoleIds.minItems, 2);
+  assert.equal(voiceReuseCorrection.properties.approvedRoleIds.maxItems, 300);
+  for (const field of [
+    "voiceProfileVersion",
+    "voiceEvidenceFingerprint",
+    "rightsRecordId",
+    "rightsRecordRevision",
+    "rightsEvidenceFingerprint",
+  ]) {
+    assert.ok(
+      definitions.$defs.CastAssignment.required.includes(field),
+      `assignment must freeze selected voice evidence field ${field}`,
+    );
+  }
+  assert.deepEqual(
+    definitions.$defs.CastingCorrectionCategory.enum,
+    [
+      "select_voice",
+      "clear_assignment",
+      "lock_assignment",
+      "unlock_assignment",
+      "mark_intentionally_uncast",
+      "change_role_label",
+      "change_casting_requirement",
+      "acknowledge_restricted_rights",
+      "approve_voice_reuse",
+      "reject_candidate",
+      "record_custom_rationale",
+    ],
+  );
+  assert.equal(
+    definitions.$defs.CastingCorrection.properties.immutable.const,
+    true,
+  );
+  assert.equal(
+    definitions.$defs.CastingCorrection.properties
+      .lockedAgainstAutomation.const,
+    true,
+  );
+  assert.deepEqual(definitions.$defs.CastingGateId.enum, [
+    "narrator_casting_review",
+    "character_casting_review",
+    "complete_cast_review",
+  ]);
+  assert.equal(
+    definitions.$defs.CastingGateReview.properties.openWarningIds.maxItems,
+    32,
+  );
+  assert.equal(
+    definitions.$defs.CastingGateReview.properties.acknowledgedWarningIds
+      .maxItems,
+    32,
+  );
+  assert.ok(
+    definitions.$defs.CastingConflict.properties.resolutionState.enum.includes(
+      "superseded",
+    ),
+  );
+  const completeGateRule =
+    definitions.$defs.CastingGateReview.allOf[0];
+  assert.equal(
+    completeGateRule.if.properties.gateId.const,
+    "complete_cast_review",
+  );
+  assert.deepEqual(
+    completeGateRule.then.properties.prerequisiteGateIds.prefixItems.map(
+      (item) => item.const,
+    ),
+    [
+      "narrator_casting_review",
+      "character_casting_review",
+    ],
+  );
+  assert.equal(
+    definitions.$defs.CastingReviewDecision.properties.immutable.const,
+    true,
+  );
+  assert.deepEqual(
+    definitions.$defs.CastingReviewDecision.properties.decision.enum,
+    [
+      "approved",
+      "changes_requested",
+      "rejected",
+      "invalidated",
+    ],
+  );
+  assert.deepEqual(
+    definitions.$defs.CastingReviewDecision.properties.actor.properties
+      .classification.enum,
+    ["human", "system"],
+  );
+  assert.deepEqual(
+    definitions.$defs.CastingReviewDecision.allOf,
+    [
+      {
+        if: {
+          properties: {
+            decision: {
+              const: "invalidated",
+            },
+          },
+          required: ["decision"],
+        },
+        then: {
+          properties: {
+            actor: {
+              properties: {
+                classification: {
+                  const: "system",
+                },
+              },
+              required: ["classification"],
+            },
+          },
+          required: ["actor"],
+        },
+        else: {
+          properties: {
+            actor: {
+              properties: {
+                classification: {
+                  const: "human",
+                },
+              },
+              required: ["classification"],
+            },
+          },
+          required: ["actor"],
+        },
+      },
+    ],
+    "only the system may invalidate a casting review; all other decisions are human",
+  );
+  assert.equal(
+    definitions.$defs.ApprovedCastSnapshot.properties.immutable.const,
+    true,
+  );
+});
+
+test("Phase 3A correction categories bind to exact corrected-value variants", async () => {
+  const definitions = await readJson(phase3DefinitionsPath);
+  const correction = definitions.$defs.CastingCorrection;
+  const expectedCouplings = new Map([
+    ["select_voice", ["voiceProfileId"]],
+    ["clear_assignment", ["expectedAssignmentId"]],
+    ["lock_assignment", ["assignmentId"]],
+    ["unlock_assignment", ["lockedAssignmentId"]],
+    ["mark_intentionally_uncast", ["intentionallyUncast"]],
+    ["change_role_label", ["effectiveDisplayLabel"]],
+    ["change_casting_requirement", ["requirement"]],
+    [
+      "acknowledge_restricted_rights",
+      ["rightsRecordId", "rightsRecordRevision"],
+    ],
+    ["approve_voice_reuse", ["conflictId", "approvedRoleIds"]],
+    ["reject_candidate", ["candidateId"]],
+    ["record_custom_rationale", ["rationale"]],
+  ]);
+  const fieldKey = (fields) => [...fields].sort().join("|");
+
+  assert.deepEqual(
+    definitions.$defs.CastingCorrectionCategory.enum,
+    [...expectedCouplings.keys()],
+  );
+  assert.equal(correction.oneOf.length, expectedCouplings.size);
+  assert.equal(
+    correction.properties.correctedValue.oneOf.length,
+    expectedCouplings.size,
+  );
+
+  const couplingByCategory = new Map(
+    correction.oneOf.map((branch) => [
+      branch.properties.category.const,
+      [...branch.properties.correctedValue.required].sort(),
+    ]),
+  );
+  assert.equal(couplingByCategory.size, expectedCouplings.size);
+
+  const valueShapeByFields = new Map(
+    correction.properties.correctedValue.oneOf.map((variant) => {
+      const requiredFields = [...variant.required].sort();
+      assert.equal(variant.type, "object");
+      assert.equal(variant.additionalProperties, false);
+      assert.deepEqual(
+        Object.keys(variant.properties).sort(),
+        requiredFields,
+      );
+      return [fieldKey(requiredFields), variant];
+    }),
+  );
+  assert.equal(valueShapeByFields.size, expectedCouplings.size);
+
+  for (const [category, expectedFields] of expectedCouplings) {
+    const couplingFields = couplingByCategory.get(category);
+    assert.deepEqual(
+      couplingFields,
+      [...expectedFields].sort(),
+      `${category} must require its exact correctedValue fields`,
+    );
+    assert.ok(
+      valueShapeByFields.has(fieldKey(expectedFields)),
+      `${category} must reference one closed correctedValue variant`,
+    );
+
+    for (const [shapeCategory, shapeFields] of expectedCouplings) {
+      const couplingAcceptsShape = couplingFields.every((field) =>
+        shapeFields.includes(field),
+      );
+      assert.equal(
+        couplingAcceptsShape,
+        shapeCategory === category,
+        `${category} must reject the ${shapeCategory} correctedValue shape`,
+      );
+    }
+  }
+
+  const voiceReuseShape = valueShapeByFields.get(
+    fieldKey(["conflictId", "approvedRoleIds"]),
+  );
+  assert.equal(
+    voiceReuseShape.properties.approvedRoleIds.minItems,
+    2,
+  );
+  assert.equal(
+    voiceReuseShape.properties.approvedRoleIds.maxItems,
+    300,
+  );
+  assert.equal(
+    voiceReuseShape.properties.approvedRoleIds.uniqueItems,
+    true,
+  );
+});
+
+test("Phase 3A durable job stages and frozen Phase 2 prerequisites are complete", async () => {
+  const definitions = await readJson(phase3DefinitionsPath);
+  assert.deepEqual(definitions.$defs.CastingJobStage.enum, [
+    "validate_phase_2_approvals",
+    "freeze_source_analysis_evidence",
+    "load_voice_catalog_revision",
+    "create_production_roles",
+    "evaluate_role_constraints",
+    "generate_bounded_candidates",
+    "evaluate_differentiation_conflicts",
+    "publish_casting_run",
+    "publish_reviewable_cast_snapshot",
+  ]);
+  for (const field of [
+    "progress",
+    "checkpoint",
+    "attempt",
+    "retryPolicy",
+    "failurePolicy",
+    "resumeOfCastingRunId",
+    "retryOfCastingRunId",
+    "retryClassification",
+    "cancellationRequested",
+    "idempotencyFingerprint",
+    "failure",
+  ]) {
+    assert.ok(
+      definitions.$defs.CastingRun.required.includes(field),
+      `casting run must require durable control field ${field}`,
+    );
+  }
+  assert.equal(
+    definitions.$defs.CastingRun.properties.failurePolicy.const,
+    "fail_closed_preserve_effective_cast_snapshot",
+  );
+  assert.deepEqual(
+    definitions.$defs.CastingPhase2Prerequisites.properties
+      .phase2GateDecisionIds.required,
+    [
+      "storyStructureReview",
+      "characterRegistryReview",
+      "dialogueAttributionReview",
+      "wholeBookAnalysisReview",
+    ],
+  );
+  for (const field of [
+    "sourceDocumentId",
+    "sourceRevision",
+    "extractionId",
+    "extractionRevision",
+    "extractedTextSha256",
+    "importReviewDecisionId",
+    "analysisRunId",
+    "analysisSnapshotId",
+    "analysisSnapshotRevision",
+    "analysisSnapshotFingerprint",
+    "analysisCorrectionSetFingerprint",
+    "characterRegistryFingerprint",
+    "phase2GateDecisionIds",
+    "evidenceFingerprint",
+  ]) {
+    assert.ok(
+      definitions.$defs.CastingPhase2Prerequisites.required.includes(
+        field,
+      ),
+      `casting prerequisite must require ${field}`,
+    );
+  }
+});
+
+test("Phase 3A CI proof schemas require casting and exact process evidence without private text", async () => {
+  const definitions = await readJson(phase3DefinitionsPath);
+  const packaged = definitions.$defs.Phase3PackagedE2eResult;
+  const manifest = definitions.$defs.Phase3BuildEvidenceManifest;
+
+  assert.equal(packaged.properties.schemaVersion.const, "5.0.0");
+  assert.equal(manifest.properties.schemaVersion.const, "4.0.0");
+  assert.equal(
+    definitions.$defs.Phase3PackagedFlow.prefixItems.length,
+    32,
+  );
+  assert.equal(
+    definitions.$defs.Phase3PackagedFlow.prefixItems.at(-1).const,
+    "verify_final_owned_process_exit",
+  );
+  assert.equal(
+    definitions.$defs.Phase3SuccessfulScreenshot.properties
+      .captureStatus.const,
+    "success",
+  );
+  assert.equal(
+    packaged.properties.fixture.const,
+    "fixtures/synthetic-story/sample-story.docx.base64",
+  );
+  assert.equal(
+    definitions.$defs.Phase3ProcessOwnershipProof.properties
+      .ownershipEstablished.const,
+    true,
+  );
+  assert.equal(
+    definitions.$defs.Phase3ProcessOwnershipProof.properties
+      .launchShutdowns.minItems,
+    2,
+  );
+  assert.equal(
+    definitions.$defs.Phase3ProcessOwnershipProof.properties
+      .launchShutdowns.maxItems,
+    2,
+  );
+  assert.equal(
+    definitions.$defs.Phase3LaunchShutdownProof.properties.electron
+      .properties.exitCode.const,
+    0,
+  );
+  assert.equal(
+    definitions.$defs.Phase3LaunchShutdownProof.properties.electron
+      .properties.forceKillUsed.const,
+    false,
+  );
+  assert.equal(
+    definitions.$defs.Phase3LaunchShutdownProof.properties.service
+      .properties.method.const,
+    "stdin_eof",
+  );
+  assert.equal(
+    definitions.$defs.Phase3LaunchShutdownProof.properties.service
+      .properties.exitCode.const,
+    0,
+  );
+  assert.equal(
+    definitions.$defs.Phase3LaunchShutdownProof.properties.service
+      .properties.signalCode.const,
+    null,
+  );
+  assert.equal(
+    definitions.$defs.Phase3LaunchShutdownProof.properties.service
+      .properties.forceKillUsed.const,
+    false,
+  );
+  assert.equal(
+    definitions.$defs.Phase3ProcessOwnershipProof.properties.forcedPids
+      .maxItems,
+    0,
+  );
+  assert.equal(
+    definitions.$defs.Phase3ProcessOwnershipProof.properties
+      .remainingOwnedPids.maxItems,
+    0,
+  );
+  assert.equal(
+    definitions.$defs.Phase3ProcessOwnershipProof.properties
+      .unrelatedProcessesTerminated.const,
+    false,
+  );
+  assert.deepEqual(
+    definitions.$defs.Phase3RoleVoiceAssignmentEvidence.required,
+    [
+      "assignmentId",
+      "roleId",
+      "roleType",
+      "voiceProfileId",
+      "authority",
+      "rightsState",
+    ],
+  );
+  assert.equal(
+    definitions.$defs.Phase3RoleVoiceAssignmentEvidence.properties
+      .roleType.$ref,
+    "#/$defs/ProductionRoleType",
+  );
+  assert.equal(
+    definitions.$defs.Phase3RoleVoiceAssignmentEvidence.properties
+      .authority.const,
+    "human_locked",
+  );
+  assert.deepEqual(
+    definitions.$defs.Phase3RoleVoiceAssignmentEvidence.properties
+      .rightsState.enum,
+    ["verified", "restricted"],
+  );
+  assert.equal(
+    definitions.$defs.Phase3CastingProof.properties
+      .narratorAssignment.$ref,
+    "#/$defs/Phase3NarratorRoleVoiceAssignmentEvidence",
+  );
+  assert.deepEqual(
+    definitions.$defs.Phase3NarratorRoleVoiceAssignmentEvidence
+      .allOf[1].properties.roleType.enum,
+    ["primary_narrator", "secondary_narrator"],
+  );
+  assert.deepEqual(
+    definitions.$defs.Phase3CharacterRoleVoiceAssignmentEvidence
+      .allOf[1].properties.roleType.enum,
+    [
+      "named_character",
+      "unresolved_speaker",
+      "group_or_crowd",
+      "quoted_document_or_announcement",
+      "internal_thought",
+      "custom",
+    ],
+  );
+  assert.equal(
+    definitions.$defs.Phase3CastingProof.properties
+      .characterAssignments.minItems,
+    2,
+  );
+  assert.equal(
+    definitions.$defs.Phase3CastingProof.properties
+      .characterAssignments.maxItems,
+    300,
+  );
+  assert.equal(
+    Object.values(
+      definitions.$defs.Phase3Assertions.properties,
+    ).every((property) => property.const === true),
+    true,
+  );
+  assert.equal(
+    manifest.properties.artifacts.$ref,
+    "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/artifacts",
+  );
+  assert.equal(
+    manifest.properties.assertions.$ref,
+    "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/assertions",
+  );
+  assert.equal(
+    manifest.properties.voiceCastingContract.$ref,
+    "#/$defs/Phase3VoiceCastingEvidence",
+  );
+  assert.deepEqual(manifest.required, [
+    "schemaVersion",
+    "artifactPathScope",
+    "workflowHeadSha",
+    "testedCheckoutSha",
+    "pullRequestHeadSha",
+    "appVersion",
+    "artifacts",
+    "assertions",
+    "secureIngest",
+    "storyAnalysisContract",
+    "packagedE2e",
+    "voiceCastingContract",
+    "testTimestamp",
+    "runner",
+  ]);
+  assert.equal(
+    definitions.$defs.Phase3VoiceCastingEvidence.properties
+      .correctionPersistence.const,
+    true,
+  );
+  assert.equal(
+    definitions.$defs.Phase3VoiceCastingEvidence.properties
+      .assignments.properties.narratorAssignment.$ref,
+    "#/$defs/Phase3NarratorRoleVoiceAssignmentEvidence",
+  );
+  assert.equal(
+    definitions.$defs.Phase3VoiceCastingEvidence.properties
+      .assignments.properties.characterAssignments.items.$ref,
+    "#/$defs/Phase3CharacterRoleVoiceAssignmentEvidence",
+  );
+
+  const proofSchemas = collectReachableDefinitions(definitions, [
+    "Phase3BuildEvidenceManifest",
+    "Phase3PackagedE2eResult",
+  ]);
+  const serializedProofSchemas = JSON.stringify(proofSchemas);
+  for (const privateContentField of [
+    "exactText",
+    "excerptText",
+    "manuscript",
+    "sourceText",
+    "textContent",
+    "licenseDocument",
+    "credential",
   ]) {
     assert.equal(
       serializedProofSchemas.includes(`"${privateContentField}"`),

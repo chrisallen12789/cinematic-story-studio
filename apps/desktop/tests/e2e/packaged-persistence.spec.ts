@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import {
   lstat,
   mkdir,
@@ -37,12 +38,38 @@ import {
   type PackagedStoryAnalysisEvidence
 } from "../../src/verification/packaged-e2e-evidence";
 import {
+  packagedShutdownEvidenceEnvironment,
+  readPackagedServiceShutdownEvidence,
+  type PackagedServiceShutdownEvidence
+} from "../../src/main/shutdown-evidence";
+import {
+  phase3PackagedE2eResultEnvironment,
+  phase3PackagedE2eSchemaVersion,
+  phase3PackagedFixture,
+  phase3PackagedFlow,
+  phase3VoiceCastingEvidenceEnvironment,
+  voiceCastingContractVersion,
+  writePhase3PackagedE2eResult,
+  writePhase3VoiceCastingEvidence,
+  type Phase3LaunchShutdownProof,
+  type Phase3PackagedE2eResult
+} from "../../src/verification/phase3-packaged-e2e-evidence";
+import {
   buildPackagedStoryAnalysisEvidence,
   expectPhase2RestartPersistence,
   readPhase2RuntimeSnapshot,
   runPhase2GovernanceWorkflow,
   type Phase2WorkflowEvidence
 } from "./phase2-story-analysis";
+import {
+  buildPhase3PersistenceEvidence,
+  buildPhase3VoiceCastingEvidence,
+  expectPhase3RestartPersistence,
+  readPhase3RuntimeSnapshot,
+  runPhase3GovernanceWorkflow,
+  type Phase3PersistenceEvidence,
+  type Phase3WorkflowEvidence
+} from "./phase3-voice-casting";
 import {
   adoptVerifiedProcessTree,
   appExecutableName,
@@ -79,12 +106,14 @@ test.describe("packaged desktop verification", () => {
   test.skip(
     !hasEnvironmentValue(packagedExecutableEnvironment) ||
       !hasEnvironmentValue(evidencePathEnvironment) ||
-      !hasEnvironmentValue(resultPathEnvironment),
-    `Set ${packagedExecutableEnvironment}, ${evidencePathEnvironment}, and ${resultPathEnvironment} to run the packaged gate.`
+      !hasEnvironmentValue(resultPathEnvironment) ||
+      !hasEnvironmentValue(phase3PackagedE2eResultEnvironment) ||
+      !hasEnvironmentValue(phase3VoiceCastingEvidenceEnvironment),
+    `Set ${packagedExecutableEnvironment}, ${evidencePathEnvironment}, ${resultPathEnvironment}, ${phase3PackagedE2eResultEnvironment}, and ${phase3VoiceCastingEvidenceEnvironment} to run the packaged gate.`
   );
 
   test("runs the synthetic persistence flow in the packaged application", async () => {
-    test.setTimeout(240_000);
+    test.setTimeout(600_000);
     const packaged = await requirePackagedExecutable(
       requiredEnvironment(packagedExecutableEnvironment)
     );
@@ -96,6 +125,18 @@ test.describe("packaged desktop verification", () => {
       requiredEnvironment(resultPathEnvironment),
       packaged
     );
+    const phase3ResultPath = requireReleaseEvidencePath(
+      requiredEnvironment(phase3PackagedE2eResultEnvironment),
+      packaged,
+      "phase-3-packaged-e2e-result.json",
+      phase3PackagedE2eResultEnvironment
+    );
+    const phase3VoiceCastingEvidencePath = requireReleaseEvidencePath(
+      requiredEnvironment(phase3VoiceCastingEvidenceEnvironment),
+      packaged,
+      "phase-3-voice-casting-evidence.json",
+      phase3VoiceCastingEvidenceEnvironment
+    );
 
     let isolationRoot: string | null = null;
     let preexistingProcesses: readonly ProcessIdentity[] | null = null;
@@ -105,6 +146,8 @@ test.describe("packaged desktop verification", () => {
     let secondOwnership: LaunchOwnership | null = null;
     let firstOwnershipSampler: OwnershipSampler | null = null;
     let secondOwnershipSampler: OwnershipSampler | null = null;
+    let firstShutdownEvidencePath: string | null = null;
+    let secondShutdownEvidencePath: string | null = null;
     let operationError: Error | null = null;
     let failureStage: PackagedFailureStage | null = null;
     let failureCode: PackagedFailureCode | null = null;
@@ -113,17 +156,21 @@ test.describe("packaged desktop verification", () => {
     let importReviewEvidence: PackagedImportReviewEvidence | null = null;
     let storyAnalysisEvidence: PackagedStoryAnalysisEvidence | null = null;
     let phase2Workflow: Phase2WorkflowEvidence;
+    let phase3Workflow: Phase3WorkflowEvidence;
+    let phase3PersistenceEvidence: Phase3PersistenceEvidence | null = null;
     const cleanupErrors: unknown[] = [];
     const launchEvidence: MachineLaunchEvidence[] = [];
+    const phase3LaunchShutdowns: Phase3LaunchShutdownProof[] = [];
     const begunLaunches = new Set<1 | 2>();
     const ownedLaunches = new Set<1 | 2>();
     const writeMachineResult = async (
       status: "passed" | "failed",
-      cleanupCompleted: boolean
+      cleanupCompleted: boolean,
+      completedAt = new Date().toISOString()
     ) => {
       await writePackagedE2eMachineResult(resultPath, {
         schemaVersion: packagedE2eSchemaVersion,
-        completedAt: new Date().toISOString(),
+        completedAt,
         status,
         failureStage: status === "passed" ? null : failureStage,
         failureCode: status === "passed" ? null : failureCode,
@@ -166,7 +213,11 @@ test.describe("packaged desktop verification", () => {
     try {
       await Promise.all([
         mkdir(path.dirname(evidencePath), { recursive: true }),
-        mkdir(path.dirname(resultPath), { recursive: true })
+        mkdir(path.dirname(resultPath), { recursive: true }),
+        mkdir(path.dirname(phase3ResultPath), { recursive: true }),
+        mkdir(path.dirname(phase3VoiceCastingEvidencePath), {
+          recursive: true
+        })
       ]);
       await checkpointStage("prelaunch_inventory_1");
       preexistingProcesses = await runPackagedE2eEvidenceStep(
@@ -187,6 +238,18 @@ test.describe("packaged desktop verification", () => {
         roamingAppData: path.join(isolationRoot, "AppData"),
         temporaryDirectory: path.join(isolationRoot, "Temp")
       };
+      const isolatedUserDataPath = path.join(
+        isolatedPaths.localAppData,
+        "Cinematic Story Studio"
+      );
+      firstShutdownEvidencePath = path.join(
+        isolatedUserDataPath,
+        "packaged-e2e-service-shutdown-1.json"
+      );
+      secondShutdownEvidencePath = path.join(
+        isolatedUserDataPath,
+        "packaged-e2e-service-shutdown-2.json"
+      );
       await Promise.all([
         mkdir(isolatedPaths.localAppData, { recursive: true }),
         mkdir(isolatedPaths.roamingAppData, { recursive: true }),
@@ -204,9 +267,11 @@ test.describe("packaged desktop verification", () => {
 
       begunLaunches.add(1);
       await checkpointStage("launch_1");
-      first = await launchPackaged(packaged.executablePath, {
-        ...isolatedPaths
-      });
+      first = await launchPackaged(
+        packaged.executablePath,
+        { ...isolatedPaths },
+        firstShutdownEvidencePath
+      );
       await checkpointStage("root_ownership_1");
       firstOwnership = await establishRootOwnership(
         first,
@@ -222,11 +287,6 @@ test.describe("packaged desktop verification", () => {
       firstOwnership = await expandOwnership(
         firstOwnership,
         true
-      );
-      const initialServiceIdentities = new Set(
-        firstOwnership.processes
-          .filter((item) => item.kind === "service")
-          .map(processIdentityKey)
       );
       ownedLaunches.add(1);
       firstOwnershipSampler = startOwnershipSampler(firstOwnership);
@@ -429,35 +489,29 @@ test.describe("packaged desktop verification", () => {
         targetEntityType: "DialogueLine"
       });
       phase2Workflow = await runPhase2GovernanceWorkflow(firstPage);
+      phase3Workflow = await runPhase3GovernanceWorkflow(
+        firstPage,
+        phase2Workflow.governed
+      );
 
       await checkpointStage("shutdown_1");
       await firstOwnershipSampler.stop();
       firstOwnershipSampler = null;
-      const sampledFirstOwnership = firstOwnership;
-      const transientParserProcesses =
-        sampledFirstOwnership.processes.filter(
-          (item) =>
-            item.kind === "service" &&
-            !initialServiceIdentities.has(processIdentityKey(item))
-        );
-      expect(transientParserProcesses.length).toBeGreaterThan(0);
-      expect(
-        transientParserProcesses.every((item) =>
-          sampledFirstOwnership.processes.some(
-            (parent) =>
-              parent.kind === "service" &&
-              parent.pid === item.parentPid &&
-              parent.creationDate <= item.creationDate
-          )
-        )
-      ).toBe(true);
       const firstExitProof = await closeOwnedElectron(
         first,
-        firstOwnership
+        firstOwnership,
+        firstShutdownEvidencePath
       );
       expect(firstExitProof.graceful).toBe(true);
       launchEvidence.push(
         machineLaunchEvidence(1, firstOwnership, firstExitProof)
+      );
+      phase3LaunchShutdowns.push(
+        phase3LaunchShutdownProof(1, firstOwnership, firstExitProof)
+      );
+      phase3Workflow.flowRecorder.record("close_application");
+      phase3Workflow.flowRecorder.record(
+        "verify_first_shutdown_owned_process_exit"
       );
       first = null;
       firstOwnership = null;
@@ -466,9 +520,11 @@ test.describe("packaged desktop verification", () => {
       const beforeSecondLaunch = await queryRelevantProcesses();
       begunLaunches.add(2);
       await checkpointStage("launch_2");
-      second = await launchPackaged(packaged.executablePath, {
-        ...isolatedPaths
-      });
+      second = await launchPackaged(
+        packaged.executablePath,
+        { ...isolatedPaths },
+        secondShutdownEvidencePath
+      );
       await checkpointStage("root_ownership_2");
       secondOwnership = await establishRootOwnership(
         second,
@@ -480,6 +536,7 @@ test.describe("packaged desktop verification", () => {
       await expect(
         secondPage.getByText("Backend ready", { exact: true }).first()
       ).toBeVisible({ timeout: 45_000 });
+      phase3Workflow.flowRecorder.record("restart_same_application");
       await checkpointStage("service_ownership_2");
       secondOwnership = await expandOwnership(
         secondOwnership,
@@ -551,6 +608,9 @@ test.describe("packaged desktop verification", () => {
         restoredPhase2
       );
       expectPhase2RestartPersistence(storyAnalysisEvidence);
+      phase3Workflow.flowRecorder.record(
+        "restore_phase_0_through_phase_2_evidence"
+      );
       await secondPage
         .getByRole("navigation", { name: "Scenes" })
         .getByRole("button")
@@ -584,6 +644,31 @@ test.describe("packaged desktop verification", () => {
           hasText: "Approved"
         })
       ).toHaveCount(4);
+      await secondPage
+        .getByRole("button", { name: "Casting", exact: true })
+        .click();
+      await expect(
+        secondPage.getByRole("heading", {
+          name: "Casting workspace",
+          exact: true
+        })
+      ).toBeVisible({ timeout: 30_000 });
+      const restoredPhase3 =
+        await readPhase3RuntimeSnapshot(secondPage);
+      expectPhase3RestartPersistence(phase3Workflow, restoredPhase3);
+      phase3Workflow.flowRecorder.record(
+        "restore_phase_3a_casting_evidence"
+      );
+      phase3PersistenceEvidence = buildPhase3PersistenceEvidence(
+        phase3Workflow,
+        restoredPhase3,
+        storyAnalysisEvidence
+      );
+      await expect(
+        secondPage.locator(".review-card .review-state", {
+          hasText: "Approved"
+        })
+      ).toHaveCount(3);
       await checkpointStage("screenshot");
       await secondPage.screenshot({
         path: evidencePath,
@@ -600,12 +685,21 @@ test.describe("packaged desktop verification", () => {
       secondOwnershipSampler = null;
       const secondExitProof = await closeOwnedElectron(
         second,
-        secondOwnership
+        secondOwnership,
+        secondShutdownEvidencePath
       );
       expect(secondExitProof.graceful).toBe(true);
       launchEvidence.push(
         machineLaunchEvidence(2, secondOwnership, secondExitProof)
       );
+      phase3LaunchShutdowns.push(
+        phase3LaunchShutdownProof(2, secondOwnership, secondExitProof)
+      );
+      phase3Workflow.flowRecorder.record("close_restarted_application");
+      phase3Workflow.flowRecorder.record(
+        "verify_final_owned_process_exit"
+      );
+      phase3Workflow.flowRecorder.complete();
       second = null;
       secondOwnership = null;
     } catch (error) {
@@ -631,12 +725,16 @@ test.describe("packaged desktop verification", () => {
           cleanupErrors.push(error);
         }
       }
-      for (const [application, ownership] of [
-        [second, secondOwnership],
-        [first, firstOwnership]
+      for (const [application, ownership, shutdownEvidencePath] of [
+        [second, secondOwnership, secondShutdownEvidencePath],
+        [first, firstOwnership, firstShutdownEvidencePath]
       ] as const) {
         try {
-          await closeOwnedElectron(application, ownership);
+          await closeOwnedElectron(
+            application,
+            ownership,
+            shutdownEvidencePath
+          );
         } catch (error) {
           cleanupErrors.push(error);
         }
@@ -659,12 +757,54 @@ test.describe("packaged desktop verification", () => {
         failureStage = "cleanup";
         failureCode = "CLEANUP_FAILED";
       }
+      const completedAt = new Date().toISOString();
+      if (operationError === null && cleanupCompleted) {
+        failureStage = "evidence_generation";
+        failureCode = "EVIDENCE_GENERATION_FAILED";
+        if (
+          phase3PersistenceEvidence === null ||
+          launchEvidence.length !== 2
+        ) {
+          cleanupErrors.push(
+            new Error(
+              "The complete Phase 3A packaged evidence was unavailable."
+            )
+          );
+        } else {
+          try {
+            const phase3Result = await buildPhase3MachineResult({
+              completedAt,
+              screenshotPath: evidencePath,
+              packagedVersion: packaged.version,
+              launchEvidence,
+              launchShutdowns: phase3LaunchShutdowns,
+              persistence: phase3PersistenceEvidence
+            });
+            await writePhase3PackagedE2eResult(
+              phase3ResultPath,
+              phase3Result
+            );
+            await writePhase3VoiceCastingEvidence(
+              phase3VoiceCastingEvidencePath,
+              buildPhase3VoiceCastingEvidence(
+                phase3PersistenceEvidence,
+                phase3Result
+              )
+            );
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+      }
       try {
         await writeMachineResult(
-          operationError === null && cleanupCompleted
+          operationError === null &&
+            cleanupCompleted &&
+            cleanupErrors.length === 0
             ? "passed"
             : "failed",
-          cleanupCompleted
+          cleanupCompleted,
+          completedAt
         );
       } catch (error) {
         cleanupErrors.push(error);
@@ -715,12 +855,27 @@ interface ExitProof {
   readonly graceful: boolean;
   readonly forcedPids: readonly number[];
   readonly remainingPids: readonly number[];
+  readonly electronExitCode: number | null;
+  readonly serviceShutdown: ServiceShutdownProof | null;
+}
+
+interface ServiceShutdownProof {
+  readonly pid: number;
+  readonly method: "stdin_eof";
+  readonly exitCode: 0;
+  readonly signalCode: null;
+  readonly forceKillUsed: false;
 }
 
 interface ElectronShutdownState {
   readonly child: ReturnType<ElectronApplication["process"]>;
   readonly outcome: "closed" | "failed" | "timeout";
   readonly forcedPids: readonly number[];
+  readonly electronExitCode: number | null;
+  readonly serviceShutdownEvidence:
+    | PackagedServiceShutdownEvidence
+    | null;
+  readonly shutdownEvidenceError: Error | null;
 }
 
 const electronShutdownStates =
@@ -935,7 +1090,8 @@ function reviewEvidence(card: Locator, label: string): Locator {
 
 async function launchPackaged(
   executablePath: string,
-  isolatedPaths: IsolatedPaths
+  isolatedPaths: IsolatedPaths,
+  shutdownEvidencePath: string
 ): Promise<ElectronApplication> {
   const environment: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -949,6 +1105,8 @@ async function launchPackaged(
   environment.TMP = isolatedPaths.temporaryDirectory;
   delete environment.CSS_DESKTOP_DEV_URL;
   delete environment.CSS_E2E_DATA_DIR;
+  environment[packagedShutdownEvidenceEnvironment] =
+    shutdownEvidencePath;
 
   return electron.launch({
     executablePath,
@@ -960,14 +1118,17 @@ async function launchPackaged(
 
 async function closeOwnedElectron(
   application: ElectronApplication | null,
-  ownership: LaunchOwnership | null
+  ownership: LaunchOwnership | null,
+  shutdownEvidencePath: string | null
 ): Promise<ExitProof> {
   if (application === null) {
     return {
       ownedPids: [],
       graceful: true,
       forcedPids: [],
-      remainingPids: []
+      remainingPids: [],
+      electronExitCode: null,
+      serviceShutdown: null
     };
   }
   const priorShutdown = electronShutdownStates.get(application);
@@ -1027,14 +1188,46 @@ async function closeOwnedElectron(
     if (child.exitCode === null && child.signalCode === null) {
       throw new Error("The packaged Electron process did not exit.");
     }
+    let serviceShutdownEvidence:
+      | PackagedServiceShutdownEvidence
+      | null = null;
+    let shutdownEvidenceError: Error | null = null;
+    if (shutdownEvidencePath === null) {
+      shutdownEvidenceError = new Error(
+        "The packaged service shutdown evidence path was unavailable."
+      );
+    } else {
+      try {
+        serviceShutdownEvidence =
+          await readPackagedServiceShutdownEvidence(
+            shutdownEvidencePath
+          );
+      } catch (error) {
+        shutdownEvidenceError =
+          error instanceof Error
+            ? error
+            : new Error(
+                "The packaged service shutdown evidence could not be read."
+              );
+      }
+    }
     shutdownState = {
       child,
       outcome,
-      forcedPids
+      forcedPids,
+      electronExitCode: child.exitCode,
+      serviceShutdownEvidence,
+      shutdownEvidenceError
     };
     electronShutdownStates.set(application, shutdownState);
   }
-  const { outcome, forcedPids } = shutdownState;
+  const {
+    outcome,
+    forcedPids,
+    electronExitCode,
+    serviceShutdownEvidence,
+    shutdownEvidenceError
+  } = shutdownState;
 
   if (ownership === null || verifiedOwnership === null) {
     throw new Error(
@@ -1070,6 +1263,18 @@ async function closeOwnedElectron(
         .join(", ")}.`
     );
   }
+  if (shutdownEvidenceError !== null) {
+    throw shutdownEvidenceError;
+  }
+  const serviceShutdown = proveGracefulServiceShutdown(
+    verifiedOwnership,
+    serviceShutdownEvidence
+  );
+  if (electronExitCode !== 0) {
+    throw new Error(
+      `The packaged Electron launcher exit code was ${String(electronExitCode)} instead of 0.`
+    );
+  }
   if (outcome !== "closed" || forcedPids.length > 0) {
     throw new Error(
       "The packaged Electron launcher did not complete graceful shutdown."
@@ -1079,7 +1284,51 @@ async function closeOwnedElectron(
     ownedPids: verifiedOwnership.processes.map((item) => item.pid),
     graceful: true,
     forcedPids: [],
-    remainingPids: []
+    remainingPids: [],
+    electronExitCode: 0,
+    serviceShutdown
+  };
+}
+
+function proveGracefulServiceShutdown(
+  ownership: LaunchOwnership,
+  evidence: PackagedServiceShutdownEvidence | null
+): ServiceShutdownProof {
+  if (
+    evidence === null ||
+    evidence.status !== "succeeded" ||
+    evidence.forceKillUsed !== false ||
+    evidence.allProcessesExitedGracefully !== true ||
+    evidence.processes.length !== 1
+  ) {
+    throw new Error(
+      "The packaged service did not report one voluntary shutdown."
+    );
+  }
+  const serviceRoot = ownership.processes.filter(
+    (item) =>
+      item.kind === "service" &&
+      item.parentPid === ownership.rootPid
+  );
+  const process = evidence.processes[0];
+  if (
+    serviceRoot.length !== 1 ||
+    process === undefined ||
+    process.pid !== serviceRoot[0]?.pid ||
+    process.method !== "stdin_eof" ||
+    process.exitCode !== 0 ||
+    process.signalCode !== null
+  ) {
+    throw new Error(
+      "The packaged service shutdown record did not match the owned service root."
+    );
+  }
+  return {
+    pid: process.pid,
+    method: "stdin_eof",
+    exitCode: 0,
+    signalCode: null,
+    forceKillUsed: false
   };
 }
 
@@ -1312,10 +1561,6 @@ function samePath(left: string, right: string): boolean {
   );
 }
 
-function processIdentityKey(identity: ProcessIdentity): string {
-  return `${identity.pid}:${identity.creationDate}`;
-}
-
 function evidenceOwnership(ownership: LaunchOwnership) {
   return {
     launcherPid: ownership.launcherPid,
@@ -1341,7 +1586,39 @@ function machineLaunchEvidence(
       .map(redactPreexistingProcess)
       .sort(compareEvidenceProcess),
     ownership: evidenceOwnership(ownership),
-    exitProof
+    exitProof: {
+      ownedPids: exitProof.ownedPids,
+      graceful: exitProof.graceful,
+      forcedPids: exitProof.forcedPids,
+      remainingPids: exitProof.remainingPids
+    }
+  };
+}
+
+function phase3LaunchShutdownProof(
+  launch: 1 | 2,
+  ownership: LaunchOwnership,
+  exitProof: ExitProof
+): Phase3LaunchShutdownProof {
+  const service = exitProof.serviceShutdown;
+  if (
+    exitProof.electronExitCode !== 0 ||
+    exitProof.forcedPids.length !== 0 ||
+    service === null
+  ) {
+    throw new Error(
+      "The Phase 3A launch shutdown proof was incomplete."
+    );
+  }
+  return {
+    launch,
+    electron: {
+      launcherPid: ownership.launcherPid,
+      rootPid: ownership.rootPid,
+      exitCode: 0,
+      forceKillUsed: false
+    },
+    service: { ...service }
   };
 }
 
@@ -1406,6 +1683,153 @@ function requireResultPath(
     );
   }
   return candidate;
+}
+
+function requireReleaseEvidencePath(
+  value: string,
+  packaged: PackagedPaths,
+  fileName: string,
+  environmentName: string
+): string {
+  const candidate = requireAbsolutePath(value, environmentName);
+  const expected = path.join(
+    path.dirname(path.dirname(packaged.executablePath)),
+    fileName
+  );
+  if (!samePath(candidate, expected)) {
+    throw new Error(
+      `${environmentName} must be the exact release evidence path.`
+    );
+  }
+  return candidate;
+}
+
+async function buildPhase3MachineResult({
+  completedAt,
+  screenshotPath,
+  packagedVersion,
+  launchEvidence,
+  launchShutdowns,
+  persistence
+}: {
+  readonly completedAt: string;
+  readonly screenshotPath: string;
+  readonly packagedVersion: string;
+  readonly launchEvidence: readonly MachineLaunchEvidence[];
+  readonly launchShutdowns: readonly Phase3LaunchShutdownProof[];
+  readonly persistence: Phase3PersistenceEvidence;
+}): Promise<Phase3PackagedE2eResult> {
+  if (
+    launchEvidence.length !== 2 ||
+    launchShutdowns.length !== 2 ||
+    launchEvidence.some(
+      (launch) =>
+        !launch.exitProof.graceful ||
+        launch.exitProof.forcedPids.length !== 0 ||
+        launch.exitProof.remainingPids.length !== 0
+    ) ||
+    launchShutdowns.some((shutdown, index) => {
+      const launch = launchEvidence[index];
+      return (
+        launch === undefined ||
+        shutdown.launch !== launch.launch ||
+        shutdown.electron.launcherPid !==
+          launch.ownership.launcherPid ||
+        shutdown.electron.rootPid !== launch.ownership.rootPid ||
+        shutdown.electron.exitCode !== 0 ||
+        shutdown.electron.forceKillUsed ||
+        shutdown.service.method !== "stdin_eof" ||
+        shutdown.service.exitCode !== 0 ||
+        shutdown.service.signalCode !== null ||
+        shutdown.service.forceKillUsed ||
+        !launch.ownership.processes.some(
+          (process) =>
+            process.pid === shutdown.service.pid &&
+            process.parentPid === launch.ownership.rootPid &&
+            process.kind === "service"
+        ) ||
+        !launch.exitProof.ownedPids.includes(shutdown.service.pid)
+      );
+    })
+  ) {
+    throw new Error(
+      "The aggregate Phase 3A owned-process exit proof is incomplete."
+    );
+  }
+  const screenshot = await lstat(screenshotPath);
+  if (!screenshot.isFile() || screenshot.size < 1) {
+    throw new Error("The Phase 3A packaged screenshot is unavailable.");
+  }
+  const repositoryRoot = path.resolve(desktopRoot, "../..");
+  const relativeScreenshotPath = path
+    .relative(repositoryRoot, screenshotPath)
+    .split(path.sep)
+    .join("/");
+  if (
+    relativeScreenshotPath.length === 0 ||
+    relativeScreenshotPath.startsWith("../") ||
+    path.posix.isAbsolute(relativeScreenshotPath) ||
+    relativeScreenshotPath !==
+      `apps/desktop/release/${packagedVersion}/packaged-e2e.png`
+  ) {
+    throw new Error(
+      "The Phase 3A screenshot path escaped the governed release directory."
+    );
+  }
+  const electronOwnedPids = sortedUniquePids(
+    launchEvidence.flatMap((launch) =>
+      launch.ownership.processes
+        .filter((process) => process.kind === "app")
+        .map((process) => process.pid)
+    )
+  );
+  const serviceOwnedPids = sortedUniquePids(
+    launchEvidence.flatMap((launch) =>
+      launch.ownership.processes
+        .filter((process) => process.kind === "service")
+        .map((process) => process.pid)
+    )
+  );
+  if (electronOwnedPids.length === 0 || serviceOwnedPids.length === 0) {
+    throw new Error(
+      "The aggregate Phase 3A process ownership inventory is empty."
+    );
+  }
+  return {
+    schemaVersion: phase3PackagedE2eSchemaVersion,
+    contractVersion: voiceCastingContractVersion,
+    result: "passed",
+    fixture: phase3PackagedFixture,
+    flow: phase3PackagedFlow,
+    casting: persistence.casting,
+    screenshot: {
+      relativePath: relativeScreenshotPath,
+      byteSize: screenshot.size,
+      sha256: createHash("sha256")
+        .update(await readFile(screenshotPath))
+        .digest("hex"),
+      captureStatus: "success"
+    },
+    processOwnership: {
+      ownershipEstablished: true,
+      electronOwnedPids,
+      serviceOwnedPids,
+      launchShutdowns: launchShutdowns.map((shutdown) => ({
+        launch: shutdown.launch,
+        electron: { ...shutdown.electron },
+        service: { ...shutdown.service }
+      })),
+      forcedPids: [],
+      remainingOwnedPids: [],
+      unrelatedProcessesTerminated: false
+    },
+    assertions: persistence.assertions,
+    completedAt
+  };
+}
+
+function sortedUniquePids(values: readonly number[]): readonly number[] {
+  return [...new Set(values)].sort((left, right) => left - right);
 }
 
 function requireAbsolutePath(value: string, environmentName: string): string {

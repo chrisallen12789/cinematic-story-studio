@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/casting-correction.schema.json",
+  "title": "CastingCorrection",
+  "$ref": "definitions.schema.json#/$defs/CastingCorrection"
+}

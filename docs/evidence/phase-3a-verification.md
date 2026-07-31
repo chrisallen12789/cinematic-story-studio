@@ -104,7 +104,9 @@ The final-head Windows job must successfully execute:
 8. packaged E2E against that exact application and its embedded service;
 9. build-evidence generation and initial validation;
 10. tracked-content rescan and clean-tree verification;
-11. final exact-byte manifest revalidation; and
+11. final manifest revalidation, including exact bytes for the application,
+    staged/embedded services, screenshot, and retained packaged result plus
+    schema/semantic validation of the Phase 3A JSON evidence; and
 12. version-scoped short-lived artifact upload.
 
 The Security safeguards workflow must report the exact checksum-pinned
@@ -363,6 +365,7 @@ counts are intentionally different.
 | Build | `pnpm build` passed contracts, service build/smoke/staging, desktop build, and unpacked Electron packaging |
 | Exact local packaged E2E | 1 passed in 8.3 minutes against `apps/desktop/release/0.1.0/win-unpacked/Cinematic Story Studio.exe`; both launches, Phase 0-3A restoration, and owned-process exit passed |
 | Repository safeguards | Final `pnpm lint`, 319-file tracked scan, one-file staged scan, `pnpm precommit`, and staged diff check all passed without findings |
+| Clean committed tree | `node scripts/git-check.mjs --clean` passed after the evidence commits; the handoff audit confirmed a clean worktree and index |
 
 The full backend warning was the same upstream
 `StarletteDeprecationWarning` repeated by each focused subset. No local test
@@ -413,11 +416,12 @@ Every positive step succeeded: credential-free checkout; Python, pnpm, and
 Node setup; frozen Node and hash-locked Python installation with `pip check`;
 exact parser/catalog/fixture verification; lint; type checks; full tests;
 focused Phase 2 and Phase 3A suites; development assets and mandatory Electron
-E2E; service/application build; exact packaged E2E; manifest generation,
-validation, and final exact-byte revalidation; tracked rescan; clean-tree
-verification; and the short-lived upload. Failure diagnostics and the five
-failure-enforcement steps were skipped because their failure predicates were
-false.
+E2E; service/application build; exact packaged E2E; manifest generation and
+validation; final byte/hash revalidation of the application, staged/embedded
+services, screenshot, and retained packaged result; schema/semantic validation
+of the Phase 3A JSON evidence; tracked rescan; clean-tree verification; and the
+short-lived upload. Failure diagnostics and the five failure-enforcement steps
+were skipped because their failure predicates were false.
 
 | GitHub check | Push result | PR result |
 | --- | --- | --- |
@@ -574,10 +578,11 @@ unrelated process trees.
 
 The executable bound remains 300 roles, 5,000 profiles, 15,000 pre-reduction
 assessments, no more than 3,600 published candidates, deterministic rerun
-fingerprints, conflict evaluation, indexed pagination, cancellation, retry,
-checkpoint recovery, and atomic publication. The time and owned-tree working
-set are workstation observations for regression evidence, not universal
-latency or memory SLAs.
+fingerprints, conflict evaluation, bounded pagination plus separately labeled
+structural index/query-plan coverage, cancellation, retry, checkpoint
+recovery, and atomic publication. The time and owned-tree working set are
+workstation observations for regression evidence, not universal latency or
+memory SLAs.
 
 ### Security, dependency scope, warnings, and limitations
 
@@ -596,12 +601,15 @@ hash-locked Python installation, and `pip check` are integrity evidence. Phase
 
 Non-failing hosted notices remain: the single repeated Starlette/TestClient
 deprecation; Node `DEP0190` and pnpm-layout messages from the pnpm action
-bootstrap; that action's own transient one-tool-package npm audit message;
-electron-builder's future implicit-publish behavior notice, missing package
-author, and package-manager detection fallback. The successful job's failure
-diagnostics and five failure-enforcement controls skipped by design. Earlier
-Security failures and Windows cancellations were superseded by the exact-head
-fixes and successful runs above.
+bootstrap; `pnpm/action-setup` adding one package, auditing its isolated
+two-package bootstrap graph, and reporting one high-severity vulnerability
+outside the locked repository dependency graph; and electron-builder's future
+implicit-publish behavior notice, missing package author, and package-manager
+detection fallback. Local Playwright also reported that `NO_COLOR` was ignored
+because `FORCE_COLOR` was set. The successful job's failure diagnostics and
+five failure-enforcement controls skipped by design. Earlier Security failures
+and Windows cancellations were superseded by the exact-head fixes and
+successful runs above.
 
 The verification does not relax the documented limitations: the catalog is
 synthetic descriptor metadata; there is no executable provider, synthesis,

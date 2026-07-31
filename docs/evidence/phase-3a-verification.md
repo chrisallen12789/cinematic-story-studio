@@ -421,7 +421,8 @@ false.
 
 | GitHub check | Push result | PR result |
 | --- | --- | --- |
-| Locked schema/tooling/parser/fixture tests | 51 passed | 51 passed |
+| Locked parser/catalog/fixture verification | 44 passed | 44 passed |
+| Schema/tooling tests | 51 passed | 51 passed |
 | Full backend | 300 passed, 1 skipped, 1 warning in 621.48 seconds | 300 passed, 1 skipped, 1 warning in 691.68 seconds |
 | Desktop | 14 files, 199 passed | 14 files, 199 passed |
 | Focused Phase 2 | 90 passed, 1 warning in 206.01 seconds | 90 passed, 1 warning |

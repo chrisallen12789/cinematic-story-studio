@@ -1482,7 +1482,7 @@ function workspaceSnapshot(): AuditionWorkspaceSnapshot {
         providerIds: ["fixture-provider", "real-provider"],
         compatibleModelPackageIds: ["fixture-model-package"],
         protocolVersion: "1.0.0",
-        startupDeadlineMilliseconds: 10_000,
+        startupDeadlineMilliseconds: 30_000,
         requestDeadlineMilliseconds: 30_000,
         idleShutdownMilliseconds: 60_000,
         maximumRetryAttempts: 0,

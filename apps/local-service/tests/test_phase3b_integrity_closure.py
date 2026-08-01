@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 import cinematic_story_service.audition_repository as audition_repository_module
 from cinematic_story_service import ServiceSettings, create_app
 from cinematic_story_service.auditions import inspect_audition_wav_bytes
+from cinematic_story_service.database import Database
 from cinematic_story_service.errors import ServiceError
 from cinematic_story_service.models import (
     AudioArtifactRow,
@@ -26,8 +27,18 @@ from cinematic_story_service.models import (
     SpeechRuntimeInstanceRow,
     SpeechRuntimeProfileRow,
 )
-from cinematic_story_service.speech_providers import FIXTURE_PROVIDER_ID
-from cinematic_story_service.util import new_id, parse_json, request_fingerprint
+from cinematic_story_service.speech_providers import (
+    FIXTURE_ADAPTER_VERSION,
+    FIXTURE_PROVIDER_ID,
+    KOKORO_ADAPTER_VERSION,
+    KOKORO_PROVIDER_ID,
+)
+from cinematic_story_service.util import (
+    canonical_json,
+    new_id,
+    parse_json,
+    request_fingerprint,
+)
 from tests.conftest import wait_for_job
 from tests.test_phase3b_atomic_publication import _prepare_generation
 from tests.test_phase3b_workflow import (
@@ -121,10 +132,12 @@ def test_bounded_reader_rejects_oversize_and_detects_entry_replacement(
 def test_profile_and_fixture_manifest_fingerprints_bind_complete_behavior() -> None:
     profile = audition_repository_module._runtime_profile_fingerprint_material(
         profile_id=audition_repository_module._FIXTURE_PROFILE_ID,
+        profile_version=audition_repository_module._RUNTIME_PROFILE_VERSION,
         provider_id=FIXTURE_PROVIDER_ID,
         provider_version="1.0.0",
         runtime_id=audition_repository_module._FIXTURE_RUNTIME_ID,
         runtime_version=audition_repository_module._FIXTURE_RUNTIME_VERSION,
+        startup_timeout_ms=audition_repository_module._RUNTIME_STARTUP_TIMEOUT_MS,
     )
     assert request_fingerprint(profile) == (audition_repository_module._FIXTURE_PROFILE_FINGERPRINT)
     for mutation in (
@@ -169,6 +182,227 @@ def test_profile_and_fixture_manifest_fingerprints_bind_complete_behavior() -> N
         if isinstance(value, int):
             changed[key] = value + 1
         assert request_fingerprint(changed) != request_fingerprint(manifest)
+
+
+def _legacy_runtime_profile_rows() -> tuple[SpeechRuntimeProfileRow, SpeechRuntimeProfileRow]:
+    created_at = "2026-07-31T12:00:00.000Z"
+    shared = {
+        "profile_version": audition_repository_module._LEGACY_RUNTIME_PROFILE_VERSION,
+        "protocol_version": "1.0.0",
+        "platform": "windows",
+        "architecture": "x64",
+        "network_policy": "deny_during_synthesis",
+        "startup_timeout_ms": audition_repository_module._LEGACY_RUNTIME_STARTUP_TIMEOUT_MS,
+        "request_timeout_ms": 60_000,
+        "idle_shutdown_ms": 120_000,
+        "maximum_concurrency": 1,
+        "output_format_json": canonical_json(["pcm_s16le_wav"]),
+        "limits_json": canonical_json(
+            {
+                "maximumAudioBytes": audition_repository_module._MAX_AUDIO_BYTES,
+                "maximumDurationMilliseconds": 30_000,
+                "maximumRetryAttempts": 0,
+                "maximumScriptCodePoints": 4_000,
+            }
+        ),
+        "active": True,
+        "created_at": created_at,
+    }
+    return (
+        SpeechRuntimeProfileRow(
+            id=audition_repository_module._LEGACY_FIXTURE_PROFILE_RECORD_ID,
+            profile_id=audition_repository_module._LEGACY_FIXTURE_PROFILE_ID,
+            provider_id=FIXTURE_PROVIDER_ID,
+            provider_version=FIXTURE_ADAPTER_VERSION,
+            runtime_id=audition_repository_module._FIXTURE_RUNTIME_ID,
+            runtime_version=audition_repository_module._FIXTURE_RUNTIME_VERSION,
+            profile_fingerprint=(
+                audition_repository_module._LEGACY_FIXTURE_PROFILE_FINGERPRINT
+            ),
+            provenance_json=canonical_json(
+                {
+                    "origin": "fixture_provider",
+                    "producerId": audition_repository_module._PRODUCER_ID,
+                    "producerVersion": audition_repository_module._PRODUCER_VERSION,
+                    "recordedAt": created_at,
+                }
+            ),
+            **shared,
+        ),
+        SpeechRuntimeProfileRow(
+            id=audition_repository_module._LEGACY_KOKORO_PROFILE_RECORD_ID,
+            profile_id=audition_repository_module._LEGACY_KOKORO_PROFILE_ID,
+            provider_id=KOKORO_PROVIDER_ID,
+            provider_version=KOKORO_ADAPTER_VERSION,
+            runtime_id="onnxruntime-cpu",
+            runtime_version="1.28.0",
+            profile_fingerprint=(
+                audition_repository_module._LEGACY_KOKORO_PROFILE_FINGERPRINT
+            ),
+            provenance_json=canonical_json(
+                {
+                    "origin": "application",
+                    "producerId": audition_repository_module._PRODUCER_ID,
+                    "producerVersion": audition_repository_module._PRODUCER_VERSION,
+                    "recordedAt": created_at,
+                }
+            ),
+            **shared,
+        ),
+    )
+
+
+def _seed_legacy_runtime_profiles(settings: ServiceSettings) -> ServiceSettings:
+    validated = settings.validated()
+    database = Database(validated.database_path)
+    try:
+        with database.immediate_session() as database_session:
+            database_session.add_all(_legacy_runtime_profile_rows())
+    finally:
+        database.close()
+    return validated
+
+
+def _runtime_profile_snapshots(database: Database) -> tuple[dict[str, object], ...]:
+    with database.session() as database_session:
+        rows = list(
+            database_session.scalars(
+                select(SpeechRuntimeProfileRow).order_by(SpeechRuntimeProfileRow.id)
+            )
+        )
+        return tuple(
+            {
+                "active": row.active,
+                "createdAt": row.created_at,
+                "fingerprint": row.profile_fingerprint,
+                "id": row.id,
+                "profileId": row.profile_id,
+                "profileVersion": row.profile_version,
+                "providerId": row.provider_id,
+                "startupTimeoutMs": row.startup_timeout_ms,
+            }
+            for row in rows
+        )
+
+
+def test_legacy_runtime_profiles_reopen_append_only_and_idempotently(
+    settings: ServiceSettings,
+    auth_headers: dict[str, str],
+) -> None:
+    assert audition_repository_module._LEGACY_FIXTURE_PROFILE_FINGERPRINT == (
+        "2d52bca32766fac6d2744cf877cb4f5d927f59af369706a3eb2741e330d00cc4"
+    )
+    assert audition_repository_module._LEGACY_KOKORO_PROFILE_FINGERPRINT == (
+        "007101c57a95e7d6cde66747cd96e3413d672a84d3acca49b28c5e4f36593ef4"
+    )
+    validated = _seed_legacy_runtime_profiles(settings)
+    legacy_database = Database(validated.database_path)
+    try:
+        legacy_snapshots = _runtime_profile_snapshots(legacy_database)
+    finally:
+        legacy_database.close()
+    assert len(legacy_snapshots) == 2
+
+    with TestClient(create_app(validated)) as first_client:
+        first_snapshots = _runtime_profile_snapshots(first_client.app.state.database)
+        assert len(first_snapshots) == 4
+        assert all(snapshot in first_snapshots for snapshot in legacy_snapshots)
+        current_by_provider = {
+            snapshot["providerId"]: snapshot
+            for snapshot in first_snapshots
+            if snapshot["profileVersion"] == audition_repository_module._RUNTIME_PROFILE_VERSION
+        }
+        assert current_by_provider[FIXTURE_PROVIDER_ID] == {
+            "active": True,
+            "createdAt": current_by_provider[FIXTURE_PROVIDER_ID]["createdAt"],
+            "fingerprint": audition_repository_module._FIXTURE_PROFILE_FINGERPRINT,
+            "id": audition_repository_module._FIXTURE_PROFILE_RECORD_ID,
+            "profileId": audition_repository_module._FIXTURE_PROFILE_ID,
+            "profileVersion": audition_repository_module._RUNTIME_PROFILE_VERSION,
+            "providerId": FIXTURE_PROVIDER_ID,
+            "startupTimeoutMs": 30_000,
+        }
+        assert current_by_provider[KOKORO_PROVIDER_ID] == {
+            "active": True,
+            "createdAt": current_by_provider[KOKORO_PROVIDER_ID]["createdAt"],
+            "fingerprint": audition_repository_module._KOKORO_PROFILE_FINGERPRINT,
+            "id": audition_repository_module._KOKORO_PROFILE_RECORD_ID,
+            "profileId": audition_repository_module._KOKORO_PROFILE_ID,
+            "profileVersion": audition_repository_module._RUNTIME_PROFILE_VERSION,
+            "providerId": KOKORO_PROVIDER_ID,
+            "startupTimeoutMs": 30_000,
+        }
+        assert audition_repository_module._current_runtime_profile_identity(
+            FIXTURE_PROVIDER_ID
+        ) == (
+            audition_repository_module._FIXTURE_PROFILE_RECORD_ID,
+            audition_repository_module._FIXTURE_PROFILE_FINGERPRINT,
+        )
+
+        created = first_client.post(
+            "/api/v1/projects",
+            headers={
+                **auth_headers,
+                "Idempotency-Key": "legacy-runtime-profile-workspace-project",
+            },
+            json={"name": "Legacy runtime profile workspace"},
+        )
+        assert created.status_code == 200, created.text
+        project_id = created.json()["project"]["projectId"]
+        workspace_response = first_client.get(
+            f"/api/v1/projects/{project_id}/auditions/workspace",
+            headers=auth_headers,
+        )
+        assert workspace_response.status_code == 200, workspace_response.text
+        workspace = workspace_response.json()["workspace"]
+        fixture_profiles = [
+            profile
+            for profile in workspace["runtimeProfiles"]
+            if FIXTURE_PROVIDER_ID in profile["providerIds"]
+        ]
+        assert [profile["runtimeProfileId"] for profile in fixture_profiles] == [
+            audition_repository_module._FIXTURE_PROFILE_ID,
+            audition_repository_module._LEGACY_FIXTURE_PROFILE_ID,
+        ]
+        fixture_health = [
+            health
+            for health in workspace["runtimeHealth"]
+            if health["providerId"] == FIXTURE_PROVIDER_ID
+        ]
+        assert len(fixture_health) == 1
+        assert fixture_health[0]["runtimeProfileId"] == (
+            audition_repository_module._FIXTURE_PROFILE_ID
+        )
+
+    with TestClient(create_app(validated)) as second_client:
+        second_snapshots = _runtime_profile_snapshots(second_client.app.state.database)
+    assert second_snapshots == first_snapshots
+
+
+def test_legacy_runtime_profile_tamper_still_fails_closed(
+    settings: ServiceSettings,
+) -> None:
+    validated = _seed_legacy_runtime_profiles(settings)
+    database = Database(validated.database_path)
+    try:
+        with database.immediate_session() as database_session:
+            legacy = database_session.get(
+                SpeechRuntimeProfileRow,
+                audition_repository_module._LEGACY_FIXTURE_PROFILE_RECORD_ID,
+            )
+            assert legacy is not None
+            legacy.startup_timeout_ms += 1
+    finally:
+        database.close()
+
+    tampered_database = Database(validated.database_path)
+    try:
+        with pytest.raises(ServiceError) as raised:
+            audition_repository_module.AuditionRepository(tampered_database, validated)
+        assert raised.value.status_code == 503
+        assert raised.value.code == "RUNTIME_PROFILE_CONFLICT"
+    finally:
+        tampered_database.close()
 
 
 def test_existing_runtime_profile_tamper_fails_seed_integrity(

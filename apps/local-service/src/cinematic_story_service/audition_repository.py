@@ -181,8 +181,12 @@ _FIXTURE_MODEL_ID: Final = "deterministic-square-wave"
 _FIXTURE_MODEL_VERSION: Final = "1.0.0"
 _FIXTURE_RUNTIME_ID: Final = "python-integer-pcm"
 _FIXTURE_RUNTIME_VERSION: Final = "1.0.0"
-_FIXTURE_PROFILE_ID: Final = "deterministic-pcm-wav-fixture-windows"
-_KOKORO_PROFILE_ID: Final = "kokoro-local-onnx-windows"
+_LEGACY_RUNTIME_PROFILE_VERSION: Final = "1.0.0"
+_RUNTIME_PROFILE_VERSION: Final = "1.0.1"
+_LEGACY_FIXTURE_PROFILE_ID: Final = "deterministic-pcm-wav-fixture-windows"
+_LEGACY_KOKORO_PROFILE_ID: Final = "kokoro-local-onnx-windows"
+_FIXTURE_PROFILE_ID: Final = "deterministic-pcm-wav-fixture-windows-v1-0-1"
+_KOKORO_PROFILE_ID: Final = "kokoro-local-onnx-windows-v1-0-1"
 DEFAULT_AUDITION_PAGE_SIZE: Final = 50
 MAX_AUDITION_PAGE_SIZE: Final = 200
 _MAX_PAGE_SIZE: Final = MAX_AUDITION_PAGE_SIZE
@@ -190,6 +194,8 @@ _MAX_SCRIPT_BYTES: Final = 16 * 1024
 _MAX_OWNED_RUNTIME_SHUTDOWN_PROOFS: Final = 200
 _MAX_RUNTIME_STARTUP_RECONCILIATION_RECORDS: Final = 100_000
 _RUNTIME_SHUTDOWN_EVIDENCE_FILENAME: Final = "phase3b-runtime-shutdown-evidence.json"
+_LEGACY_RUNTIME_STARTUP_TIMEOUT_MS: Final = 10_000
+_RUNTIME_STARTUP_TIMEOUT_MS: Final = 30_000
 _MAX_AUDIO_BYTES: Final = 24 * 1024 * 1024
 _MAX_SESSIONS: Final = 2_000
 _MAX_SCRIPTS_PER_SESSION: Final = 20
@@ -285,10 +291,12 @@ _FIXTURE_MANIFEST_FINGERPRINT: Final = request_fingerprint(_fixture_manifest_fin
 def _runtime_profile_fingerprint_material(
     *,
     profile_id: str,
+    profile_version: str,
     provider_id: str,
     provider_version: str,
     runtime_id: str,
     runtime_version: str,
+    startup_timeout_ms: int,
 ) -> dict[str, object]:
     return {
         "architecture": "x64",
@@ -304,14 +312,14 @@ def _runtime_profile_fingerprint_material(
         "outputFormats": ["pcm_s16le_wav"],
         "platform": "windows",
         "profileId": profile_id,
-        "profileVersion": "1.0.0",
+        "profileVersion": profile_version,
         "protocolVersion": SPEECH_RUNTIME_PROTOCOL_VERSION,
         "providerId": provider_id,
         "providerVersion": provider_version,
         "requestDeadlineMilliseconds": 60_000,
         "runtimeId": runtime_id,
         "runtimeVersion": runtime_version,
-        "startupDeadlineMilliseconds": 10_000,
+        "startupDeadlineMilliseconds": startup_timeout_ms,
     }
 
 
@@ -381,22 +389,74 @@ def _runtime_exit_confirms_owned_tree(
 _FIXTURE_PROFILE_FINGERPRINT: Final = request_fingerprint(
     _runtime_profile_fingerprint_material(
         profile_id=_FIXTURE_PROFILE_ID,
+        profile_version=_RUNTIME_PROFILE_VERSION,
         provider_id=FIXTURE_PROVIDER_ID,
         provider_version=FIXTURE_ADAPTER_VERSION,
         runtime_id=_FIXTURE_RUNTIME_ID,
         runtime_version=_FIXTURE_RUNTIME_VERSION,
+        startup_timeout_ms=_RUNTIME_STARTUP_TIMEOUT_MS,
     )
 )
 _KOKORO_PROFILE_FINGERPRINT: Final = request_fingerprint(
     _runtime_profile_fingerprint_material(
         profile_id=_KOKORO_PROFILE_ID,
+        profile_version=_RUNTIME_PROFILE_VERSION,
         provider_id=KOKORO_PROVIDER_ID,
         provider_version=KOKORO_ADAPTER_VERSION,
         runtime_id="onnxruntime-cpu",
         runtime_version="1.28.0",
+        startup_timeout_ms=_RUNTIME_STARTUP_TIMEOUT_MS,
     )
 )
+_LEGACY_FIXTURE_PROFILE_FINGERPRINT: Final = request_fingerprint(
+    _runtime_profile_fingerprint_material(
+        profile_id=_LEGACY_FIXTURE_PROFILE_ID,
+        profile_version=_LEGACY_RUNTIME_PROFILE_VERSION,
+        provider_id=FIXTURE_PROVIDER_ID,
+        provider_version=FIXTURE_ADAPTER_VERSION,
+        runtime_id=_FIXTURE_RUNTIME_ID,
+        runtime_version=_FIXTURE_RUNTIME_VERSION,
+        startup_timeout_ms=_LEGACY_RUNTIME_STARTUP_TIMEOUT_MS,
+    )
+)
+_LEGACY_KOKORO_PROFILE_FINGERPRINT: Final = request_fingerprint(
+    _runtime_profile_fingerprint_material(
+        profile_id=_LEGACY_KOKORO_PROFILE_ID,
+        profile_version=_LEGACY_RUNTIME_PROFILE_VERSION,
+        provider_id=KOKORO_PROVIDER_ID,
+        provider_version=KOKORO_ADAPTER_VERSION,
+        runtime_id="onnxruntime-cpu",
+        runtime_version="1.28.0",
+        startup_timeout_ms=_LEGACY_RUNTIME_STARTUP_TIMEOUT_MS,
+    )
+)
+_LEGACY_FIXTURE_PROFILE_RECORD_ID: Final = stable_id(
+    "phase3b-runtime-profile",
+    _LEGACY_FIXTURE_PROFILE_ID,
+)
+_LEGACY_KOKORO_PROFILE_RECORD_ID: Final = stable_id(
+    "phase3b-runtime-profile",
+    _LEGACY_KOKORO_PROFILE_ID,
+)
+_FIXTURE_PROFILE_RECORD_ID: Final = stable_id(
+    "phase3b-runtime-profile",
+    _FIXTURE_PROFILE_ID,
+    _RUNTIME_PROFILE_VERSION,
+)
+_KOKORO_PROFILE_RECORD_ID: Final = stable_id(
+    "phase3b-runtime-profile",
+    _KOKORO_PROFILE_ID,
+    _RUNTIME_PROFILE_VERSION,
+)
 _EMPTY_DICTIONARY_FINGERPRINT: Final = dictionary_fingerprint((), 0)
+
+
+def _current_runtime_profile_identity(provider_id: str) -> tuple[str, str] | None:
+    if provider_id == FIXTURE_PROVIDER_ID:
+        return _FIXTURE_PROFILE_RECORD_ID, _FIXTURE_PROFILE_FINGERPRINT
+    if provider_id == KOKORO_PROVIDER_ID:
+        return _KOKORO_PROFILE_RECORD_ID, _KOKORO_PROFILE_FINGERPRINT
+    return None
 
 
 def _provenance(
@@ -1608,22 +1668,54 @@ class AuditionRepository:
         )
         profiles = (
             {
-                "id": stable_id("phase3b-runtime-profile", _FIXTURE_PROFILE_ID),
-                "profile_id": _FIXTURE_PROFILE_ID,
+                "id": _LEGACY_FIXTURE_PROFILE_RECORD_ID,
+                "insert_if_missing": False,
+                "profile_id": _LEGACY_FIXTURE_PROFILE_ID,
+                "profile_version": _LEGACY_RUNTIME_PROFILE_VERSION,
                 "provider_id": FIXTURE_PROVIDER_ID,
                 "provider_version": FIXTURE_ADAPTER_VERSION,
                 "runtime_id": _FIXTURE_RUNTIME_ID,
                 "runtime_version": _FIXTURE_RUNTIME_VERSION,
-                "fingerprint": _FIXTURE_PROFILE_FINGERPRINT,
+                "startup_timeout_ms": _LEGACY_RUNTIME_STARTUP_TIMEOUT_MS,
+                "fingerprint": _LEGACY_FIXTURE_PROFILE_FINGERPRINT,
                 "origin": "fixture_provider",
             },
             {
-                "id": stable_id("phase3b-runtime-profile", _KOKORO_PROFILE_ID),
-                "profile_id": _KOKORO_PROFILE_ID,
+                "id": _LEGACY_KOKORO_PROFILE_RECORD_ID,
+                "insert_if_missing": False,
+                "profile_id": _LEGACY_KOKORO_PROFILE_ID,
+                "profile_version": _LEGACY_RUNTIME_PROFILE_VERSION,
                 "provider_id": KOKORO_PROVIDER_ID,
                 "provider_version": KOKORO_ADAPTER_VERSION,
                 "runtime_id": "onnxruntime-cpu",
                 "runtime_version": "1.28.0",
+                "startup_timeout_ms": _LEGACY_RUNTIME_STARTUP_TIMEOUT_MS,
+                "fingerprint": _LEGACY_KOKORO_PROFILE_FINGERPRINT,
+                "origin": "application",
+            },
+            {
+                "id": _FIXTURE_PROFILE_RECORD_ID,
+                "insert_if_missing": True,
+                "profile_id": _FIXTURE_PROFILE_ID,
+                "profile_version": _RUNTIME_PROFILE_VERSION,
+                "provider_id": FIXTURE_PROVIDER_ID,
+                "provider_version": FIXTURE_ADAPTER_VERSION,
+                "runtime_id": _FIXTURE_RUNTIME_ID,
+                "runtime_version": _FIXTURE_RUNTIME_VERSION,
+                "startup_timeout_ms": _RUNTIME_STARTUP_TIMEOUT_MS,
+                "fingerprint": _FIXTURE_PROFILE_FINGERPRINT,
+                "origin": "fixture_provider",
+            },
+            {
+                "id": _KOKORO_PROFILE_RECORD_ID,
+                "insert_if_missing": True,
+                "profile_id": _KOKORO_PROFILE_ID,
+                "profile_version": _RUNTIME_PROFILE_VERSION,
+                "provider_id": KOKORO_PROVIDER_ID,
+                "provider_version": KOKORO_ADAPTER_VERSION,
+                "runtime_id": "onnxruntime-cpu",
+                "runtime_version": "1.28.0",
+                "startup_timeout_ms": _RUNTIME_STARTUP_TIMEOUT_MS,
                 "fingerprint": _KOKORO_PROFILE_FINGERPRINT,
                 "origin": "application",
             },
@@ -1783,10 +1875,12 @@ class AuditionRepository:
                 if existing_profile is not None:
                     expected_fingerprint_material = _runtime_profile_fingerprint_material(
                         profile_id=str(profile["profile_id"]),
+                        profile_version=str(profile["profile_version"]),
                         provider_id=str(profile["provider_id"]),
                         provider_version=str(profile["provider_version"]),
                         runtime_id=str(profile["runtime_id"]),
                         runtime_version=str(profile["runtime_version"]),
+                        startup_timeout_ms=cast(int, profile["startup_timeout_ms"]),
                     )
                     expected_provenance = {
                         "origin": str(profile["origin"]),
@@ -1812,7 +1906,7 @@ class AuditionRepository:
                         "profileFingerprint": str(profile["fingerprint"]),
                         "profileId": str(profile["profile_id"]),
                         "profileRecordId": str(profile["id"]),
-                        "profileVersion": "1.0.0",
+                        "profileVersion": str(profile["profile_version"]),
                         "protocolVersion": SPEECH_RUNTIME_PROTOCOL_VERSION,
                         "provenance": expected_provenance,
                         "providerId": str(profile["provider_id"]),
@@ -1820,7 +1914,10 @@ class AuditionRepository:
                         "requestDeadlineMilliseconds": 60_000,
                         "runtimeId": str(profile["runtime_id"]),
                         "runtimeVersion": str(profile["runtime_version"]),
-                        "startupDeadlineMilliseconds": 10_000,
+                        "startupDeadlineMilliseconds": cast(
+                            int,
+                            profile["startup_timeout_ms"],
+                        ),
                     }
                     persisted_projection = {
                         "active": existing_profile.active,
@@ -1861,11 +1958,13 @@ class AuditionRepository:
                             "Trusted runtime profile metadata failed verification.",
                         )
                     continue
+                if profile["insert_if_missing"] is not True:
+                    continue
                 session.add(
                     SpeechRuntimeProfileRow(
                         id=str(profile["id"]),
                         profile_id=str(profile["profile_id"]),
-                        profile_version="1.0.0",
+                        profile_version=str(profile["profile_version"]),
                         provider_id=str(profile["provider_id"]),
                         provider_version=str(profile["provider_version"]),
                         runtime_id=str(profile["runtime_id"]),
@@ -1874,7 +1973,7 @@ class AuditionRepository:
                         platform="windows",
                         architecture="x64",
                         network_policy="deny_during_synthesis",
-                        startup_timeout_ms=10_000,
+                        startup_timeout_ms=cast(int, profile["startup_timeout_ms"]),
                         request_timeout_ms=60_000,
                         idle_shutdown_ms=120_000,
                         maximum_concurrency=1,
@@ -2871,14 +2970,18 @@ class AuditionRepository:
             )
             .limit(1)
         )
+        current_profile_identity = _current_runtime_profile_identity(provider_id)
+        if current_profile_identity is None:
+            return None
+        current_profile_record_id, current_profile_fingerprint = current_profile_identity
         profile = session.scalar(
             select(SpeechRuntimeProfileRow)
             .where(
+                SpeechRuntimeProfileRow.id == current_profile_record_id,
                 SpeechRuntimeProfileRow.provider_id == provider_id,
+                SpeechRuntimeProfileRow.profile_fingerprint == current_profile_fingerprint,
                 SpeechRuntimeProfileRow.active.is_(True),
             )
-            .order_by(SpeechRuntimeProfileRow.id.desc())
-            .limit(1)
         )
         if manifest is None or profile is None:
             return None
@@ -13057,16 +13160,27 @@ class AuditionRepository:
                 if verification_row is not None:
                     verifications.append(verification_row)
             manifests_by_id = {manifest.id: manifest for manifest in manifests}
+            current_profile_record_ids = {
+                identity[0]
+                for provider_id in (FIXTURE_PROVIDER_ID, KOKORO_PROVIDER_ID)
+                if (identity := _current_runtime_profile_identity(provider_id)) is not None
+            }
             profiles = list(
                 session.scalars(
                     select(SpeechRuntimeProfileRow)
                     .where(SpeechRuntimeProfileRow.active.is_(True))
-                    .order_by(
-                        SpeechRuntimeProfileRow.provider_id,
-                        SpeechRuntimeProfileRow.id,
-                    )
                 )
             )
+            profiles.sort(
+                key=lambda profile: (
+                    profile.provider_id,
+                    0 if profile.id in current_profile_record_ids else 1,
+                    profile.id,
+                )
+            )
+            current_profiles = [
+                profile for profile in profiles if profile.id in current_profile_record_ids
+            ]
             global_reviews = [
                 review
                 for review in (narrator_review, character_review, pronunciation_review)
@@ -13119,7 +13233,7 @@ class AuditionRepository:
                         verifications,
                         live_runtime_instance_ids=live_runtime_instance_ids,
                     )
-                    for profile in profiles
+                    for profile in current_profiles
                 ],
                 "runtimeInstances": self._runtime_instances_wire(
                     session,

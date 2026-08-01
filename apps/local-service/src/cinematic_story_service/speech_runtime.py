@@ -358,7 +358,12 @@ class ManagedSpeechRuntime:
                     launch_started_ns=launch_started_ns,
                 )
             except Exception as exc:
-                self._terminate_owned("protocol_error")
+                exit_reason = (
+                    _runtime_error_exit_reason(exc)
+                    if isinstance(exc, SpeechRuntimeError)
+                    else "protocol_error"
+                )
+                self._terminate_owned(exit_reason)
                 if isinstance(exc, SpeechRuntimeError):
                     raise
                 raise SpeechRuntimeError(

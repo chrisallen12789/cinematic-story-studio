@@ -46,6 +46,7 @@ def _runtime_config(
     model_id: str = "deterministic-square-wave",
     python_executable: Path = Path(sys.executable),
     request_timeout_seconds: float = 5.0,
+    startup_timeout_seconds: float = 15.0,
     launch_mode: Literal["auto", "python-module", "frozen-executable"] = "python-module",
 ) -> SpeechRuntimeConfig:
     return SpeechRuntimeConfig(
@@ -57,7 +58,7 @@ def _runtime_config(
         model_manifest_fingerprint=_FIXTURE_MANIFEST_FINGERPRINT,
         model_package_path=model_package_path,
         python_executable=python_executable,
-        startup_timeout_seconds=15.0,
+        startup_timeout_seconds=startup_timeout_seconds,
         request_timeout_seconds=request_timeout_seconds,
         idle_timeout_seconds=idle_timeout_seconds,
         max_retries=max_retries,
@@ -248,6 +249,33 @@ def test_managed_runtime_executes_fixture_with_authenticated_identity_and_clean_
     assert evidence.confirmed_exited is True
     assert evidence.owned_processes_confirmed_exited is True
     assert evidence.denied_network_attempt_count == 0
+    assert runtime.is_running is False
+
+
+def test_startup_deadline_preserves_deadline_exit_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = ManagedSpeechRuntime(_runtime_config(max_retries=0))
+
+    def expire_startup(_timeout_seconds: float) -> bytes:
+        raise SpeechRuntimeError(
+            "SPEECH_WORKER_DEADLINE_EXCEEDED",
+            "The speech worker did not respond before its deadline.",
+            retryable=True,
+        )
+
+    monkeypatch.setattr(runtime, "_await_frame", expire_startup)
+    with pytest.raises(SpeechRuntimeError) as error:
+        runtime.start()
+
+    assert error.value.code == "SPEECH_WORKER_DEADLINE_EXCEEDED"
+    assert error.value.retryable is True
+    evidence = runtime.last_exit
+    assert evidence is not None
+    assert evidence.reason == "deadline"
+    assert evidence.terminated_by_parent is True
+    assert evidence.confirmed_exited is True
+    assert evidence.owned_processes_confirmed_exited is True
     assert runtime.is_running is False
 
 
@@ -783,12 +811,13 @@ def test_frozen_executable_dispatches_real_authenticated_fixture_worker() -> Non
         _runtime_config(
             max_retries=0,
             python_executable=executable,
+            startup_timeout_seconds=30.0,
             launch_mode="frozen-executable",
         )
     )
 
     request = _request_with_pronunciation_override()
-    artifact = runtime.synthesize(request, _context(expires_in_seconds=30.0))
+    artifact = runtime.synthesize(request, _context(expires_in_seconds=60.0))
     assert inspect_pcm_wav(artifact.wav_bytes) == (24_000, 1, 2, 6_000)
     assert artifact.input_fingerprint == request.input_fingerprint()
     evidence = runtime.stop()

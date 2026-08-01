@@ -1784,7 +1784,7 @@ describe("Phase 3B desktop audition validation", () => {
             providerIds: ["fixture-provider"],
             compatibleModelPackageIds: ["model-package-1"],
             protocolVersion: "1.0.0",
-            startupDeadlineMilliseconds: 10_000,
+            startupDeadlineMilliseconds: 30_000,
             requestDeadlineMilliseconds: 30_000,
             idleShutdownMilliseconds: 60_000,
             maximumRetryAttempts: 0,

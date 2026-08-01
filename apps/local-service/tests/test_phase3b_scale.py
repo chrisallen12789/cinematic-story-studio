@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, insert, select
 
 from cinematic_story_service import ServiceSettings, create_app
-from cinematic_story_service.audition_repository import _audio_quality_fingerprint
+from cinematic_story_service.audition_repository import (
+    _FIXTURE_PROFILE_FINGERPRINT,
+    _FIXTURE_PROFILE_ID,
+    _audio_quality_fingerprint,
+)
 from cinematic_story_service.auditions import (
     AUDITION_PROFILE_FINGERPRINT,
     AuditionCacheIdentity,
@@ -1458,8 +1462,10 @@ def test_phase3b_maximum_scale_is_bounded_deterministic_and_restart_safe(
             for value in runtime_workspace["runtimeProfiles"]
             if "deterministic-pcm-wav-fixture" in value["providerIds"]
         )
+        assert fixture_profile["runtimeProfileId"] == _FIXTURE_PROFILE_ID
+        assert fixture_profile["profileFingerprint"] == _FIXTURE_PROFILE_FINGERPRINT
         assert fixture_profile["maximumConcurrentRequests"] == 1
-        assert fixture_profile["startupDeadlineMilliseconds"] == 10_000
+        assert fixture_profile["startupDeadlineMilliseconds"] == 30_000
         assert fixture_profile["requestDeadlineMilliseconds"] == 60_000
         active_instances = [
             value

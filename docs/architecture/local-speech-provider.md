@@ -32,8 +32,15 @@ The runtime profile is fingerprinted and centralizes these current bounds:
   does not chunk or truncate synthesis text;
 - 24 kHz, mono, 16-bit PCM auditions;
 - 30 seconds and 24 MiB maximum per audition artifact;
-- bounded startup, request, cancellation, stderr, protocol-frame, and idle deadlines;
+- a 30-second startup deadline plus bounded request, cancellation, stderr,
+  protocol-frame, and idle deadlines;
 - zero internal runtime retries: each durable job attempt dispatches the provider at most once.
+
+Runtime profiles are append-only evidence records. The current `1.0.1` fixture and Kokoro
+profiles use distinct public and record IDs with the 30-second startup deadline. An upgraded
+schema-v5 database retains and validates any issued `1.0.0` profile with its original 10-second
+deadline and fingerprint; those legacy rows remain available to resolve historical runtime
+evidence, but new work and current health select only the exact `1.0.1` record and fingerprint.
 
 A retryable failure is retried only as a new durable job attempt. That attempt appends a distinct
 provider-request row, reacquires an authenticated runtime, and records its own single dispatch.

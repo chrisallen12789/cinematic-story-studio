@@ -423,6 +423,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
         database,
         settings,
         story_intelligence=story_intelligence,
+        casting=casting,
     )
     jobs.set_audition_terminal_handler(auditions.mark_job_terminal)
     jobs.set_audition_publication_handler(auditions.publish_generation_result)

@@ -41,6 +41,7 @@ from .auditions import (
     AuditionError,
     inspect_audition_wav_bytes,
 )
+from .casting_repository import CastingRepository
 from .config import ServiceSettings
 from .database import Database
 from .errors import ServiceError, not_found
@@ -822,6 +823,23 @@ class _QuarantinedRuntime:
     bound: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _CurrentCastAuthority:
+    casting_run: CastingRunRow
+    cast_snapshot: ApprovedCastSnapshotRow
+    assignments_by_role: Mapping[str, CastAssignmentRow]
+    phase3a_decision_ids: tuple[str, ...] | None
+    rights_current: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _CurrentRoleAuditionEvidence:
+    audition_session: AuditionSessionRow | None
+    clip: AuditionClipRow | None
+    review: AuditionReviewRecordRow | None
+    decision: AuditionReviewDecisionRow | None
+
+
 @dataclass(slots=True)
 class _PendingScriptPublication:
     managed_root: Path
@@ -946,6 +964,7 @@ class AuditionRepository:
         runtime_factory: RuntimeFactory = ManagedSpeechRuntime,
         model_package_manager: ModelPackageManager | None = None,
         story_intelligence: StoryIntelligenceRepository | None = None,
+        casting: CastingRepository | None = None,
     ) -> None:
         self.database = database
         self.settings = settings
@@ -963,6 +982,11 @@ class AuditionRepository:
         self._story_intelligence = story_intelligence or StoryIntelligenceRepository(
             database,
             ProjectRepository(database),
+        )
+        self._casting = casting or CastingRepository(
+            database,
+            ProjectRepository(database),
+            self._story_intelligence,
         )
         self._runtime_lock = threading.RLock()
         self._review_decision_lock = threading.RLock()
@@ -4511,6 +4535,17 @@ class AuditionRepository:
             or cast_snapshot.snapshot_fingerprint != evidence.get("approvedCastSnapshotFingerprint")
         ):
             mismatch("AUDITION_CAST_CHANGED", "The approved cast evidence is not current.")
+        latest_casting_run = session.scalar(
+            select(CastingRunRow)
+            .where(
+                CastingRunRow.project_id == project_id,
+                CastingRunRow.state == "succeeded",
+            )
+            .order_by(CastingRunRow.created_at.desc(), CastingRunRow.id.desc())
+            .limit(1)
+        )
+        if latest_casting_run is None or latest_casting_run.id != casting_run.id:
+            mismatch("AUDITION_CAST_CHANGED", "A newer governed casting run is available.")
         latest_snapshot = session.scalar(
             select(ApprovedCastSnapshotRow)
             .where(ApprovedCastSnapshotRow.casting_run_id == casting_run.id)
@@ -4522,6 +4557,15 @@ class AuditionRepository:
         )
         if latest_snapshot is None or latest_snapshot.id != cast_snapshot.id:
             mismatch("AUDITION_CAST_CHANGED", "A newer cast snapshot is available.")
+        if evidence.get("castAssignmentId") not in self._approved_cast_assignment_ids(
+            session,
+            cast_snapshot=cast_snapshot,
+            casting_run=casting_run,
+        ):
+            mismatch(
+                "AUDITION_CAST_CHANGED",
+                "The cast assignment is not part of the approved cast snapshot.",
+            )
 
         frozen_phase2_decision_ids = parse_json(
             casting_run.phase2_gate_decision_ids_json,
@@ -4537,27 +4581,23 @@ class AuditionRepository:
             )
 
         phase3a: list[CastingGateDecisionRow] = []
-        for gate_id in _PHASE3A_GATE_IDS:
-            phase3a_decision = session.scalar(
-                select(CastingGateDecisionRow)
-                .where(
-                    CastingGateDecisionRow.casting_run_id == casting_run.id,
-                    CastingGateDecisionRow.gate_id == gate_id,
-                )
-                .order_by(
-                    CastingGateDecisionRow.revision.desc(),
-                    CastingGateDecisionRow.id.desc(),
-                )
-                .limit(1)
+        authority = self._current_cast_authority(session, project_id)
+        if (
+            authority is None
+            or authority.casting_run.id != casting_run.id
+            or authority.cast_snapshot.id != cast_snapshot.id
+            or authority.phase3a_decision_ids is None
+        ):
+            mismatch(
+                "AUDITION_PHASE3A_APPROVAL_REQUIRED",
+                "All Phase 3A casting gates must be currently approved.",
             )
-            if (
-                phase3a_decision is None
-                or phase3a_decision.decision != "approved"
-                or phase3a_decision.cast_snapshot_id != cast_snapshot.id
-            ):
+        for decision_id in authority.phase3a_decision_ids:
+            phase3a_decision = session.get(CastingGateDecisionRow, decision_id)
+            if phase3a_decision is None:
                 mismatch(
                     "AUDITION_PHASE3A_APPROVAL_REQUIRED",
-                    "All Phase 3A casting gates must be currently approved.",
+                    "The exact Phase 3A casting authority is unavailable.",
                 )
             phase3a.append(phase3a_decision)
 
@@ -4567,7 +4607,7 @@ class AuditionRepository:
             role is None
             or role.project_id != project_id
             or role.casting_run_id != casting_run.id
-            or role.status != "active"
+            or role.status not in {"active", "unresolved"}
             or assignment is None
             or assignment.project_id != project_id
             or assignment.casting_run_id != casting_run.id
@@ -7281,7 +7321,7 @@ class AuditionRepository:
                     verification=cast(ModelVerificationRow, verification),
                 )
                 with self._runtime_lock:
-                    runtime_identity = runtime.identity
+                    runtime_identity = runtime.identity or runtime.last_identity
                     runtime_owned = any(
                         cached_runtime is runtime and cached_instance_id == runtime_instance_id
                         for cached_runtime, cached_instance_id in self._runtimes.values()
@@ -7294,7 +7334,6 @@ class AuditionRepository:
                             or runtime_row is None
                             or runtime_identity is None
                             or not runtime_owned
-                            or not runtime.is_running
                             or runtime_row.state != "ready"
                             or runtime_row.worker_pid != runtime_identity.pid
                             or runtime_row.creation_identity
@@ -7304,6 +7343,13 @@ class AuditionRepository:
                                 500,
                                 "AUDITION_RUNTIME_EVIDENCE_MISSING",
                                 "The managed runtime evidence is unavailable.",
+                            )
+                        if not runtime.is_running:
+                            raise ServiceError(
+                                503,
+                                "AUDITION_RUNTIME_UNAVAILABLE",
+                                "The managed local speech runtime exited during acquisition.",
+                                retryable=True,
                             )
                         runtime_row.state = "busy"
                         runtime_row.last_used_at = utc_now()
@@ -10036,14 +10082,21 @@ class AuditionRepository:
         project_id: str,
     ) -> AuditionReviewRecordRow | None:
         dictionary = self._current_dictionary(session, project_id)
-        audition_session = session.scalar(
-            select(AuditionSessionRow)
-            .where(AuditionSessionRow.project_id == project_id)
-            .order_by(AuditionSessionRow.created_at.desc(), AuditionSessionRow.id.desc())
-            .limit(1)
+        authority = self._current_cast_authority(session, project_id)
+        audition_session = (
+            self._latest_current_audition_session(session, authority)
+            if authority is not None
+            else None
         )
-        if dictionary is None or audition_session is None:
+        if (
+            dictionary is None
+            or authority is None
+            or authority.phase3a_decision_ids is None
+            or audition_session is None
+            or self._session_dependency_drift(session, audition_session) is not None
+        ):
             return None
+        required_phase3a_ids_json = canonical_json(list(authority.phase3a_decision_ids))
         current_rows = self._latest_pronunciation_entry_rows(session, project_id)
         blockers = sorted(
             {
@@ -10056,9 +10109,35 @@ class AuditionRepository:
             ModelVerificationRow,
             audition_session.model_verification_id,
         )
-        rights = session.get(VoiceRightsRecordRow, audition_session.rights_record_id)
-        if verification is None or rights is None:
+        voice_record_ids = {
+            assignment.voice_profile_record_id
+            for assignment in authority.assignments_by_role.values()
+            if assignment.voice_profile_record_id is not None
+        }
+        rights_by_voice_record_id: dict[str, VoiceRightsRecordRow] = {}
+        for rights in session.scalars(
+            select(VoiceRightsRecordRow)
+            .where(VoiceRightsRecordRow.voice_profile_record_id.in_(voice_record_ids))
+            .order_by(
+                VoiceRightsRecordRow.voice_profile_record_id,
+                VoiceRightsRecordRow.revision.desc(),
+                VoiceRightsRecordRow.id.desc(),
+            )
+        ):
+            rights_by_voice_record_id.setdefault(rights.voice_profile_record_id, rights)
+        if verification is None or set(rights_by_voice_record_id) != voice_record_ids:
             return None
+        rights_evidence = [
+            {
+                "roleId": role_id,
+                "rightsRecordId": rights.rights_record_id,
+                "rightsRecordRevision": rights.revision,
+                "rightsRecordFingerprint": rights.rights_fingerprint,
+            }
+            for role_id, assignment in sorted(authority.assignments_by_role.items())
+            if assignment.voice_profile_record_id is not None
+            for rights in [rights_by_voice_record_id[assignment.voice_profile_record_id]]
+        ]
         evidence = {
             "projectId": project_id,
             "gateId": "pronunciation_review",
@@ -10068,7 +10147,7 @@ class AuditionRepository:
             "auditionClipRevision": None,
             "approvedCastSnapshotFingerprint": audition_session.cast_snapshot_fingerprint,
             "castAssignmentFingerprint": None,
-            "rightsRecordFingerprint": rights.rights_fingerprint,
+            "rightsRecordFingerprint": request_fingerprint(rights_evidence),
             "runtimeProfileFingerprint": audition_session.runtime_profile_fingerprint,
             "modelVerificationFingerprint": verification.verification_fingerprint,
             "pronunciationDictionaryFingerprint": dictionary.dictionary_fingerprint,
@@ -10076,6 +10155,7 @@ class AuditionRepository:
                 {
                     "activeEntryIds": parse_json(dictionary.active_entry_ids_json, []),
                     "dictionaryFingerprint": dictionary.dictionary_fingerprint,
+                    "phase3aGateDecisionIds": list(authority.phase3a_decision_ids),
                 }
             ),
             "audioQualityFingerprint": None,
@@ -10088,6 +10168,7 @@ class AuditionRepository:
                 AuditionReviewRecordRow.gate_id == "pronunciation_review",
                 AuditionReviewRecordRow.scope_key == dictionary.dictionary_id,
                 AuditionReviewRecordRow.evidence_fingerprint == evidence_fingerprint,
+                AuditionReviewRecordRow.required_decision_ids_json == required_phase3a_ids_json,
             )
         )
         if existing is not None:
@@ -10116,7 +10197,7 @@ class AuditionRepository:
             eligible=not blockers,
             evidence_json=canonical_json(evidence),
             evidence_fingerprint=evidence_fingerprint,
-            required_decision_ids_json="[]",
+            required_decision_ids_json=required_phase3a_ids_json,
             blockers_json=canonical_json(blockers),
             warnings_json="[]",
             provenance_json=_provenance("application"),
@@ -10133,61 +10214,55 @@ class AuditionRepository:
         project_id: str,
         narrator: bool,
     ) -> AuditionReviewRecordRow | None:
-        latest_session = session.scalar(
-            select(AuditionSessionRow)
-            .where(AuditionSessionRow.project_id == project_id)
-            .order_by(AuditionSessionRow.created_at.desc(), AuditionSessionRow.id.desc())
-            .limit(1)
-        )
+        authority = self._current_cast_authority(session, project_id)
+        if authority is None or authority.phase3a_decision_ids is None:
+            return None
+        latest_session = self._latest_current_audition_session(session, authority)
         if latest_session is None:
             return None
         role_statement = select(ProductionRoleRow).where(
             ProductionRoleRow.project_id == project_id,
-            ProductionRoleRow.casting_run_id == latest_session.casting_run_id,
-            ProductionRoleRow.status == "active",
+            ProductionRoleRow.casting_run_id == authority.casting_run.id,
+            ProductionRoleRow.status.in_(("active", "unresolved")),
+            ProductionRoleRow.id.in_(authority.assignments_by_role),
         )
-        roles = list(session.scalars(role_statement))
+        roles = list(
+            session.scalars(
+                role_statement.order_by(ProductionRoleRow.ordinal, ProductionRoleRow.id)
+            )
+        )
         narrator_types = {"primary_narrator", "secondary_narrator"}
         scoped_roles = [role for role in roles if (role.role_type in narrator_types) == narrator]
         gate_id = "narrator_audition_review" if narrator else "character_audition_review"
         subject_type = "narrator_scope" if narrator else "character_scope"
         scope_key = "aggregate:narrator" if narrator else "aggregate:character"
         approved_decisions: list[AuditionReviewDecisionRow] = []
+        accepted_sessions: list[AuditionSessionRow] = []
         blockers: list[str] = []
         evidence_parts: list[dict[str, str]] = []
         for role in scoped_roles:
-            review = session.scalar(
-                select(AuditionReviewRecordRow)
-                .where(
-                    AuditionReviewRecordRow.project_id == project_id,
-                    AuditionReviewRecordRow.gate_id == "per_role_audition_review",
-                    AuditionReviewRecordRow.scope_key == role.id,
-                )
-                .order_by(
-                    AuditionReviewRecordRow.revision.desc(),
-                    AuditionReviewRecordRow.id.desc(),
-                )
-                .limit(1)
+            current = self._approved_current_role_audition_evidence(
+                session,
+                authority=authority,
+                role_id=role.id,
             )
-            decision = (
-                session.scalar(
-                    select(AuditionReviewDecisionRow)
-                    .where(AuditionReviewDecisionRow.review_record_id == review.id)
-                    .order_by(
-                        AuditionReviewDecisionRow.revision.desc(),
-                        AuditionReviewDecisionRow.id.desc(),
-                    )
-                    .limit(1)
-                )
-                if review is not None
-                else None
-            )
-            if review is None or decision is None or decision.decision != "approved":
+            if current is None:
                 blockers.append(f"ROLE_AUDITION_APPROVAL_REQUIRED:{role.id}")
             else:
+                role_session = current.audition_session
+                clip = current.clip
+                review = current.review
+                decision = current.decision
+                assert role_session is not None
+                assert clip is not None
+                assert review is not None
+                assert decision is not None
                 approved_decisions.append(decision)
+                accepted_sessions.append(role_session)
                 evidence_parts.append(
                     {
+                        "auditionClipId": clip.id,
+                        "auditionSessionId": role_session.id,
                         "decisionId": decision.id,
                         "evidenceFingerprint": decision.evidence_fingerprint,
                         "roleId": role.id,
@@ -10197,18 +10272,17 @@ class AuditionRepository:
             ModelVerificationRow,
             latest_session.model_verification_id,
         )
-        rights_rows = list(
-            session.scalars(
-                select(VoiceRightsRecordRow).where(
-                    VoiceRightsRecordRow.id.in_(
-                        select(AuditionSessionRow.rights_record_id).where(
-                            AuditionSessionRow.project_id == project_id,
-                            AuditionSessionRow.casting_run_id == latest_session.casting_run_id,
-                        )
-                    )
+        rights_rows = [
+            rights
+            for accepted_session in accepted_sessions
+            if (
+                rights := session.get(
+                    VoiceRightsRecordRow,
+                    accepted_session.rights_record_id,
                 )
             )
-        )
+            is not None
+        ]
         if verification is None:
             return None
         evidence = {
@@ -10218,7 +10292,7 @@ class AuditionRepository:
             "auditionSessionId": None,
             "auditionClipId": None,
             "auditionClipRevision": None,
-            "approvedCastSnapshotFingerprint": latest_session.cast_snapshot_fingerprint,
+            "approvedCastSnapshotFingerprint": authority.cast_snapshot.snapshot_fingerprint,
             "castAssignmentFingerprint": request_fingerprint(evidence_parts),
             "rightsRecordFingerprint": request_fingerprint(
                 sorted(row.rights_fingerprint for row in rights_rows)
@@ -10279,11 +10353,29 @@ class AuditionRepository:
         session.flush()
         return row
 
-    def _refresh_reviews(self, session: Session, project_id: str) -> None:
-        self._ensure_pronunciation_review(session, project_id)
-        self._ensure_aggregate_review(session, project_id=project_id, narrator=True)
-        self._ensure_aggregate_review(session, project_id=project_id, narrator=False)
-        self._ensure_voice_readiness(session, project_id)
+    def _refresh_reviews(
+        self,
+        session: Session,
+        project_id: str,
+    ) -> tuple[
+        AuditionReviewRecordRow | None,
+        AuditionReviewRecordRow | None,
+        AuditionReviewRecordRow | None,
+        VoiceReadinessSnapshotRow | None,
+    ]:
+        pronunciation = self._ensure_pronunciation_review(session, project_id)
+        narrator = self._ensure_aggregate_review(
+            session,
+            project_id=project_id,
+            narrator=True,
+        )
+        character = self._ensure_aggregate_review(
+            session,
+            project_id=project_id,
+            narrator=False,
+        )
+        readiness = self._ensure_voice_readiness(session, project_id)
+        return pronunciation, narrator, character, readiness
 
     def _assert_per_role_review_clip_integrity(
         self,
@@ -10621,20 +10713,32 @@ class AuditionRepository:
                         expected_request_hash=request_hash,
                     )
                 self._reconcile_project_evidence(session, project_id)
-                self._refresh_reviews(session, project_id)
-                latest_review = session.scalar(
-                    select(AuditionReviewRecordRow)
-                    .where(
-                        AuditionReviewRecordRow.project_id == project_id,
-                        AuditionReviewRecordRow.gate_id == gate_id,
-                        AuditionReviewRecordRow.scope_key == review.scope_key,
+                (
+                    pronunciation_review,
+                    narrator_review,
+                    character_review,
+                    _readiness_snapshot,
+                ) = self._refresh_reviews(session, project_id)
+                if gate_id == "per_role_audition_review":
+                    authority = self._current_cast_authority(session, project_id)
+                    current_role_evidence = (
+                        self._current_role_audition_evidence(
+                            session,
+                            authority=authority,
+                            role_id=review.role_id,
+                        )
+                        if authority is not None and review.role_id is not None
+                        else None
                     )
-                    .order_by(
-                        AuditionReviewRecordRow.revision.desc(),
-                        AuditionReviewRecordRow.id.desc(),
+                    latest_review = (
+                        current_role_evidence.review if current_role_evidence is not None else None
                     )
-                    .limit(1)
-                )
+                else:
+                    latest_review = {
+                        "narrator_audition_review": narrator_review,
+                        "character_audition_review": character_review,
+                        "pronunciation_review": pronunciation_review,
+                    }.get(gate_id)
                 if latest_review is None or latest_review.id != review.id:
                     raise ServiceError(
                         409,
@@ -10723,15 +10827,8 @@ class AuditionRepository:
                 )
                 session.add(decision)
                 session.flush()
-                self._refresh_reviews(session, project_id)
-                readiness_snapshot = session.scalar(
-                    select(VoiceReadinessSnapshotRow)
-                    .where(VoiceReadinessSnapshotRow.project_id == project_id)
-                    .order_by(
-                        VoiceReadinessSnapshotRow.revision.desc(),
-                        VoiceReadinessSnapshotRow.id.desc(),
-                    )
-                    .limit(1)
+                _pronunciation, _narrator, _character, readiness_snapshot = self._refresh_reviews(
+                    session, project_id
                 )
                 self._record_review_response_projection(
                     decision,
@@ -11014,15 +11111,79 @@ class AuditionRepository:
         session: Session,
         project_id: str,
     ) -> VoiceReadinessSnapshotRow | None:
-        latest_session = session.scalar(
-            select(AuditionSessionRow)
-            .where(AuditionSessionRow.project_id == project_id)
-            .order_by(AuditionSessionRow.created_at.desc(), AuditionSessionRow.id.desc())
-            .limit(1)
-        )
+        authority = self._current_cast_authority(session, project_id)
         dictionary = self._current_dictionary(session, project_id)
-        if latest_session is None or dictionary is None:
+        if authority is None or authority.phase3a_decision_ids is None or dictionary is None:
             return None
+        latest_session = self._latest_current_audition_session(session, authority)
+        if latest_session is None:
+            return None
+        verification = session.get(
+            ModelVerificationRow,
+            latest_session.model_verification_id,
+        )
+        if verification is None:
+            return None
+        roles = list(
+            session.scalars(
+                select(ProductionRoleRow)
+                .where(
+                    ProductionRoleRow.project_id == project_id,
+                    ProductionRoleRow.casting_run_id == authority.casting_run.id,
+                    ProductionRoleRow.status.in_(("active", "unresolved")),
+                    ProductionRoleRow.id.in_(authority.assignments_by_role),
+                )
+                .order_by(ProductionRoleRow.ordinal, ProductionRoleRow.id)
+            )
+        )
+        rights_fingerprints: list[str] = []
+        audio_integrity_fingerprints: list[str] = []
+        role_decision_ids: dict[str, list[str]] = {
+            "narrator_audition_review": [],
+            "character_audition_review": [],
+        }
+        for role in roles:
+            current = self._approved_current_role_audition_evidence(
+                session,
+                authority=authority,
+                role_id=role.id,
+            )
+            if current is None:
+                return None
+            role_session = current.audition_session
+            clip = current.clip
+            decision = current.decision
+            assert role_session is not None
+            assert clip is not None
+            assert decision is not None
+            integrity_ok, previous_integrity, current_integrity = self._clip_integrity_fingerprints(
+                session, clip
+            )
+            if not integrity_ok:
+                self._invalidate_clip_dependencies(
+                    session,
+                    project_id=project_id,
+                    clips=[clip],
+                    source_kind="audio_integrity",
+                    source_record_id=clip.artifact_id,
+                    previous_fingerprint=previous_integrity,
+                    current_fingerprint=current_integrity,
+                    reason_code="AUDITION_AUDIO_INTEGRITY_CHANGED",
+                    rationale="Approved audition audio failed current integrity checks.",
+                )
+                return None
+            rights = session.get(VoiceRightsRecordRow, role_session.rights_record_id)
+            if rights is None:
+                return None
+            audio_integrity_fingerprints.append(current_integrity)
+            rights_fingerprints.append(rights.rights_fingerprint)
+            aggregate_gate_id = (
+                "narrator_audition_review"
+                if role.role_type in {"primary_narrator", "secondary_narrator"}
+                else "character_audition_review"
+            )
+            role_decision_ids[aggregate_gate_id].append(decision.id)
+
         decisions: dict[str, AuditionReviewDecisionRow] = {}
         scope_keys = {
             "narrator_audition_review": "aggregate:narrator",
@@ -11043,163 +11204,47 @@ class AuditionRepository:
                 )
                 .limit(1)
             )
-            decision = (
-                session.scalar(
-                    select(AuditionReviewDecisionRow)
-                    .where(AuditionReviewDecisionRow.review_record_id == review.id)
-                    .order_by(
-                        AuditionReviewDecisionRow.revision.desc(),
-                        AuditionReviewDecisionRow.id.desc(),
-                    )
-                    .limit(1)
+            decision = session.scalar(
+                select(AuditionReviewDecisionRow)
+                .where(
+                    AuditionReviewDecisionRow.project_id == project_id,
+                    AuditionReviewDecisionRow.gate_id == gate_id,
+                    AuditionReviewDecisionRow.scope_key == scope_key,
                 )
-                if review is not None
-                else None
+                .order_by(
+                    AuditionReviewDecisionRow.revision.desc(),
+                    AuditionReviewDecisionRow.id.desc(),
+                )
+                .limit(1)
+            )
+            review_evidence = parse_json(review.evidence_json, {}) if review is not None else {}
+            expected_decision_ids = (
+                list(authority.phase3a_decision_ids)
+                if gate_id == "pronunciation_review"
+                else role_decision_ids[gate_id]
             )
             if (
                 review is None
+                or not review.eligible
+                or not isinstance(review_evidence, dict)
+                or review_evidence.get("approvedCastSnapshotFingerprint")
+                != authority.cast_snapshot.snapshot_fingerprint
+                or (
+                    gate_id == "pronunciation_review"
+                    and review_evidence.get("pronunciationDictionaryFingerprint")
+                    != dictionary.dictionary_fingerprint
+                )
+                or review.required_decision_ids_json != canonical_json(expected_decision_ids)
                 or decision is None
+                or decision.review_record_id != review.id
                 or decision.decision != "approved"
                 or decision.evidence_fingerprint != review.evidence_fingerprint
             ):
                 return None
             decisions[gate_id] = decision
-        cast_snapshot = session.get(
-            ApprovedCastSnapshotRow,
-            latest_session.cast_snapshot_id,
-        )
-        verification = session.get(
-            ModelVerificationRow,
-            latest_session.model_verification_id,
-        )
-        if cast_snapshot is None or verification is None:
-            return None
-        phase3a_ids = parse_json(latest_session.phase3a_gate_decision_ids_json, [])
-        if len(phase3a_ids) != len(_PHASE3A_GATE_IDS):
-            return None
-        current_phase3a_ids: list[str] = []
-        for gate_id in _PHASE3A_GATE_IDS:
-            current_phase3a = session.scalar(
-                select(CastingGateDecisionRow)
-                .where(
-                    CastingGateDecisionRow.casting_run_id == latest_session.casting_run_id,
-                    CastingGateDecisionRow.gate_id == gate_id,
-                )
-                .order_by(
-                    CastingGateDecisionRow.revision.desc(),
-                    CastingGateDecisionRow.id.desc(),
-                )
-                .limit(1)
-            )
-            if (
-                current_phase3a is None
-                or current_phase3a.decision != "approved"
-                or current_phase3a.cast_snapshot_id != latest_session.cast_snapshot_id
-            ):
-                self._append_voice_readiness_invalidation(
-                    session,
-                    project_id=project_id,
-                    rationale="The Phase 3A approval evidence changed.",
-                )
-                return None
-            current_phase3a_ids.append(current_phase3a.id)
-        if current_phase3a_ids != phase3a_ids:
-            self._append_voice_readiness_invalidation(
-                session,
-                project_id=project_id,
-                rationale="The Phase 3A approval evidence changed.",
-            )
-            return None
-        roles = list(
-            session.scalars(
-                select(ProductionRoleRow).where(
-                    ProductionRoleRow.project_id == project_id,
-                    ProductionRoleRow.casting_run_id == latest_session.casting_run_id,
-                    ProductionRoleRow.status == "active",
-                )
-            )
-        )
-        approved_role_count = 0
-        rights_fingerprints: list[str] = []
-        audio_integrity_fingerprints: list[str] = []
-        for role in roles:
-            review = session.scalar(
-                select(AuditionReviewRecordRow)
-                .where(
-                    AuditionReviewRecordRow.project_id == project_id,
-                    AuditionReviewRecordRow.gate_id == "per_role_audition_review",
-                    AuditionReviewRecordRow.scope_key == role.id,
-                )
-                .order_by(
-                    AuditionReviewRecordRow.revision.desc(),
-                    AuditionReviewRecordRow.id.desc(),
-                )
-                .limit(1)
-            )
-            decision = (
-                session.scalar(
-                    select(AuditionReviewDecisionRow)
-                    .where(AuditionReviewDecisionRow.review_record_id == review.id)
-                    .order_by(
-                        AuditionReviewDecisionRow.revision.desc(),
-                        AuditionReviewDecisionRow.id.desc(),
-                    )
-                    .limit(1)
-                )
-                if review is not None
-                else None
-            )
-            if (
-                review is not None
-                and decision is not None
-                and decision.decision == "approved"
-                and decision.evidence_fingerprint == review.evidence_fingerprint
-            ):
-                clip = (
-                    session.get(AuditionClipRow, review.clip_id)
-                    if review.clip_id is not None
-                    else None
-                )
-                if clip is None:
-                    self._append_voice_readiness_invalidation(
-                        session,
-                        project_id=project_id,
-                        rationale="Approved audition audio is unavailable.",
-                    )
-                    return None
-                integrity_ok, previous_integrity, current_integrity = (
-                    self._clip_integrity_fingerprints(session, clip)
-                )
-                if not integrity_ok:
-                    self._invalidate_clip_dependencies(
-                        session,
-                        project_id=project_id,
-                        clips=[clip],
-                        source_kind="audio_integrity",
-                        source_record_id=clip.artifact_id,
-                        previous_fingerprint=previous_integrity,
-                        current_fingerprint=current_integrity,
-                        reason_code="AUDITION_AUDIO_INTEGRITY_CHANGED",
-                        rationale="Approved audition audio failed current integrity checks.",
-                    )
-                    return None
-                audio_integrity_fingerprints.append(current_integrity)
-                approved_role_count += 1
-            role_session = (
-                session.get(AuditionSessionRow, review.session_id)
-                if review is not None and review.session_id is not None
-                else None
-            )
-            if role_session is not None:
-                drift = self._session_dependency_drift(session, role_session)
-                if drift is not None:
-                    self._reconcile_project_evidence(session, project_id)
-                    return None
-                rights = session.get(VoiceRightsRecordRow, role_session.rights_record_id)
-                if rights is not None:
-                    rights_fingerprints.append(rights.rights_fingerprint)
-        if approved_role_count != len(roles):
-            return None
+
+        phase3a_ids = list(authority.phase3a_decision_ids)
+        cast_snapshot = authority.cast_snapshot
         evidence = {
             "approvedCastSnapshotFingerprint": cast_snapshot.snapshot_fingerprint,
             "audioIntegrityFingerprint": request_fingerprint(sorted(audio_integrity_fingerprints)),
@@ -11241,7 +11286,7 @@ class AuditionRepository:
             pronunciation_review_decision_id=decisions["pronunciation_review"].id,
             phase3a_gate_decision_ids_json=canonical_json(phase3a_ids),
             required_role_count=len(roles),
-            approved_role_count=approved_role_count,
+            approved_role_count=len(roles),
             blocking_finding_count=0,
             evidence_json=canonical_json(evidence),
             snapshot_fingerprint=snapshot_fingerprint,
@@ -11307,17 +11352,25 @@ class AuditionRepository:
                     expected_request_hash=request_hash,
                 )
             self._reconcile_project_evidence(session, project_id)
-            self._refresh_reviews(session, project_id)
-            latest_review = session.scalar(
-                select(VoiceReadinessReviewRow)
-                .where(VoiceReadinessReviewRow.project_id == project_id)
-                .order_by(
-                    VoiceReadinessReviewRow.revision.desc(),
-                    VoiceReadinessReviewRow.id.desc(),
-                )
-                .limit(1)
+            _pronunciation, _narrator, _character, current_snapshot = self._refresh_reviews(
+                session, project_id
             )
-            current_snapshot = self._ensure_voice_readiness(session, project_id)
+            latest_review = (
+                session.scalar(
+                    select(VoiceReadinessReviewRow)
+                    .where(
+                        VoiceReadinessReviewRow.project_id == project_id,
+                        VoiceReadinessReviewRow.snapshot_id == current_snapshot.id,
+                    )
+                    .order_by(
+                        VoiceReadinessReviewRow.revision.desc(),
+                        VoiceReadinessReviewRow.id.desc(),
+                    )
+                    .limit(1)
+                )
+                if current_snapshot is not None
+                else None
+            )
             if (
                 latest_review is None
                 or latest_review.id != review.id
@@ -11443,22 +11496,6 @@ class AuditionRepository:
                 snapshot,
             ),
         }
-
-    def _latest_readiness_wire(
-        self,
-        session: Session,
-        project_id: str,
-    ) -> dict[str, Any] | None:
-        snapshot = session.scalar(
-            select(VoiceReadinessSnapshotRow)
-            .where(VoiceReadinessSnapshotRow.project_id == project_id)
-            .order_by(
-                VoiceReadinessSnapshotRow.revision.desc(),
-                VoiceReadinessSnapshotRow.id.desc(),
-            )
-            .limit(1)
-        )
-        return self._readiness_snapshot_wire(session, snapshot) if snapshot is not None else None
 
     @staticmethod
     def _readiness_snapshot_wire(
@@ -12216,6 +12253,57 @@ class AuditionRepository:
         session: Session,
         audition_session: AuditionSessionRow,
     ) -> tuple[str, str, str, str, str, str] | None:
+        authority = self._current_cast_authority(session, audition_session.project_id)
+        current_assignment = (
+            authority.assignments_by_role.get(audition_session.role_id)
+            if authority is not None
+            else None
+        )
+        frozen_phase3a_ids = parse_json(
+            audition_session.phase3a_gate_decision_ids_json,
+            None,
+        )
+        exact_phase3a_ids = (
+            tuple(frozen_phase3a_ids)
+            if isinstance(frozen_phase3a_ids, list)
+            and all(isinstance(value, str) for value in frozen_phase3a_ids)
+            else None
+        )
+        if (
+            authority is None
+            or authority.phase3a_decision_ids is None
+            or authority.casting_run.id != audition_session.casting_run_id
+            or authority.cast_snapshot.id != audition_session.cast_snapshot_id
+            or authority.cast_snapshot.revision != audition_session.cast_snapshot_revision
+            or authority.cast_snapshot.snapshot_fingerprint
+            != audition_session.cast_snapshot_fingerprint
+            or current_assignment is None
+            or current_assignment.id != audition_session.assignment_id
+            or current_assignment.revision != audition_session.assignment_revision
+            or exact_phase3a_ids != authority.phase3a_decision_ids
+        ):
+            previous = request_fingerprint(
+                {
+                    "assignmentId": audition_session.assignment_id,
+                    "assignmentRevision": audition_session.assignment_revision,
+                    "castSnapshotFingerprint": audition_session.cast_snapshot_fingerprint,
+                    "castSnapshotId": audition_session.cast_snapshot_id,
+                    "castSnapshotRevision": audition_session.cast_snapshot_revision,
+                    "castingRunId": audition_session.casting_run_id,
+                    "phase3aGateDecisionIds": (
+                        list(exact_phase3a_ids) if exact_phase3a_ids is not None else None
+                    ),
+                }
+            )
+            return (
+                "cast_snapshot",
+                audition_session.cast_snapshot_id,
+                previous,
+                self._current_cast_authority_fingerprint(authority),
+                "APPROVED_CAST_EVIDENCE_CHANGED",
+                "The approved cast snapshot or Phase 3A authority changed.",
+            )
+
         assignment = session.get(CastAssignmentRow, audition_session.assignment_id)
         latest_assignment = session.scalar(
             select(CastAssignmentRow)
@@ -12473,6 +12561,311 @@ class AuditionRepository:
 
     # Workspace snapshot ---------------------------------------------------------
 
+    def _approved_cast_assignment_ids(
+        self,
+        session: Session,
+        *,
+        cast_snapshot: ApprovedCastSnapshotRow,
+        casting_run: CastingRunRow,
+    ) -> tuple[str, ...]:
+        cache_key = (
+            "phase3b-approved-cast-assignment-ids",
+            cast_snapshot.id,
+            cast_snapshot.snapshot_fingerprint,
+            casting_run.id,
+        )
+        cached = session.info.get(cache_key)
+        if isinstance(cached, tuple) and all(isinstance(value, str) for value in cached):
+            return cached
+        manifest = self._casting.validated_snapshot_manifest(
+            session,
+            snapshot=cast_snapshot,
+            run=casting_run,
+        )
+        assignment_ids = manifest.get("assignmentIds")
+        if not isinstance(assignment_ids, list) or not all(
+            isinstance(value, str) and value for value in assignment_ids
+        ):
+            raise ServiceError(
+                500,
+                "CASTING_SNAPSHOT_MANIFEST_INVALID",
+                "The approved cast snapshot assignment manifest is invalid.",
+            )
+        result = tuple(assignment_ids)
+        session.info[cache_key] = result
+        return result
+
+    def _current_cast_authority(
+        self,
+        session: Session,
+        project_id: str,
+    ) -> _CurrentCastAuthority | None:
+        cache_key = ("phase3b-current-cast-authority", project_id)
+        if cache_key in session.info:
+            return cast(_CurrentCastAuthority | None, session.info[cache_key])
+        casting_run = session.scalar(
+            select(CastingRunRow)
+            .where(
+                CastingRunRow.project_id == project_id,
+                CastingRunRow.state == "succeeded",
+            )
+            .order_by(CastingRunRow.created_at.desc(), CastingRunRow.id.desc())
+            .limit(1)
+        )
+        cast_snapshot = (
+            session.scalar(
+                select(ApprovedCastSnapshotRow)
+                .where(ApprovedCastSnapshotRow.casting_run_id == casting_run.id)
+                .order_by(
+                    ApprovedCastSnapshotRow.revision.desc(),
+                    ApprovedCastSnapshotRow.id.desc(),
+                )
+                .limit(1)
+            )
+            if casting_run is not None
+            else None
+        )
+        if casting_run is None or cast_snapshot is None:
+            session.info[cache_key] = None
+            return None
+        assignment_ids = self._approved_cast_assignment_ids(
+            session,
+            cast_snapshot=cast_snapshot,
+            casting_run=casting_run,
+        )
+        assignments = list(
+            session.scalars(
+                select(CastAssignmentRow)
+                .where(CastAssignmentRow.id.in_(assignment_ids))
+                .order_by(CastAssignmentRow.role_id, CastAssignmentRow.id)
+            )
+        )
+        assignments_by_role = {row.role_id: row for row in assignments}
+        if (
+            {row.id for row in assignments} != set(assignment_ids)
+            or len(assignments_by_role) != len(assignments)
+            or any(
+                row.project_id != project_id
+                or row.casting_run_id != casting_run.id
+                or row.assignment_state not in {"selected", "locked"}
+                or row.voice_profile_record_id is None
+                for row in assignments
+            )
+        ):
+            raise ServiceError(
+                500,
+                "CASTING_SNAPSHOT_MANIFEST_INVALID",
+                "The current approved cast authority failed verification.",
+            )
+        rights_current = self._casting.snapshot_assignment_evidence_is_current(
+            session,
+            snapshot=cast_snapshot,
+            assignments=assignments,
+        )
+        decisions = self._casting.validated_phase3a_gate_decisions(
+            session,
+            snapshot=cast_snapshot,
+            run=casting_run,
+        )
+        phase3a_decision_ids = (
+            tuple(decisions[gate_id].id for gate_id in _PHASE3A_GATE_IDS)
+            if decisions is not None and rights_current
+            else None
+        )
+        authority = _CurrentCastAuthority(
+            casting_run=casting_run,
+            cast_snapshot=cast_snapshot,
+            assignments_by_role=assignments_by_role,
+            phase3a_decision_ids=phase3a_decision_ids,
+            rights_current=rights_current,
+        )
+        session.info[cache_key] = authority
+        return authority
+
+    @staticmethod
+    def _current_cast_authority_fingerprint(
+        authority: _CurrentCastAuthority | None,
+    ) -> str:
+        return request_fingerprint(
+            {
+                "assignmentIds": (
+                    sorted(row.id for row in authority.assignments_by_role.values())
+                    if authority is not None
+                    else []
+                ),
+                "castSnapshotFingerprint": (
+                    authority.cast_snapshot.snapshot_fingerprint if authority is not None else None
+                ),
+                "castSnapshotId": authority.cast_snapshot.id if authority is not None else None,
+                "castSnapshotRevision": (
+                    authority.cast_snapshot.revision if authority is not None else None
+                ),
+                "castingRunId": authority.casting_run.id if authority is not None else None,
+                "phase3aGateDecisionIds": (
+                    list(authority.phase3a_decision_ids)
+                    if authority is not None and authority.phase3a_decision_ids is not None
+                    else None
+                ),
+            }
+        )
+
+    @staticmethod
+    def _latest_current_audition_session(
+        session: Session,
+        authority: _CurrentCastAuthority,
+    ) -> AuditionSessionRow | None:
+        if authority.phase3a_decision_ids is None or not authority.assignments_by_role:
+            return None
+        audition_session = session.scalar(
+            select(AuditionSessionRow)
+            .where(
+                AuditionSessionRow.project_id == authority.casting_run.project_id,
+                AuditionSessionRow.casting_run_id == authority.casting_run.id,
+                AuditionSessionRow.cast_snapshot_id == authority.cast_snapshot.id,
+                AuditionSessionRow.cast_snapshot_revision == authority.cast_snapshot.revision,
+                AuditionSessionRow.cast_snapshot_fingerprint
+                == authority.cast_snapshot.snapshot_fingerprint,
+                AuditionSessionRow.phase3a_gate_decision_ids_json
+                == canonical_json(list(authority.phase3a_decision_ids)),
+                AuditionSessionRow.assignment_id.in_(
+                    row.id for row in authority.assignments_by_role.values()
+                ),
+            )
+            .order_by(AuditionSessionRow.created_at.desc(), AuditionSessionRow.id.desc())
+            .limit(1)
+        )
+        if audition_session is None:
+            return None
+        assignment = authority.assignments_by_role.get(audition_session.role_id)
+        if (
+            assignment is None
+            or assignment.id != audition_session.assignment_id
+            or assignment.revision != audition_session.assignment_revision
+        ):
+            return None
+        return audition_session
+
+    def _current_role_audition_evidence(
+        self,
+        session: Session,
+        *,
+        authority: _CurrentCastAuthority,
+        role_id: str,
+    ) -> _CurrentRoleAuditionEvidence:
+        assignment = authority.assignments_by_role.get(role_id)
+        if assignment is None or authority.phase3a_decision_ids is None:
+            return _CurrentRoleAuditionEvidence(None, None, None, None)
+        audition_session = session.scalar(
+            select(AuditionSessionRow)
+            .where(
+                AuditionSessionRow.project_id == authority.casting_run.project_id,
+                AuditionSessionRow.casting_run_id == authority.casting_run.id,
+                AuditionSessionRow.cast_snapshot_id == authority.cast_snapshot.id,
+                AuditionSessionRow.cast_snapshot_revision == authority.cast_snapshot.revision,
+                AuditionSessionRow.cast_snapshot_fingerprint
+                == authority.cast_snapshot.snapshot_fingerprint,
+                AuditionSessionRow.phase3a_gate_decision_ids_json
+                == canonical_json(list(authority.phase3a_decision_ids)),
+                AuditionSessionRow.role_id == role_id,
+                AuditionSessionRow.assignment_id == assignment.id,
+                AuditionSessionRow.assignment_revision == assignment.revision,
+            )
+            .order_by(AuditionSessionRow.created_at.desc(), AuditionSessionRow.id.desc())
+            .limit(1)
+        )
+        if audition_session is None:
+            return _CurrentRoleAuditionEvidence(None, None, None, None)
+        clip = session.scalar(
+            select(AuditionClipRow)
+            .where(
+                AuditionClipRow.project_id == authority.casting_run.project_id,
+                AuditionClipRow.session_id == audition_session.id,
+                AuditionClipRow.role_id == role_id,
+                AuditionClipRow.assignment_id == assignment.id,
+                AuditionClipRow.assignment_revision == assignment.revision,
+            )
+            .order_by(AuditionClipRow.created_at.desc(), AuditionClipRow.id.desc())
+            .limit(1)
+        )
+        if clip is None:
+            return _CurrentRoleAuditionEvidence(audition_session, None, None, None)
+        review = session.scalar(
+            select(AuditionReviewRecordRow)
+            .where(
+                AuditionReviewRecordRow.project_id == authority.casting_run.project_id,
+                AuditionReviewRecordRow.gate_id == "per_role_audition_review",
+                AuditionReviewRecordRow.scope_key == role_id,
+                AuditionReviewRecordRow.role_id == role_id,
+                AuditionReviewRecordRow.session_id == audition_session.id,
+                AuditionReviewRecordRow.clip_id == clip.id,
+            )
+            .order_by(
+                AuditionReviewRecordRow.revision.desc(),
+                AuditionReviewRecordRow.id.desc(),
+            )
+            .limit(1)
+        )
+        decision = (
+            session.scalar(
+                select(AuditionReviewDecisionRow)
+                .where(
+                    AuditionReviewDecisionRow.project_id == authority.casting_run.project_id,
+                    AuditionReviewDecisionRow.gate_id == "per_role_audition_review",
+                    AuditionReviewDecisionRow.scope_key == role_id,
+                )
+                .order_by(
+                    AuditionReviewDecisionRow.revision.desc(),
+                    AuditionReviewDecisionRow.id.desc(),
+                )
+                .limit(1)
+            )
+            if review is not None
+            else None
+        )
+        return _CurrentRoleAuditionEvidence(audition_session, clip, review, decision)
+
+    def _approved_current_role_audition_evidence(
+        self,
+        session: Session,
+        *,
+        authority: _CurrentCastAuthority,
+        role_id: str,
+    ) -> _CurrentRoleAuditionEvidence | None:
+        current = self._current_role_audition_evidence(
+            session,
+            authority=authority,
+            role_id=role_id,
+        )
+        audition_session = current.audition_session
+        clip = current.clip
+        review = current.review
+        decision = current.decision
+        review_evidence = parse_json(review.evidence_json, {}) if review is not None else {}
+        if (
+            authority.phase3a_decision_ids is None
+            or audition_session is None
+            or audition_session.state == "invalidated"
+            or clip is None
+            or review is None
+            or not review.eligible
+            or review.session_id != audition_session.id
+            or review.clip_id != clip.id
+            or review.required_decision_ids_json
+            != canonical_json(list(authority.phase3a_decision_ids))
+            or not isinstance(review_evidence, dict)
+            or review_evidence.get("approvedCastSnapshotFingerprint")
+            != authority.cast_snapshot.snapshot_fingerprint
+            or review_evidence.get("auditionSessionId") != audition_session.id
+            or review_evidence.get("auditionClipId") != clip.id
+            or decision is None
+            or decision.review_record_id != review.id
+            or decision.decision != "approved"
+            or decision.evidence_fingerprint != review.evidence_fingerprint
+            or self._session_dependency_drift(session, audition_session) is not None
+        ):
+            return None
+        return current
+
     def workspace_snapshot(
         self,
         project_id: str,
@@ -12492,7 +12885,12 @@ class AuditionRepository:
             project = self._require_project(session, project_id)
             self._reconcile_project_evidence(session, project_id)
             dictionary = self._ensure_empty_dictionary(session, project_id)
-            self._refresh_reviews(session, project_id)
+            (
+                pronunciation_review,
+                narrator_review,
+                character_review,
+                readiness_snapshot,
+            ) = self._refresh_reviews(session, project_id)
             analysis_run = session.scalar(
                 select(AnalysisRunRow)
                 .where(AnalysisRunRow.project_id == project_id)
@@ -12523,6 +12921,15 @@ class AuditionRepository:
             )
             phase2 = self._latest_phase2_decisions(session, analysis_run)
             phase3a = self._latest_phase3a_decisions(session, casting_run)
+            authority = self._current_cast_authority(session, project_id)
+            phase3a_authority_current = (
+                authority is not None
+                and casting_run is not None
+                and cast_snapshot is not None
+                and authority.casting_run.id == casting_run.id
+                and authority.cast_snapshot.id == cast_snapshot.id
+                and authority.phase3a_decision_ids is not None
+            )
             import_review = session.scalar(
                 select(ImportReviewRow)
                 .where(ImportReviewRow.project_id == project_id)
@@ -12556,6 +12963,7 @@ class AuditionRepository:
                 phase2=phase2,
                 phase3a=phase3a,
                 cast_snapshot=cast_snapshot,
+                phase3a_authority_current=phase3a_authority_current,
                 role_count=role_total,
                 assignments_current=assignments_current,
                 rights_current=rights_current,
@@ -12594,35 +13002,25 @@ class AuditionRepository:
             )
             global_reviews = [
                 review
-                for gate_id in (
-                    "narrator_audition_review",
-                    "character_audition_review",
-                    "pronunciation_review",
-                )
-                if (
-                    review := session.scalar(
-                        select(AuditionReviewRecordRow)
-                        .where(
-                            AuditionReviewRecordRow.project_id == project_id,
-                            AuditionReviewRecordRow.gate_id == gate_id,
-                        )
-                        .order_by(
-                            AuditionReviewRecordRow.revision.desc(),
-                            AuditionReviewRecordRow.id.desc(),
-                        )
-                        .limit(1)
-                    )
-                )
-                is not None
+                for review in (narrator_review, character_review, pronunciation_review)
+                if review is not None
             ]
-            readiness_review = session.scalar(
-                select(VoiceReadinessReviewRow)
-                .where(VoiceReadinessReviewRow.project_id == project_id)
-                .order_by(
-                    VoiceReadinessReviewRow.revision.desc(),
-                    VoiceReadinessReviewRow.id.desc(),
+            display_readiness_snapshot = readiness_snapshot
+            readiness_review = (
+                session.scalar(
+                    select(VoiceReadinessReviewRow)
+                    .where(
+                        VoiceReadinessReviewRow.project_id == project_id,
+                        VoiceReadinessReviewRow.snapshot_id == display_readiness_snapshot.id,
+                    )
+                    .order_by(
+                        VoiceReadinessReviewRow.revision.desc(),
+                        VoiceReadinessReviewRow.id.desc(),
+                    )
+                    .limit(1)
                 )
-                .limit(1)
+                if display_readiness_snapshot is not None
+                else None
             )
             reviews = [
                 self._review_wire(session, review) for review in (*role_reviews, *global_reviews)
@@ -12639,11 +13037,7 @@ class AuditionRepository:
                         "revision": cast_snapshot.revision,
                         "fingerprint": cast_snapshot.snapshot_fingerprint,
                     }
-                    if cast_snapshot is not None
-                    and all(
-                        decision is not None and decision.decision == "approved"
-                        for decision in phase3a.values()
-                    )
+                    if cast_snapshot is not None and phase3a_authority_current
                     else None
                 ),
                 "providers": self._provider_descriptors_wire(session),
@@ -12692,9 +13086,10 @@ class AuditionRepository:
                     **({"nextCursor": next_role_cursor} if next_role_cursor is not None else {}),
                 },
                 "reviews": reviews,
-                "voiceReadinessSnapshot": self._latest_readiness_wire(
-                    session,
-                    project_id,
+                "voiceReadinessSnapshot": (
+                    self._readiness_snapshot_wire(session, display_readiness_snapshot)
+                    if display_readiness_snapshot is not None
+                    else None
                 ),
                 "updatedAt": project.updated_at,
             }
@@ -12756,6 +13151,7 @@ class AuditionRepository:
         phase2: Mapping[str, AnalysisReviewDecisionRow | None],
         phase3a: Mapping[str, CastingGateDecisionRow | None],
         cast_snapshot: ApprovedCastSnapshotRow | None,
+        phase3a_authority_current: bool,
         role_count: int,
         assignments_current: bool,
         rights_current: bool,
@@ -12817,7 +13213,13 @@ class AuditionRepository:
         }
         for gate_id, prerequisite_id in phase3a_names.items():
             phase3a_decision = phase3a.get(gate_id)
-            current = phase3a_decision is not None and phase3a_decision.decision == "approved"
+            current = (
+                phase3a_authority_current
+                and phase3a_decision is not None
+                and phase3a_decision.decision == "approved"
+                and cast_snapshot is not None
+                and phase3a_decision.cast_snapshot_id == cast_snapshot.id
+            )
             add(
                 prerequisite_id,
                 current,
@@ -12827,10 +13229,20 @@ class AuditionRepository:
             )
         add(
             "approved_cast_snapshot",
-            cast_snapshot is not None,
-            "CURRENT" if cast_snapshot is not None else "SNAPSHOT_REQUIRED",
-            cast_snapshot.id if cast_snapshot is not None else None,
-            cast_snapshot.snapshot_fingerprint if cast_snapshot is not None else None,
+            cast_snapshot is not None and phase3a_authority_current,
+            (
+                "CURRENT"
+                if cast_snapshot is not None and phase3a_authority_current
+                else "SNAPSHOT_APPROVAL_REQUIRED"
+                if cast_snapshot is not None
+                else "SNAPSHOT_REQUIRED"
+            ),
+            (cast_snapshot.id if cast_snapshot is not None and phase3a_authority_current else None),
+            (
+                cast_snapshot.snapshot_fingerprint
+                if cast_snapshot is not None and phase3a_authority_current
+                else None
+            ),
         )
         add(
             "voice_rights",
@@ -12879,14 +13291,63 @@ class AuditionRepository:
             if cursor is not None:
                 _decode_cursor(cursor, binding="no-current-cast-snapshot")
             return [], [], None, 0, False, False
+        authority = self._current_cast_authority(session, project_id)
+        if (
+            authority is None
+            or authority.casting_run.id != casting_run.id
+            or authority.cast_snapshot.id != cast_snapshot.id
+        ):
+            raise ServiceError(
+                500,
+                "CASTING_SNAPSHOT_MANIFEST_INVALID",
+                "The workspace cast authority is not current.",
+            )
+        snapshot_assignment_ids = self._approved_cast_assignment_ids(
+            session,
+            cast_snapshot=cast_snapshot,
+            casting_run=casting_run,
+        )
+        snapshot_assignments = list(authority.assignments_by_role.values())
+        assignments_by_role = {value.role_id: value for value in snapshot_assignments}
+        if (
+            {value.id for value in snapshot_assignments} != set(snapshot_assignment_ids)
+            or len(assignments_by_role) != len(snapshot_assignments)
+            or any(
+                value.project_id != project_id
+                or value.casting_run_id != casting_run.id
+                or value.assignment_state not in {"selected", "locked"}
+                or value.voice_profile_record_id is None
+                for value in snapshot_assignments
+            )
+        ):
+            raise ServiceError(
+                500,
+                "CASTING_SNAPSHOT_MANIFEST_INVALID",
+                "The approved cast snapshot assignments failed verification.",
+            )
+        snapshot_role_ids = tuple(sorted(assignments_by_role))
         role_filters = (
             ProductionRoleRow.project_id == project_id,
             ProductionRoleRow.casting_run_id == casting_run.id,
-            ProductionRoleRow.status == "active",
+            ProductionRoleRow.status.in_(("active", "unresolved")),
+            ProductionRoleRow.id.in_(snapshot_role_ids),
         )
         total = int(
             session.scalar(select(func.count()).select_from(ProductionRoleRow).where(*role_filters))
             or 0
+        )
+        if total != len(snapshot_assignments):
+            raise ServiceError(
+                500,
+                "CASTING_SNAPSHOT_MANIFEST_INVALID",
+                "The approved cast snapshot roles failed verification.",
+            )
+        prior_assignment = aliased(CastAssignmentRow)
+        latest_assignment_revision = (
+            select(func.max(prior_assignment.revision))
+            .where(prior_assignment.role_id == CastAssignmentRow.role_id)
+            .correlate(CastAssignmentRow)
+            .scalar_subquery()
         )
         assignment_count = int(
             session.scalar(
@@ -12895,8 +13356,13 @@ class AuditionRepository:
                 .join(CastAssignmentRow, CastAssignmentRow.role_id == ProductionRoleRow.id)
                 .where(
                     *role_filters,
+                    CastAssignmentRow.id.in_(snapshot_assignment_ids),
+                    CastAssignmentRow.revision == latest_assignment_revision,
                     CastAssignmentRow.assignment_state.in_(("selected", "locked")),
                     CastAssignmentRow.voice_profile_record_id.is_not(None),
+                    ~select(CastAssignmentInvalidationRow.id)
+                    .where(CastAssignmentInvalidationRow.assignment_id == CastAssignmentRow.id)
+                    .exists(),
                 )
             )
             or 0
@@ -12922,6 +13388,8 @@ class AuditionRepository:
                 )
                 .where(
                     *role_filters,
+                    CastAssignmentRow.id.in_(snapshot_assignment_ids),
+                    CastAssignmentRow.revision == latest_assignment_revision,
                     CastAssignmentRow.assignment_state.in_(("selected", "locked")),
                     VoiceRightsRecordRow.revision == latest_rights_revision,
                     VoiceRightsRecordRow.rights_state.in_(("verified", "restricted")),
@@ -12984,20 +13452,14 @@ class AuditionRepository:
         all_phase3a_approved = all(
             decision is not None and decision.decision == "approved"
             for decision in phase3a.values()
+        ) and authority.phase3a_decision_ids == tuple(
+            cast(CastingGateDecisionRow, phase3a[gate_id]).id for gate_id in _PHASE3A_GATE_IDS
         )
         provider_binding = self._active_provider_binding(session, KOKORO_PROVIDER_ID)
         if provider_binding is None:
             provider_binding = self._active_provider_binding(session, FIXTURE_PROVIDER_ID)
         for role in rows:
-            assignment = session.scalar(
-                select(CastAssignmentRow)
-                .where(
-                    CastAssignmentRow.role_id == role.id,
-                    CastAssignmentRow.assignment_state.in_(("selected", "locked")),
-                )
-                .order_by(CastAssignmentRow.revision.desc(), CastAssignmentRow.id.desc())
-                .limit(1)
-            )
+            assignment = assignments_by_role.get(role.id)
             if assignment is None or assignment.voice_profile_record_id is None:
                 raise ServiceError(
                     500,
@@ -13024,40 +13486,14 @@ class AuditionRepository:
                     "AUDITION_ROLE_EVIDENCE_MISSING",
                     "The approved role voice or rights evidence is unavailable.",
                 )
-            latest_session = session.scalar(
-                select(AuditionSessionRow)
-                .where(
-                    AuditionSessionRow.project_id == project_id,
-                    AuditionSessionRow.role_id == role.id,
-                )
-                .order_by(
-                    AuditionSessionRow.created_at.desc(),
-                    AuditionSessionRow.id.desc(),
-                )
-                .limit(1)
+            current = self._current_role_audition_evidence(
+                session,
+                authority=authority,
+                role_id=role.id,
             )
-            latest_clip = session.scalar(
-                select(AuditionClipRow)
-                .where(
-                    AuditionClipRow.project_id == project_id,
-                    AuditionClipRow.role_id == role.id,
-                )
-                .order_by(AuditionClipRow.created_at.desc(), AuditionClipRow.id.desc())
-                .limit(1)
-            )
-            review = session.scalar(
-                select(AuditionReviewRecordRow)
-                .where(
-                    AuditionReviewRecordRow.project_id == project_id,
-                    AuditionReviewRecordRow.gate_id == "per_role_audition_review",
-                    AuditionReviewRecordRow.scope_key == role.id,
-                )
-                .order_by(
-                    AuditionReviewRecordRow.revision.desc(),
-                    AuditionReviewRecordRow.id.desc(),
-                )
-                .limit(1)
-            )
+            latest_session = current.audition_session
+            latest_clip = current.clip
+            review = current.review
             review_state = (
                 self._review_wire(session, review)["state"] if review is not None else "pending"
             )
@@ -13146,7 +13582,7 @@ class AuditionRepository:
             next_cursor,
             total,
             total > 0 and assignment_count == total,
-            total > 0 and rights_count == total,
+            total > 0 and rights_count == total and authority.rights_current,
         )
 
     def _session_evidence_for_role(

@@ -23,6 +23,9 @@ from tests.conftest import wait_for_job
 from tests.test_phase3b_atomic_publication import _prepare_generation, _queue_generation
 from tests.test_phase3b_workflow import _create_session_and_script, _workspace
 
+_NATURAL_IDLE_TEST_SECONDS = 5.0
+_IDLE_EXIT_WAIT_SECONDS = 15.0
+
 
 class _IncompleteTerminationRuntime(ManagedSpeechRuntime):
     def synthesize(self, *_args: object, **_kwargs: object) -> None:
@@ -76,6 +79,16 @@ class _CommittedDispatchFailureRuntime(ManagedSpeechRuntime):
         )
 
 
+class _ExitedAfterHandshakeRuntime(ManagedSpeechRuntime):
+    def start(self) -> SpeechWorkerIdentity:
+        identity = super().start()
+        evidence = self.stop(reason="idle")
+        assert evidence is not None
+        assert evidence.pid == identity.pid
+        assert evidence.graceful_shutdown_confirmed is True
+        return identity
+
+
 def test_repository_persists_authenticated_natural_idle_exit_and_shutdown_proof(
     settings: ServiceSettings,
     auth_headers: dict[str, str],
@@ -87,7 +100,7 @@ def test_repository_persists_authenticated_natural_idle_exit_and_shutdown_proof(
     with TestClient(create_app(settings)) as client:
         repository = cast(AuditionRepository, client.app.state.auditions)
         repository._runtime_factory = lambda config: ManagedSpeechRuntime(
-            replace(config, idle_timeout_seconds=0.2)
+            replace(config, idle_timeout_seconds=_NATURAL_IDLE_TEST_SECONDS)
         )
         project_id, audition_session, generation_request = _prepare_generation(
             client,
@@ -115,7 +128,7 @@ def test_repository_persists_authenticated_natural_idle_exit_and_shutdown_proof(
             identity = runtime.identity
             assert identity is not None
             worker_pid = identity.pid
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + _IDLE_EXIT_WAIT_SECONDS
         while runtime.is_running and time.monotonic() < deadline:
             time.sleep(0.02)
         assert runtime.is_running is False
@@ -160,7 +173,9 @@ def test_acquisition_persists_idle_exit_instead_of_rebinding_a_new_process(
         created_runtimes: list[ManagedSpeechRuntime] = []
 
         def runtime_factory(config: SpeechRuntimeConfig) -> ManagedSpeechRuntime:
-            runtime = ManagedSpeechRuntime(replace(config, idle_timeout_seconds=0.2))
+            runtime = ManagedSpeechRuntime(
+                replace(config, idle_timeout_seconds=_NATURAL_IDLE_TEST_SECONDS)
+            )
             created_runtimes.append(runtime)
             return runtime
 
@@ -187,7 +202,7 @@ def test_acquisition_persists_idle_exit_instead_of_rebinding_a_new_process(
             runtime, instance_id = next(iter(repository._runtimes.values()))
             identity = runtime.identity
             assert identity is not None
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + _IDLE_EXIT_WAIT_SECONDS
         while runtime.is_running and time.monotonic() < deadline:
             time.sleep(0.02)
         assert runtime.is_running is False
@@ -277,6 +292,91 @@ def test_acquisition_persists_idle_exit_instead_of_rebinding_a_new_process(
             assert replacement_row.worker_pid == replacement_identity.pid
             assert replacement_row.state == "idle"
             assert replacement_row.creation_identity != prior_row.creation_identity
+
+
+def test_worker_exit_during_acquisition_is_retryable_without_dispatch_or_rebinding(
+    settings: ServiceSettings,
+    auth_headers: dict[str, str],
+) -> None:
+    with TestClient(create_app(settings)) as client:
+        repository = cast(AuditionRepository, client.app.state.auditions)
+        created_runtimes: list[ManagedSpeechRuntime] = []
+
+        def runtime_factory(config: SpeechRuntimeConfig) -> ManagedSpeechRuntime:
+            runtime: ManagedSpeechRuntime
+            if not created_runtimes:
+                runtime = _ExitedAfterHandshakeRuntime(config)
+            else:
+                runtime = ManagedSpeechRuntime(config)
+            created_runtimes.append(runtime)
+            return runtime
+
+        repository._runtime_factory = runtime_factory
+        project_id, audition_session, generation_request = _prepare_generation(
+            client,
+            auth_headers,
+            key="phase3b-runtime-exits-during-acquisition",
+        )
+        queued = _queue_generation(
+            client,
+            auth_headers,
+            project_id=project_id,
+            session_id=audition_session["auditionSessionId"],
+            generation_request=generation_request,
+        )
+        terminal = wait_for_job(
+            client,
+            auth_headers,
+            queued["jobId"],
+            {"failed"},
+            timeout=30.0,
+        )
+        assert terminal["error"] == {
+            "code": "AUDITION_RUNTIME_UNAVAILABLE",
+            "message": "Audition generation could not be completed safely.",
+            "retryable": True,
+        }
+        assert len(created_runtimes) == 1
+        exited_runtime = created_runtimes[0]
+        exited_identity = exited_runtime.last_identity
+        assert exited_identity is not None
+        assert exited_runtime.is_running is False
+        with client.app.state.database.session() as database_session:
+            request = (
+                database_session.query(SpeechProviderRequestRow)
+                .filter_by(job_id=queued["jobId"])
+                .one()
+            )
+            runtime_row = (
+                database_session.query(SpeechRuntimeInstanceRow)
+                .filter_by(worker_pid=exited_identity.pid)
+                .one()
+            )
+            warnings = json.loads(runtime_row.warnings_json)
+        request_details = json.loads(request.provenance_json)["details"]
+        assert request.runtime_instance_id is None
+        assert request.started_at is None
+        assert request_details["providerDispatchCount"] == 0
+        assert runtime_row.state == "stopped"
+        assert warnings["stopReasonCode"] == "idle"
+        assert warnings["exitEvidence"]["pid"] == exited_identity.pid
+        assert warnings["exitEvidence"]["owned_processes_confirmed_exited"] is True
+        assert repository._runtimes == {}
+
+        retried = client.post(
+            f"/api/v1/jobs/{queued['jobId']}/retry",
+            headers=auth_headers,
+        )
+        assert retried.status_code == 200, retried.text
+        retry_terminal = wait_for_job(
+            client,
+            auth_headers,
+            queued["jobId"],
+            {"succeeded", "failed"},
+            timeout=30.0,
+        )
+        assert retry_terminal["state"] == "succeeded", retry_terminal
+        assert len(created_runtimes) == 2
 
 
 def test_acquisition_never_resurrects_a_terminal_runtime_row(

@@ -14,6 +14,15 @@ from cinematic_story_service.auditions import (
     AUDITION_PROFILE_FINGERPRINT,
     AuditionCacheIdentity,
 )
+from cinematic_story_service.casting import (
+    CASTING_CONTRACT_VERSION,
+    CASTING_GATE_IDS,
+    generate_candidates,
+)
+from cinematic_story_service.casting_repository import (
+    CastingRepository,
+    _deterministic_machine_fingerprint,
+)
 from cinematic_story_service.database import Database
 from cinematic_story_service.models import (
     AudioArtifactRow,
@@ -23,6 +32,10 @@ from cinematic_story_service.models import (
     AuditionScriptRow,
     AuditionSessionRow,
     CastAssignmentRow,
+    CastingCandidateRow,
+    CastingCorrectionRow,
+    CastingGateDecisionRow,
+    CastingRunRow,
     JobAttemptRow,
     JobRow,
     ModelPackageManifestRow,
@@ -33,6 +46,7 @@ from cinematic_story_service.models import (
     SpeechRuntimeInstanceRow,
     SpeechRuntimeProfileRow,
     TextNormalizationPlanRow,
+    VoiceProfileRow,
 )
 from cinematic_story_service.pronunciation import PRONUNCIATION_PROFILE_VERSION
 from cinematic_story_service.util import (
@@ -40,6 +54,7 @@ from cinematic_story_service.util import (
     parse_json,
     request_fingerprint,
     sha256_text,
+    stable_id,
     utc_now,
 )
 from tests.conftest import wait_for_job
@@ -103,10 +118,25 @@ def _scale_timestamp(ordinal: int, *, year: int = 2099) -> str:
 
 def _seed_roles_and_pronunciations(
     database: Database,
+    casting: CastingRepository,
     *,
     project_id: str,
-) -> tuple[str, int]:
+) -> tuple[str, int, int]:
+    helper_started = time.perf_counter()
+    assignment_seed_seconds = 0.0
+    snapshot_publish_seconds = 0.0
+    gate_refresh_decision_seconds = 0.0
     with database.immediate_session() as session:
+        casting_run = session.scalar(
+            select(CastingRunRow)
+            .where(
+                CastingRunRow.project_id == project_id,
+                CastingRunRow.state == "succeeded",
+            )
+            .order_by(CastingRunRow.created_at.desc(), CastingRunRow.id.desc())
+            .limit(1)
+        )
+        assert casting_run is not None
         roles = list(
             session.scalars(
                 select(ProductionRoleRow)
@@ -115,56 +145,117 @@ def _seed_roles_and_pronunciations(
             )
         )
         assert 0 < len(roles) <= _ROLE_COUNT
-        template_role = roles[0]
-        template_assignment = session.scalar(
-            select(CastAssignmentRow)
-            .where(
-                CastAssignmentRow.role_id == template_role.id,
-                CastAssignmentRow.assignment_state.in_(("selected", "locked")),
-            )
-            .order_by(CastAssignmentRow.revision.desc(), CastAssignmentRow.id.desc())
-            .limit(1)
-        )
-        assert template_assignment is not None
-        assert template_assignment.voice_profile_record_id is not None
-
-        assignment_mappings: list[dict[str, Any]] = []
+        current_assignments: dict[str, CastAssignmentRow] = {}
+        selected_assignments: dict[str, CastAssignmentRow] = {}
+        intentionally_uncast_roles: list[ProductionRoleRow] = []
         for role in roles:
-            role.status = "active"
-            current_assignment = session.scalar(
+            assignment = session.scalar(
                 select(CastAssignmentRow)
-                .where(CastAssignmentRow.role_id == role.id)
+                .where(
+                    CastAssignmentRow.role_id == role.id,
+                    CastAssignmentRow.authority.in_(("human_selection", "human_locked")),
+                )
                 .order_by(CastAssignmentRow.revision.desc(), CastAssignmentRow.id.desc())
                 .limit(1)
             )
-            if (
-                current_assignment is not None
-                and current_assignment.assignment_state in {"selected", "locked"}
-                and current_assignment.voice_profile_record_id is not None
-            ):
-                continue
-            mapping = _row_mapping(template_assignment)
-            next_revision = 1 if current_assignment is None else current_assignment.revision + 1
-            mapping.update(
-                {
-                    "id": f"scale-assignment-existing-{role.ordinal:03d}",
-                    "role_id": role.id,
-                    "correction_id": None,
-                    "authority": "machine_proposal",
-                    "assignment_state": "selected",
-                    "rationale": "Repository-owned metadata-only scale assignment.",
-                    "revision": next_revision,
-                    "supersedes_assignment_id": (
-                        current_assignment.id if current_assignment is not None else None
-                    ),
-                    "created_at": _scale_timestamp(role.ordinal, year=2097),
-                }
+            assert assignment is not None
+            current_assignments[role.id] = assignment
+            if assignment.assignment_state in {"selected", "locked"}:
+                assert role.status == "active"
+                assert assignment.voice_profile_record_id is not None
+                selected_assignments[role.id] = assignment
+            else:
+                assert role.status == "unresolved"
+                assert assignment.assignment_state == "intentionally_uncast"
+                assert assignment.voice_profile_record_id is None
+                intentionally_uncast_roles.append(role)
+        assert selected_assignments
+        template_role = next(
+            (role for role in roles if role.role_type == "named_character"),
+            roles[0],
+        )
+        template_assignment = selected_assignments[template_role.id]
+        assert template_assignment is not None
+        assert template_assignment.voice_profile_record_id is not None
+        template_role_values = casting._role_wire(session, template_role)
+
+        for role in intentionally_uncast_roles:
+            latest_role_correction = session.scalar(
+                select(CastingCorrectionRow)
+                .where(CastingCorrectionRow.role_id == role.id)
+                .order_by(
+                    CastingCorrectionRow.revision.desc(),
+                    CastingCorrectionRow.id.desc(),
+                )
+                .limit(1)
             )
-            assignment_mappings.append(mapping)
+            prior_requirement = session.scalar(
+                select(CastingCorrectionRow)
+                .where(
+                    CastingCorrectionRow.role_id == role.id,
+                    CastingCorrectionRow.kind == "change_casting_requirement",
+                )
+                .order_by(
+                    CastingCorrectionRow.revision.desc(),
+                    CastingCorrectionRow.id.desc(),
+                )
+                .limit(1)
+            )
+            recorded_at = _scale_timestamp(role.ordinal, year=2096)
+            prior_effective_fingerprint = casting._effective_role_fingerprint(
+                session,
+                role,
+            )
+            corrected_value = {"requirement": template_role_values["performanceRequirements"]}
+            requirement_correction = CastingCorrectionRow(
+                id=f"scale-requirement-{role.ordinal:04d}",
+                project_id=project_id,
+                casting_run_id=casting_run.id,
+                role_id=role.id,
+                kind="change_casting_requirement",
+                revision=(latest_role_correction.revision + 1 if latest_role_correction else 1),
+                prior_effective_fingerprint=prior_effective_fingerprint,
+                corrected_value_json=canonical_json(corrected_value),
+                correction_fingerprint="",
+                actor_id="local_user",
+                reason="Apply governed synthetic scale language requirements.",
+                provenance_json=canonical_json(
+                    {
+                        "origin": "human",
+                        "producerId": "phase3b-scale-test",
+                        "producerVersion": "1.0.0",
+                        "recordedAt": recorded_at,
+                        "inputFingerprint": prior_effective_fingerprint,
+                        "requestFingerprint": request_fingerprint(
+                            {
+                                "operation": "change_casting_requirement",
+                                "roleId": role.id,
+                                "value": corrected_value,
+                            }
+                        ),
+                    }
+                ),
+                supersedes_correction_id=(
+                    prior_requirement.id if prior_requirement is not None else None
+                ),
+                idempotency_key=f"phase3b-scale-requirement-{role.ordinal:04d}",
+                recorded_at=recorded_at,
+            )
+            requirement_correction.correction_fingerprint = request_fingerprint(
+                casting._correction_material(requirement_correction)
+            )
+            session.add(requirement_correction)
+        session.flush()
+        casting_run.effective_correction_set_fingerprint = casting._correction_fingerprint(
+            session,
+            casting_run.id,
+        )
+        session.flush()
 
         role_mappings: list[dict[str, Any]] = []
-        first_new_ordinal = len(roles)
-        for ordinal in range(first_new_ordinal, _ROLE_COUNT):
+        first_new_ordinal = max(role.ordinal for role in roles) + 1
+        last_new_ordinal = first_new_ordinal + _ROLE_COUNT - len(roles) - 1
+        for ordinal in range(first_new_ordinal, last_new_ordinal + 1):
             role_id = f"scale-role-{ordinal:04d}"
             role_mapping = _row_mapping(template_role)
             role_mapping.update(
@@ -179,34 +270,361 @@ def _seed_roles_and_pronunciations(
                     "dialogue_line_count": 1,
                     "narration_span_count": 0,
                     "approximate_word_count": 4,
-                    "status": "active",
-                    "role_fingerprint": request_fingerprint(
-                        {"projectId": project_id, "roleOrdinal": ordinal}
+                    "language_requirements_json": canonical_json(
+                        template_role_values["languageRequirements"]
                     ),
+                    "performance_requirements_json": canonical_json(
+                        template_role_values["performanceRequirements"]
+                    ),
+                    "status": "active",
                     "created_at": _scale_timestamp(ordinal, year=2097),
+                }
+            )
+            role_mapping["role_fingerprint"] = request_fingerprint(
+                {
+                    "contractVersion": CASTING_CONTRACT_VERSION,
+                    "roleId": role_mapping["id"],
+                    "projectId": role_mapping["project_id"],
+                    "roleType": role_mapping["role_type"],
+                    "analysisEntityId": role_mapping["phase2_entity_id"],
+                    "effectiveDisplayLabel": role_mapping["effective_display_label"],
+                    "analysisRunId": role_mapping["analysis_run_id"],
+                    "analysisSnapshotId": role_mapping["analysis_snapshot_id"],
+                    "analysisSnapshotFingerprint": casting_run.analysis_snapshot_fingerprint,
+                    "dialogueLineCount": role_mapping["dialogue_line_count"],
+                    "narrationSpanCount": role_mapping["narration_span_count"],
+                    "approximateWordCount": role_mapping["approximate_word_count"],
+                    "chapterRange": parse_json(role_mapping["chapter_range_json"], {}),
+                    "sceneRange": parse_json(role_mapping["scene_range_json"], {}),
+                    "languageRequirements": parse_json(
+                        role_mapping["language_requirements_json"],
+                        [],
+                    ),
+                    "performanceRequirements": parse_json(
+                        role_mapping["performance_requirements_json"],
+                        {},
+                    ),
+                    "warnings": parse_json(role_mapping["warnings_json"], []),
+                    "provenance": parse_json(role_mapping["provenance_json"], {}),
+                    "status": "active",
+                    "revision": 1,
+                    "characterId": role_mapping["character_id"],
+                    "roleImportance": role_mapping["role_importance"],
+                    "unresolvedMaterialExplicitlyRepresented": False,
                 }
             )
             role_mappings.append(role_mapping)
-            assignment_mapping = _row_mapping(template_assignment)
-            assignment_mapping.update(
-                {
-                    "id": f"scale-assignment-{ordinal:04d}",
-                    "role_id": role_id,
-                    "correction_id": None,
-                    "authority": "machine_proposal",
-                    "assignment_state": "selected",
-                    "rationale": "Repository-owned metadata-only scale assignment.",
-                    "revision": 1,
-                    "supersedes_assignment_id": None,
-                    "created_at": _scale_timestamp(ordinal, year=2097),
-                }
-            )
-            assignment_mappings.append(assignment_mapping)
 
         if role_mappings:
             session.execute(insert(ProductionRoleRow), role_mappings)
-        if assignment_mappings:
-            session.execute(insert(CastAssignmentRow), assignment_mappings)
+        session.flush()
+
+        new_role_ids = [str(value["id"]) for value in role_mappings]
+        new_roles = list(
+            session.scalars(
+                select(ProductionRoleRow)
+                .where(
+                    ProductionRoleRow.casting_run_id == casting_run.id,
+                    ProductionRoleRow.id.in_(new_role_ids),
+                )
+                .order_by(ProductionRoleRow.ordinal, ProductionRoleRow.id)
+            )
+        )
+        assert len(new_roles) == _ROLE_COUNT - len(roles)
+        voice_rows = casting._voice_rows(session, casting_run.catalog_revision_id)
+        assignment_inputs: list[
+            tuple[ProductionRoleRow, CastingCorrectionRow, VoiceProfileRow]
+        ] = []
+        for role in [*intentionally_uncast_roles, *new_roles]:
+            role_revision = casting._role_revision(session, role.id)
+            role_assessment = casting._effective_role_assessment_values(
+                session,
+                role,
+            )
+            candidate_input_fingerprint = request_fingerprint(
+                {
+                    "castingRunInputFingerprint": casting_run.input_fingerprint,
+                    "roleAssessment": role_assessment,
+                    "catalogFingerprint": casting_run.catalog_fingerprint,
+                    "castingProfileFingerprint": (casting_run.casting_profile_fingerprint),
+                    "effectiveCorrectionSetFingerprint": (
+                        casting_run.effective_correction_set_fingerprint
+                    ),
+                    "roleRevision": role_revision,
+                }
+            )
+            generated_candidates, _role_conflicts = generate_candidates(
+                roles=[role_assessment],
+                catalog=casting.catalog,
+                input_fingerprint=candidate_input_fingerprint,
+            )
+            selected_candidate = next(
+                value
+                for value in generated_candidates
+                if value["compatibilityStatus"] in {"eligible", "conditional"}
+                and value["rightsEligibility"] == "verified"
+                and value["languageEligibility"] == "eligible"
+                and value["providerAvailability"] is True
+                and value["modelAvailability"] is True
+                and value["longFormSuitability"] is True
+                and value["conflictWarnings"] == []
+            )
+            voice_profile_id = str(selected_candidate["voiceProfileId"])
+            selected_voice = voice_rows[voice_profile_id]
+            recorded_at = _scale_timestamp(role.ordinal, year=2097)
+            candidate_provenance = {
+                **dict(selected_candidate["provenance"]),
+                "recordedAt": recorded_at,
+            }
+            candidate_output_fingerprint = _deterministic_machine_fingerprint(
+                {
+                    **selected_candidate,
+                    "provenance": candidate_provenance,
+                }
+            )
+            raw_rights = str(selected_candidate["rightsEligibility"])
+            session.add(
+                CastingCandidateRow(
+                    id=str(selected_candidate["candidateId"]),
+                    project_id=project_id,
+                    casting_run_id=casting_run.id,
+                    role_id=role.id,
+                    voice_profile_record_id=selected_voice.id,
+                    role_revision=role_revision,
+                    ordinal=int(selected_candidate["ordinal"]),
+                    compatibility_status=str(selected_candidate["compatibilityStatus"]),
+                    compatibility_score=int(
+                        round(float(selected_candidate["compatibilityScore"]) * 1_000_000)
+                    ),
+                    confidence_class=str(selected_candidate["confidenceClassification"]),
+                    hard_constraint_results_json=canonical_json(
+                        selected_candidate["hardConstraintResults"]
+                    ),
+                    soft_preference_results_json=canonical_json(
+                        selected_candidate["softPreferenceResults"]
+                    ),
+                    rights_eligibility={
+                        "verified": "eligible",
+                        "restricted": "restricted",
+                        "unknown": "unknown",
+                        "prohibited": "ineligible",
+                    }.get(raw_rights, raw_rights),
+                    language_eligibility=str(selected_candidate["languageEligibility"]),
+                    provider_availability="available",
+                    model_availability="available",
+                    long_form_suitability="suitable",
+                    conflict_warnings_json="[]",
+                    explanation_json=canonical_json(
+                        {
+                            "text": selected_candidate["explanation"],
+                            "preReductionRank": selected_candidate["preReductionRank"],
+                        }
+                    ),
+                    provenance_json=canonical_json(candidate_provenance),
+                    input_fingerprint=candidate_input_fingerprint,
+                    output_fingerprint=candidate_output_fingerprint,
+                    created_at=recorded_at,
+                )
+            )
+
+            prior_effective_fingerprint = casting._effective_role_fingerprint(
+                session,
+                role,
+            )
+            latest_role_correction = session.scalar(
+                select(CastingCorrectionRow)
+                .where(CastingCorrectionRow.role_id == role.id)
+                .order_by(
+                    CastingCorrectionRow.revision.desc(),
+                    CastingCorrectionRow.id.desc(),
+                )
+                .limit(1)
+            )
+            prior_assignment = current_assignments.get(role.id)
+            correction = CastingCorrectionRow(
+                id=f"scale-correction-{role.ordinal:04d}",
+                project_id=project_id,
+                casting_run_id=casting_run.id,
+                role_id=role.id,
+                kind="select_voice",
+                revision=(latest_role_correction.revision + 1 if latest_role_correction else 1),
+                prior_effective_fingerprint=prior_effective_fingerprint,
+                corrected_value_json=canonical_json({"voiceProfileId": voice_profile_id}),
+                correction_fingerprint="",
+                actor_id="local_user",
+                reason="Select a repository-owned synthetic scale voice.",
+                provenance_json=canonical_json(
+                    {
+                        "origin": "human",
+                        "producerId": "phase3b-scale-test",
+                        "producerVersion": "1.0.0",
+                        "recordedAt": recorded_at,
+                        "inputFingerprint": prior_effective_fingerprint,
+                        "requestFingerprint": request_fingerprint(
+                            {
+                                "operation": "select_voice",
+                                "roleId": role.id,
+                                "voiceProfileId": voice_profile_id,
+                            }
+                        ),
+                    }
+                ),
+                supersedes_correction_id=(
+                    prior_assignment.correction_id if prior_assignment is not None else None
+                ),
+                idempotency_key=f"phase3b-scale-select-{role.ordinal:04d}",
+                recorded_at=recorded_at,
+            )
+            correction.correction_fingerprint = request_fingerprint(
+                casting._correction_material(correction)
+            )
+            session.add(correction)
+            assignment_inputs.append((role, correction, selected_voice))
+        session.flush()
+        casting_run.effective_correction_set_fingerprint = casting._correction_fingerprint(
+            session, casting_run.id
+        )
+        session.flush()
+        for role, correction, selected_voice in assignment_inputs:
+            recorded_at = _scale_timestamp(role.ordinal, year=2097)
+            prior_assignment = current_assignments.get(role.id)
+            session.add(
+                CastAssignmentRow(
+                    id=f"scale-assignment-{role.ordinal:04d}",
+                    project_id=project_id,
+                    casting_run_id=casting_run.id,
+                    role_id=role.id,
+                    correction_id=correction.id,
+                    voice_profile_record_id=selected_voice.id,
+                    catalog_revision_id=casting_run.catalog_revision_id,
+                    casting_profile_fingerprint=(casting_run.casting_profile_fingerprint),
+                    phase2_snapshot_fingerprint=(casting_run.analysis_snapshot_fingerprint),
+                    effective_correction_set_fingerprint=(
+                        casting_run.effective_correction_set_fingerprint
+                    ),
+                    authority="human_selection",
+                    assignment_state="selected",
+                    rationale="Select a repository-owned synthetic scale voice.",
+                    warnings_json="[]",
+                    rights_state=selected_voice.rights_state,
+                    revision=(prior_assignment.revision + 1 if prior_assignment else 1),
+                    provenance_json=canonical_json(
+                        {
+                            "origin": "human",
+                            "producerId": "phase3b-scale-test",
+                            "producerVersion": "1.0.0",
+                            "recordedAt": recorded_at,
+                            "inputFingerprint": correction.correction_fingerprint,
+                        }
+                    ),
+                    supersedes_assignment_id=(
+                        prior_assignment.id if prior_assignment is not None else None
+                    ),
+                    created_at=recorded_at,
+                )
+            )
+        session.flush()
+        assignment_seed_seconds = time.perf_counter() - helper_started
+
+        # Direct fixture seeding makes the prior snapshot historically valid but
+        # no longer current. Publish the new exact snapshot, then refresh each
+        # gate's immutable review against that same now-current snapshot.
+        snapshot_started = time.perf_counter()
+        scale_snapshot = casting._publish_cast_snapshot(
+            session,
+            run=casting_run,
+            now=_scale_timestamp(999_999, year=2097),
+        )
+        session.flush()
+        snapshot_publish_seconds = time.perf_counter() - snapshot_started
+        gate_refresh_started = time.perf_counter()
+        for gate_ordinal, gate_id in enumerate(CASTING_GATE_IDS):
+            review = casting._refresh_gate_review_evidence(
+                session,
+                run=casting_run,
+                gate_id=gate_id,
+            )
+            assert review is not None
+            assert review.cast_snapshot_id == scale_snapshot.id
+            warning_evidence = parse_json(review.warnings_json, {})
+            warning_ids = warning_evidence.get("warningIds")
+            assert isinstance(warning_ids, list)
+            assert warning_evidence.get("blockingReasonCodes") == []
+            assert review.eligible is True
+            previous_decision = session.scalar(
+                select(CastingGateDecisionRow)
+                .where(
+                    CastingGateDecisionRow.casting_run_id == casting_run.id,
+                    CastingGateDecisionRow.gate_id == gate_id,
+                )
+                .order_by(
+                    CastingGateDecisionRow.revision.desc(),
+                    CastingGateDecisionRow.id.desc(),
+                )
+                .limit(1)
+            )
+            decided_at = _scale_timestamp(gate_ordinal, year=2098)
+            rationale = "Approve repository-owned synthetic scale evidence."
+            request_supersedes_decision_id = (
+                previous_decision.id
+                if previous_decision is not None and previous_decision.gate_review_id == review.id
+                else None
+            )
+            decision_request_fingerprint = request_fingerprint(
+                {
+                    "projectId": project_id,
+                    "castingRunId": casting_run.id,
+                    "gateId": gate_id,
+                    "decision": "approved",
+                    "expectedRevision": review.revision,
+                    "expectedEvidenceFingerprint": review.evidence_fingerprint,
+                    "expectedRunFingerprint": scale_snapshot.snapshot_fingerprint,
+                    "expectedApprovedCastSnapshotId": scale_snapshot.id,
+                    "expectedApprovedCastSnapshotRevision": scale_snapshot.revision,
+                    "warningAcknowledgementIds": warning_ids,
+                    "rationale": rationale,
+                    "supersedesDecisionId": request_supersedes_decision_id,
+                }
+            )
+            decision_id = stable_id(
+                "phase3b-scale-casting-decision",
+                scale_snapshot.id,
+                gate_id,
+            )
+            session.add(
+                CastingGateDecisionRow(
+                    id=decision_id,
+                    project_id=project_id,
+                    casting_run_id=casting_run.id,
+                    cast_snapshot_id=scale_snapshot.id,
+                    gate_review_id=review.id,
+                    gate_id=gate_id,
+                    revision=(previous_decision.revision + 1 if previous_decision else 1),
+                    decision="approved",
+                    evidence_fingerprint=review.evidence_fingerprint,
+                    actor_id="local_user",
+                    warning_acknowledgements_json=canonical_json(warning_ids),
+                    rationale=rationale,
+                    provenance_json=canonical_json(
+                        {
+                            "origin": "human",
+                            "producerId": "local_user",
+                            "producerVersion": "1.0.0",
+                            "recordedAt": decided_at,
+                            "inputFingerprint": review.evidence_fingerprint,
+                            "requestFingerprint": decision_request_fingerprint,
+                        }
+                    ),
+                    supersedes_decision_id=(
+                        previous_decision.id if previous_decision is not None else None
+                    ),
+                    idempotency_key=f"phase3b-scale-{gate_id}",
+                    decided_at=decided_at,
+                    created_at=decided_at,
+                )
+            )
+            session.flush()
+        gate_refresh_decision_seconds = time.perf_counter() - gate_refresh_started
 
         current_dictionary = session.scalar(
             select(PronunciationDictionaryRow)
@@ -321,13 +739,20 @@ def _seed_roles_and_pronunciations(
                 .select_from(ProductionRoleRow)
                 .where(
                     ProductionRoleRow.project_id == project_id,
-                    ProductionRoleRow.status == "active",
+                    ProductionRoleRow.status.in_(("active", "unresolved")),
                 )
             )
             or 0
         )
         assert active_role_count == _ROLE_COUNT
-    return dictionary_fingerprint, 2
+    print(
+        "phase3b-scale-cast-authority "
+        f"roleCandidateAssignmentSeedSeconds={assignment_seed_seconds:.3f} "
+        f"snapshotPublishSeconds={snapshot_publish_seconds:.3f} "
+        f"gateRefreshDecisionSeconds={gate_refresh_decision_seconds:.3f} "
+        f"helperSeconds={time.perf_counter() - helper_started:.3f}"
+    )
+    return dictionary_fingerprint, 2, last_new_ordinal
 
 
 def _cache_identity(project_id: str, ordinal: int) -> AuditionCacheIdentity:
@@ -789,7 +1214,7 @@ def _seed_audition_and_cache_metadata(
                     .select_from(ProductionRoleRow)
                     .where(
                         ProductionRoleRow.project_id == project_id,
-                        ProductionRoleRow.status == "active",
+                        ProductionRoleRow.status.in_(("active", "unresolved")),
                     )
                 )
                 or 0
@@ -1088,6 +1513,7 @@ def test_phase3b_maximum_scale_is_bounded_deterministic_and_restart_safe(
     scale_counts: dict[str, Any]
     dictionary_fingerprint = ""
     dictionary_revision = 0
+    last_scale_role_ordinal = 0
     session_limit_evidence: dict[str, Any] = {}
     with _timed_client(settings) as (client, scale_timings):
         recovered = client.get(
@@ -1114,8 +1540,13 @@ def test_phase3b_maximum_scale_is_bounded_deterministic_and_restart_safe(
         )
 
         database = cast(Database, client.app.state.database)
-        dictionary_fingerprint, dictionary_revision = _seed_roles_and_pronunciations(
+        (
+            dictionary_fingerprint,
+            dictionary_revision,
+            last_scale_role_ordinal,
+        ) = _seed_roles_and_pronunciations(
             database,
+            cast(CastingRepository, client.app.state.casting),
             project_id=project_id,
         )
         scaled_workspace = _workspace(
@@ -1143,7 +1574,8 @@ def test_phase3b_maximum_scale_is_bounded_deterministic_and_restart_safe(
         scaled_roles = [*first_role_page["items"], *second_role_page["items"]]
         assert len(scaled_roles) == _ROLE_COUNT
         assert [value["displayLabel"] for value in scaled_roles[-3:]] == [
-            f"Scale role {ordinal:04d}" for ordinal in range(_ROLE_COUNT - 3, _ROLE_COUNT)
+            f"Scale role {ordinal:04d}"
+            for ordinal in range(last_scale_role_ordinal - 2, last_scale_role_ordinal + 1)
         ]
         assert scaled_workspace["currentDictionary"]["currentEntryCount"] == (_PRONUNCIATION_COUNT)
         session_limit_evidence = cast(
@@ -1372,7 +1804,7 @@ def test_phase3b_maximum_scale_is_bounded_deterministic_and_restart_safe(
                         .select_from(ProductionRoleRow)
                         .where(
                             ProductionRoleRow.project_id == project_id,
-                            ProductionRoleRow.status == "active",
+                            ProductionRoleRow.status.in_(("active", "unresolved")),
                         )
                     )
                     or 0

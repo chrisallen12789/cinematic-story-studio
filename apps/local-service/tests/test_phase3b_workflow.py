@@ -13,6 +13,7 @@ from cinematic_story_service.casting import CASTING_GATE_IDS
 from cinematic_story_service.models import (
     AnalysisEntityRow,
     AuditionReviewDecisionRow,
+    AuditionReviewRecordRow,
     AuditionSessionRow,
     SpeechProviderRequestRow,
     VoiceReadinessDecisionRow,
@@ -28,6 +29,7 @@ from tests.test_phase3a_casting import (
     _evidence,
     _roles,
 )
+from tests.test_phase3a_custom_roles import _custom_role_payload
 from tests.test_phase3a_governance import (
     _decision_payload,
     _post_decision,
@@ -662,6 +664,87 @@ def _approve_audition_review(
     return decided.json()
 
 
+def test_workspace_uses_only_exact_approved_cast_assignments(
+    settings: ServiceSettings,
+    auth_headers: dict[str, str],
+) -> None:
+    with TestClient(create_app(settings)) as client:
+        project_id, run = _prepare_casting(
+            client,
+            auth_headers,
+            key="phase3b-intentionally-uncast-workspace",
+        )
+        roles_route = f"/api/v1/projects/{project_id}/casting-runs/{run['castingRunId']}/roles"
+        created = client.post(
+            roles_route,
+            headers=auth_headers,
+            json=_custom_role_payload(
+                run,
+                key="phase3b-create-intentionally-uncast-role",
+            ),
+        )
+        assert created.status_code == 200, created.text
+        custom_role = created.json()["role"]
+        custom_role_id = custom_role["roleId"]
+        selected_candidate = next(
+            value
+            for value in _candidates(
+                client,
+                auth_headers,
+                run=created.json()["run"],
+                role=custom_role,
+            )
+            if value["assessment"]["compatibilityStatus"] != "incompatible"
+            and value["assessment"]["rightsEligibility"] in {"eligible", "restricted"}
+        )
+        selected_run = _correct(
+            client,
+            auth_headers,
+            run=created.json()["run"],
+            role=custom_role,
+            operation="select_voice",
+            key="phase3b-select-then-uncast-role",
+            voice_profile_id=selected_candidate["voiceProfileId"],
+            corrected_value={"voiceProfileId": selected_candidate["voiceProfileId"]},
+        )
+
+        project_id, approved_run = _complete_approved_cast(
+            client,
+            auth_headers,
+            project_id=project_id,
+            run=selected_run,
+            key="phase3b-intentionally-uncast-workspace",
+        )
+        workspace = _workspace(client, auth_headers, project_id)
+        role_items = workspace["roles"]["items"]
+        approved_assignment_ids = approved_run["approvedCastSnapshot"]["assignmentIds"]
+
+        assert workspace["roles"]["total"] == len(approved_assignment_ids)
+        assert custom_role_id not in {value["roleId"] for value in role_items}
+        assert {value["assignmentId"] for value in role_items} == set(approved_assignment_ids)
+        assert all(value["current"] for value in workspace["prerequisites"]), [
+            (value["prerequisiteId"], value["statusCode"])
+            for value in workspace["prerequisites"]
+            if not value["current"]
+        ]
+
+        paged_role_ids: list[str] = []
+        cursor: str | None = None
+        while True:
+            page = _workspace(
+                client,
+                auth_headers,
+                project_id,
+                role_cursor=cursor,
+                role_limit=1,
+            )
+            paged_role_ids.extend(value["roleId"] for value in page["roles"]["items"])
+            cursor = page["roles"].get("nextCursor")
+            if cursor is None:
+                break
+        assert paged_role_ids == [value["roleId"] for value in role_items]
+
+
 def test_fixture_workflow_cache_jobs_reviews_restart_and_targeted_invalidation(
     settings: ServiceSettings,
     auth_headers: dict[str, str],
@@ -1196,10 +1279,10 @@ def test_fixture_workflow_cache_jobs_reviews_restart_and_targeted_invalidation(
             value for value in invalidated["reviews"] if value["gateId"] == "pronunciation_review"
         )
         assert pronunciation_review["state"] == "pending"
-        readiness_review = next(
-            value for value in invalidated["reviews"] if value["gateId"] == "voice_readiness_review"
+        assert not any(
+            value["gateId"] == "voice_readiness_review"
+            for value in invalidated["reviews"]
         )
-        assert readiness_review["state"] in {"blocked", "invalidated"}
 
         detail = restarted.get(
             f"/api/v1/projects/{project_id}",
@@ -1219,12 +1302,10 @@ def test_fixture_workflow_cache_jobs_reviews_restart_and_targeted_invalidation(
         assert cleared.json()["projectId"] == project_id
         assert cleared.json()["clearedRecordCount"] > 0
         after_clear = _workspace(restarted, auth_headers, project_id)
-        cleared_readiness = next(
-            value for value in after_clear["reviews"] if value["gateId"] == "voice_readiness_review"
+        assert not any(
+            value["gateId"] == "voice_readiness_review"
+            for value in after_clear["reviews"]
         )
-        assert cleared_readiness["state"] == "invalidated"
-        assert cleared_readiness["latestDecision"]["decision"] == "invalidated"
-        assert cleared_readiness["latestDecision"]["decisionId"] != readiness_decision_id
         readiness_history_response = restarted.get(
             f"/api/v1/projects/{project_id}/audition-review-decisions",
             headers=auth_headers,
@@ -1241,13 +1322,17 @@ def test_fixture_workflow_cache_jobs_reviews_restart_and_targeted_invalidation(
         assert all(
             value["state"] == "invalidated"
             for value in after_clear["reviews"]
-            if value["gateId"]
-            in {
-                "per_role_audition_review",
-                "narrator_audition_review",
-                "character_audition_review",
-            }
+            if value["gateId"] == "per_role_audition_review"
         )
+        assert {
+            value["gateId"]: value["state"]
+            for value in after_clear["reviews"]
+            if value["gateId"]
+            in {"narrator_audition_review", "character_audition_review"}
+        } == {
+            "narrator_audition_review": "blocked",
+            "character_audition_review": "blocked",
+        }
         with restarted.app.state.database.session() as database_session:
             for (gate_id, _role_id), decision_id in persisted_decision_ids.items():
                 decision_type = (
@@ -1513,12 +1598,27 @@ def test_corrected_phase2_reconstruction_and_scoped_pronunciation_contexts(
         )[0]
         generated_clip_ids.add(clip["auditionClipId"])
         if index == 0:
-            stale_review = next(
-                value
-                for value in _workspace(client, auth_headers, project_id)["reviews"]
-                if value["gateId"] == "per_role_audition_review" and value["roleId"] == role_id
+            workspace_reviews = _workspace(client, auth_headers, project_id)["reviews"]
+            assert not any(
+                value["gateId"] == "per_role_audition_review"
+                and value["roleId"] == role_id
+                for value in workspace_reviews
             )
-            assert stale_review["state"] == "pending"
+            with client.app.state.database.session() as database_session:
+                historical_review = database_session.scalar(
+                    select(AuditionReviewRecordRow).where(
+                        AuditionReviewRecordRow.project_id == project_id,
+                        AuditionReviewRecordRow.gate_id == "per_role_audition_review",
+                        AuditionReviewRecordRow.session_id == session["auditionSessionId"],
+                        AuditionReviewRecordRow.clip_id == clip["auditionClipId"],
+                    )
+                )
+                assert historical_review is not None
+                stale_review = {
+                    "reviewId": historical_review.id,
+                    "revision": historical_review.revision,
+                    "evidence": json.loads(historical_review.evidence_json),
+                }
 
     assert stale_review is not None
     stale_decision = client.post(

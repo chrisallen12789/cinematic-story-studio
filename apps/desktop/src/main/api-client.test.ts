@@ -718,6 +718,19 @@ describe("BackendApiClient job response boundary", () => {
         expect(response.job.target.type).toBe("casting_run");
       }
     );
+
+    await withJsonResponse(
+      validJobWire("generate_audition"),
+      async (client) => {
+        const response = await client.getJob("job-1", {
+          projectId: "project-1",
+          type: "generate_audition",
+          inputRevision: 4,
+          inputFingerprint: "a".repeat(64)
+        });
+        expect(response.job.target.type).toBe("audition_session");
+      }
+    );
   });
 
   it.each([
@@ -1335,13 +1348,19 @@ function sha256(value: Uint8Array): string {
 }
 
 function validJobWire(
-  type: "analyze_story" | "analyze_whole_book" | "analyze_casting"
+  type:
+    | "analyze_story"
+    | "analyze_whole_book"
+    | "analyze_casting"
+    | "generate_audition"
 ): Record<string, unknown> {
   const target =
     type === "analyze_story"
       ? { type: "story", id: "story-1" }
       : type === "analyze_casting"
         ? { type: "casting_run", id: "casting-run-1" }
+        : type === "generate_audition"
+          ? { type: "audition_session", id: "session-1" }
         : { type: "analysis_run", id: "run-1" };
   return {
     correlationId: "correlation-job",
@@ -1359,6 +1378,8 @@ function validJobWire(
           ? "analyze_story"
           : type === "analyze_casting"
             ? "evaluate_role_constraints"
+            : type === "generate_audition"
+              ? "cache_or_synthesize"
             : "analyze_structure",
       progress: 0.5,
       checkpointAvailable: false,

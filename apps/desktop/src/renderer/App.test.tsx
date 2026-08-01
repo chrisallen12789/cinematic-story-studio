@@ -1082,6 +1082,59 @@ function createApi(options?: {
         fail<never>("CASTING_NOT_CONFIGURED")
       )
     },
+    auditions: {
+      getWorkspace: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      listModelPackages: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      performModelPackageAction: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      selectLocalModelPackage: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      listPronunciations: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      appendPronunciation: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      decidePronunciation: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      listReviewDecisions: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      clearCache: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      listSessions: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      createSession: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      createScript: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      previewNormalization: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      generate: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      listClips: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      loadAudio: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      ),
+      decideReview: vi.fn(async () =>
+        fail<never>("AUDITIONS_NOT_CONFIGURED")
+      )
+    },
     jobs: {
       create: vi.fn(async () => ok({ correlationId: "job-correlation", job: createJob() })),
       get: vi.fn(async () => ok({ correlationId: "job-correlation", job: createJob() })),

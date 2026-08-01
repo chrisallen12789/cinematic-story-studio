@@ -162,6 +162,23 @@ describe("preload active project session", () => {
         payload: exactCustomRoleRequest
       }
     );
+    const exactReviewHistoryRequest = {
+      projectId: "project-a",
+      gateId: "per_role_audition_review" as const,
+      roleId: "role-a",
+      cursor: "opaque-page-2",
+      limit: 25
+    };
+    expect(
+      await api.auditions.listReviewDecisions(exactReviewHistoryRequest)
+    ).toMatchObject({ ok: true });
+    expect(electron.invoke).toHaveBeenCalledWith(
+      IPC_CHANNELS.auditionsListReviewDecisions,
+      {
+        contractVersion: "1.0.0",
+        payload: exactReviewHistoryRequest
+      }
+    );
     expect(Object.isFrozen(api)).toBe(true);
     expect(Object.isFrozen(api.casting)).toBe(true);
     const projectBRequest = await api.analysis.listRuns({

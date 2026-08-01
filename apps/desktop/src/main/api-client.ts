@@ -68,6 +68,41 @@ import type {
   VoiceCatalogResponse
 } from "../shared/casting-api.js";
 import type {
+  AppendPronunciationEntryInput,
+  AuditionAudioPayload,
+  AuditionClipsResponse,
+  AuditionReviewDecisionsResponse,
+  AuditionSessionsResponse,
+  AuditionWorkspaceResponse,
+  ClearAuditionCacheInput,
+  ClearAuditionCacheResponse,
+  CreateAuditionScriptInput,
+  CreateAuditionScriptResponse,
+  CreateAuditionSessionInput,
+  CreateAuditionSessionResponse,
+  CreatePronunciationEntryResponse,
+  DecideAuditionReviewInput,
+  DecideAuditionReviewResponse,
+  DecidePronunciationEntryInput,
+  DecidePronunciationEntryResponse,
+  GenerateAuditionInput,
+  GenerateAuditionResponse,
+  GetAuditionWorkspaceInput,
+  ListAuditionClipsInput,
+  ListAuditionReviewDecisionsInput,
+  ListAuditionSessionsInput,
+  ListModelPackagesInput,
+  ListPronunciationEntriesInput,
+  LoadAuditionAudioInput,
+  ModelPackageActionResponse,
+  ModelPackagesResponse,
+  PerformModelPackageActionInput,
+  SelectLocalModelPackageInput,
+  PreviewAuditionNormalizationInput,
+  PreviewNormalizationResponse,
+  PronunciationEntriesResponse
+} from "../shared/audition-api.js";
+import type {
   AnalysisRunInput,
   CorrectSpeakerInput,
   CreateJobInput,
@@ -101,6 +136,23 @@ import {
   validateProductionRolesResponse,
   validateVoiceCatalogResponse
 } from "./casting-validation.js";
+import {
+  validateAuditionClipsResponse,
+  validateAuditionReviewDecisionsResponse,
+  validateAuditionSessionsResponse,
+  validateAuditionWorkspaceResponse,
+  validateClearAuditionCacheResponse,
+  validateCreateAuditionScriptResponse,
+  validateCreateAuditionSessionResponse,
+  validateCreatePronunciationEntryResponse,
+  validateDecideAuditionReviewResponse,
+  validateDecidePronunciationEntryResponse,
+  validateGenerateAuditionResponse,
+  validateModelPackageActionResponse,
+  validateModelPackagesResponse,
+  validatePreviewNormalizationResponse,
+  validatePronunciationEntriesResponse
+} from "./audition-validation.js";
 import { BackendUnavailableError, DesktopMainError } from "./errors.js";
 import type { ServiceManager } from "./service-manager.js";
 import {
@@ -124,6 +176,9 @@ const JSON_REQUEST_LIMIT_BYTES = 64 * 1024;
 const MAX_API_ROUTE_LENGTH = 2_048;
 const REQUEST_TIMEOUT_MS = 12_000;
 const IMPORT_TIMEOUT_MS = 45_000;
+const AUDITION_AUDIO_LIMIT_BYTES = 24 * 1024 * 1024;
+export const MODEL_PACKAGE_ARCHIVE_LIMIT_BYTES = 90 * 1024 * 1024;
+const MODEL_PACKAGE_UPLOAD_TIMEOUT_MS = 120_000;
 
 interface ImportFileSnapshot {
   readonly sha256: string;
@@ -691,6 +746,386 @@ export class BackendApiClient {
     );
   }
 
+  async getAuditionWorkspace(
+    input: GetAuditionWorkspaceInput
+  ): Promise<AuditionWorkspaceResponse> {
+    const query = new URLSearchParams();
+    if (input.roleCursor !== undefined) {
+      query.set("roleCursor", input.roleCursor);
+    }
+    if (input.roleLimit !== undefined) {
+      query.set("roleLimit", String(input.roleLimit));
+    }
+    const queryString = query.toString();
+    return validateAuditionWorkspaceResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(input.projectId)}/auditions/workspace${
+          queryString.length === 0 ? "" : `?${queryString}`
+        }`
+      ),
+      input
+    );
+  }
+
+  async listModelPackages(
+    input: ListModelPackagesInput
+  ): Promise<ModelPackagesResponse> {
+    return validateModelPackagesResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/speech/model-packages?${cursorPageQuery(input).toString()}`
+      ),
+      input
+    );
+  }
+
+  async performModelPackageAction(
+    input: PerformModelPackageActionInput
+  ): Promise<ModelPackageActionResponse> {
+    return validateModelPackageActionResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/speech/model-packages/${encodeURIComponent(
+          input.modelPackageId
+        )}/actions`,
+        {
+          modelPackageId: input.modelPackageId,
+          expectedManifestFingerprint: input.expectedManifestFingerprint,
+          expectedInstallationRevision: input.expectedInstallationRevision,
+          action: input.action,
+          reason: input.reason,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async applySelectedLocalModelPackage(
+    input: SelectLocalModelPackageInput,
+    selectedPath: string
+  ): Promise<ModelPackageActionResponse> {
+    const response = await this.#multipartLocalModelPackage(
+      `/api/v1/projects/${encodeURIComponent(
+        input.projectId
+      )}/speech/model-packages/${encodeURIComponent(
+        input.modelPackageId
+      )}/${input.operation}`,
+      selectedPath,
+      input
+    );
+    return validateModelPackageActionResponse(response, input);
+  }
+
+  async listPronunciationEntries(
+    input: ListPronunciationEntriesInput
+  ): Promise<PronunciationEntriesResponse> {
+    const query = cursorPageQuery(input);
+    query.set(
+      "expectedDictionaryRevision",
+      String(input.expectedDictionaryRevision)
+    );
+    query.set(
+      "expectedDictionaryFingerprint",
+      input.expectedDictionaryFingerprint
+    );
+    return validatePronunciationEntriesResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/pronunciations/entries?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async appendPronunciationEntry(
+    input: AppendPronunciationEntryInput
+  ): Promise<CreatePronunciationEntryResponse> {
+    return validateCreatePronunciationEntryResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/pronunciations/entries`,
+        {
+          expectedDictionaryRevision: input.expectedDictionaryRevision,
+          expectedDictionaryFingerprint: input.expectedDictionaryFingerprint,
+          writtenForm: input.writtenForm,
+          language: input.language,
+          locale: input.locale,
+          scope: input.scope,
+          scopeId: input.scopeId,
+          representation: input.representation,
+          pronunciation: input.pronunciation,
+          ipa: input.ipa,
+          providerId: input.providerId,
+          providerCompiledValue: input.providerCompiledValue,
+          caseSensitive: input.caseSensitive,
+          matchRule: input.matchRule,
+          priority: input.priority,
+          reason: input.reason,
+          supersedesEntryId: input.supersedesEntryId,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async decidePronunciationEntry(
+    input: DecidePronunciationEntryInput
+  ): Promise<DecidePronunciationEntryResponse> {
+    return validateDecidePronunciationEntryResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/pronunciations/entries/${encodeURIComponent(
+          input.entryId
+        )}/decisions`,
+        {
+          expectedEntryRevision: input.expectedEntryRevision,
+          expectedEntryFingerprint: input.expectedEntryFingerprint,
+          expectedDictionaryRevision: input.expectedDictionaryRevision,
+          expectedDictionaryFingerprint: input.expectedDictionaryFingerprint,
+          decision: input.decision,
+          rationale: input.rationale,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async clearAuditionCache(
+    input: ClearAuditionCacheInput
+  ): Promise<ClearAuditionCacheResponse> {
+    return validateClearAuditionCacheResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/audition-cache/clear`,
+        {
+          expectedProjectRevision: input.expectedProjectRevision,
+          reason: input.reason,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async listAuditionSessions(
+    input: ListAuditionSessionsInput
+  ): Promise<AuditionSessionsResponse> {
+    const query = cursorPageQuery(input);
+    if (input.roleId !== undefined) query.set("roleId", input.roleId);
+    return validateAuditionSessionsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/audition-sessions?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async createAuditionSession(
+    input: CreateAuditionSessionInput
+  ): Promise<CreateAuditionSessionResponse> {
+    return validateCreateAuditionSessionResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/audition-sessions`,
+        {
+          roleId: input.roleId,
+          evidence: input.evidence,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async createAuditionScript(
+    input: CreateAuditionScriptInput
+  ): Promise<CreateAuditionScriptResponse> {
+    return validateCreateAuditionScriptResponse(
+      await this.#jsonRequest(
+        "POST",
+        `${auditionSessionRoute(
+          input.projectId,
+          input.auditionSessionId
+        )}/scripts`,
+        {
+          auditionSessionId: input.auditionSessionId,
+          expectedSessionRevision: input.expectedSessionRevision,
+          kind: input.kind,
+          text: input.text,
+          sourceDocumentId: input.sourceDocumentId,
+          sourceRevision: input.sourceRevision,
+          sourceSpan: input.sourceSpan,
+          sourceTextSha256: input.sourceTextSha256,
+          acceptedOptionalNormalizationIds:
+            input.acceptedOptionalNormalizationIds,
+          customPronunciationScopeIds: input.customPronunciationScopeIds,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async previewAuditionNormalization(
+    input: PreviewAuditionNormalizationInput
+  ): Promise<PreviewNormalizationResponse> {
+    return validatePreviewNormalizationResponse(
+      await this.#jsonRequest(
+        "POST",
+        `${auditionSessionRoute(
+          input.projectId,
+          input.auditionSessionId
+        )}/normalization-preview`,
+        {
+          auditionSessionId: input.auditionSessionId,
+          expectedSessionRevision: input.expectedSessionRevision,
+          text: input.text,
+          sourceTextSha256: input.sourceTextSha256,
+          acceptedOptionalNormalizationIds:
+            input.acceptedOptionalNormalizationIds,
+          customPronunciationScopeIds: input.customPronunciationScopeIds
+        }
+      ),
+      input
+    );
+  }
+
+  async generateAudition(
+    input: GenerateAuditionInput
+  ): Promise<GenerateAuditionResponse> {
+    return validateGenerateAuditionResponse(
+      await this.#jsonRequest(
+        "POST",
+        `${auditionSessionRoute(
+          input.projectId,
+          input.preview.auditionSessionId
+        )}/generate`,
+        { preview: input.preview },
+        input.preview.idempotencyKey
+      ),
+      input
+    );
+  }
+
+  async listAuditionClips(
+    input: ListAuditionClipsInput
+  ): Promise<AuditionClipsResponse> {
+    const query = cursorPageQuery(input);
+    if (input.auditionSessionId !== undefined) {
+      query.set("auditionSessionId", input.auditionSessionId);
+    }
+    if (input.roleId !== undefined) query.set("roleId", input.roleId);
+    return validateAuditionClipsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/audition-clips?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async loadAuditionAudio(
+    input: LoadAuditionAudioInput
+  ): Promise<AuditionAudioPayload> {
+    const query = new URLSearchParams({
+      auditionSessionId: input.auditionSessionId,
+      audioArtifactId: input.audioArtifactId,
+      expectedClipRevision: String(input.expectedClipRevision),
+      expectedClipFingerprint: input.expectedClipFingerprint,
+      expectedArtifactSha256: input.expectedArtifactSha256,
+      byteSize: String(input.byteSize)
+    });
+    const bytes = await this.#binaryRequest(
+      `/api/v1/projects/${encodeURIComponent(
+        input.projectId
+      )}/audition-clips/${encodeURIComponent(
+        input.auditionClipId
+      )}/audio?${query.toString()}`,
+      input
+    );
+    return {
+      projectId: input.projectId,
+      auditionClipId: input.auditionClipId,
+      auditionSessionId: input.auditionSessionId,
+      audioArtifactId: input.audioArtifactId,
+      mediaType: "audio/wav",
+      byteSize: bytes.byteLength,
+      sha256: input.expectedArtifactSha256,
+      bytes: Uint8Array.from(bytes).buffer
+    };
+  }
+
+  async listAuditionReviewDecisions(
+    input: ListAuditionReviewDecisionsInput
+  ): Promise<AuditionReviewDecisionsResponse> {
+    const query = cursorPageQuery(input);
+    query.set("gateId", input.gateId);
+    if (input.roleId !== null) query.set("roleId", input.roleId);
+    return validateAuditionReviewDecisionsResponse(
+      await this.#jsonRequest(
+        "GET",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/audition-review-decisions?${query.toString()}`
+      ),
+      input
+    );
+  }
+
+  async decideAuditionReview(
+    input: DecideAuditionReviewInput
+  ): Promise<DecideAuditionReviewResponse> {
+    return validateDecideAuditionReviewResponse(
+      await this.#jsonRequest(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(
+          input.projectId
+        )}/audition-reviews/${encodeURIComponent(
+          input.gateId
+        )}/${encodeURIComponent(input.reviewId)}/decisions`,
+        {
+          expectedReviewRevision: input.expectedReviewRevision,
+          expectedEvidenceFingerprint: input.expectedEvidenceFingerprint,
+          decision: input.decision,
+          rationale: input.rationale,
+          supersedesDecisionId: input.supersedesDecisionId,
+          idempotencyKey: input.idempotencyKey
+        },
+        input.idempotencyKey
+      ),
+      input
+    );
+  }
+
   async createJob(input: CreateJobInput): Promise<JobResponse> {
     const response = await this.#jsonRequest(
       "POST",
@@ -828,6 +1263,88 @@ export class BackendApiClient {
       return await parseFetchResponse(response, responseLimitBytes);
     } catch (error) {
       if (error instanceof DesktopMainError || error instanceof ValidationError) {
+        throw error;
+      }
+      throw new BackendUnavailableError();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async #binaryRequest(
+    route: string,
+    expected: LoadAuditionAudioInput
+  ): Promise<Buffer> {
+    const credentials = this.#service.connection();
+    ensureFixedApiRoute(route);
+    if (
+      expected.byteSize < 45 ||
+      expected.byteSize > AUDITION_AUDIO_LIMIT_BYTES
+    ) {
+      throw new ValidationError("The audition audio size was invalid.");
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${credentials.port}${route}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${credentials.token}`,
+            Accept: "audio/wav",
+            "Cache-Control": "no-store",
+            "X-CSS-Contract-Version": "1.0.0"
+          },
+          cache: "no-store",
+          signal: controller.signal
+        }
+      );
+      if (!response.ok) {
+        await parseFetchResponse(response);
+        throw new DesktopMainError(
+          "AUDITION_AUDIO_UNAVAILABLE",
+          "The audition audio could not be loaded.",
+          response.status >= 500
+        );
+      }
+      const mediaType = response.headers
+        .get("content-type")
+        ?.split(";", 1)[0]
+        ?.trim()
+        .toLowerCase();
+      if (
+        mediaType !== "audio/wav" ||
+        response.headers.get("cache-control")?.toLowerCase() !== "no-store"
+      ) {
+        throw new DesktopMainError(
+          "AUDITION_AUDIO_RESPONSE_INVALID",
+          "The local service returned invalid audition audio metadata.",
+          false
+        );
+      }
+      const bytes = await readFetchBodyLimited(
+        response,
+        AUDITION_AUDIO_LIMIT_BYTES
+      );
+      if (
+        bytes.byteLength !== expected.byteSize ||
+        createHash("sha256").update(bytes).digest("hex") !==
+          expected.expectedArtifactSha256
+      ) {
+        throw new DesktopMainError(
+          "AUDITION_AUDIO_INTEGRITY_FAILED",
+          "The audition audio did not match its verified artifact.",
+          false
+        );
+      }
+      validateAuditionPcmWav(bytes);
+      return bytes;
+    } catch (error) {
+      if (
+        error instanceof DesktopMainError ||
+        error instanceof ValidationError
+      ) {
         throw error;
       }
       throw new BackendUnavailableError();
@@ -1016,6 +1533,203 @@ export class BackendApiClient {
       await fileHandle.close().catch(() => undefined);
     }
   }
+
+  async #multipartLocalModelPackage(
+    route: string,
+    selectedPath: string,
+    input: SelectLocalModelPackageInput
+  ): Promise<unknown> {
+    const credentials = this.#service.connection();
+    ensureFixedApiRoute(route);
+    const initialMetadata = await lstat(selectedPath);
+    if (
+      !initialMetadata.isFile() ||
+      initialMetadata.isSymbolicLink() ||
+      initialMetadata.size <= 0 ||
+      initialMetadata.size > MODEL_PACKAGE_ARCHIVE_LIMIT_BYTES
+    ) {
+      throw new DesktopMainError(
+        initialMetadata.size > MODEL_PACKAGE_ARCHIVE_LIMIT_BYTES
+          ? "MODEL_PACKAGE_TOO_LARGE"
+          : "MODEL_PACKAGE_FILE_INVALID",
+        initialMetadata.size > MODEL_PACKAGE_ARCHIVE_LIMIT_BYTES
+          ? "The selected model package exceeds the 90 MiB desktop upload limit."
+          : "The selected model package is not a supported regular ZIP file.",
+        false
+      );
+    }
+    const fileHandle = await open(
+      selectedPath,
+      constants.O_RDONLY | constants.O_NOFOLLOW
+    );
+    try {
+      const [openedMetadata, currentMetadata] = await Promise.all([
+        fileHandle.stat(),
+        lstat(selectedPath)
+      ]);
+      if (
+        !openedMetadata.isFile() ||
+        currentMetadata.isSymbolicLink() ||
+        !sameFileIdentity(openedMetadata, currentMetadata) ||
+        openedMetadata.size <= 0 ||
+        openedMetadata.size > MODEL_PACKAGE_ARCHIVE_LIMIT_BYTES
+      ) {
+        throw openedMetadata.size > MODEL_PACKAGE_ARCHIVE_LIMIT_BYTES
+          ? new DesktopMainError(
+              "MODEL_PACKAGE_TOO_LARGE",
+              "The selected model package exceeds the 90 MiB desktop upload limit.",
+              false
+            )
+          : modelPackageFileChangedError();
+      }
+      const boundary = `css-model-${randomBytes(18).toString("hex")}`;
+      const textFields: readonly (readonly [string, string])[] = [
+        ["expectedManifestFingerprint", input.expectedManifestFingerprint],
+        ...(input.expectedInstallationRevision === null
+          ? []
+          : [[
+              "expectedInstallationRevision",
+              String(input.expectedInstallationRevision)
+            ] as const]),
+        [
+          "acknowledgeRestrictedLocalUse",
+          String(input.acknowledgeRestrictedLocalUse)
+        ],
+        ["reason", input.reason],
+        ["idempotencyKey", input.idempotencyKey]
+      ];
+      const textPrefix = textFields
+        .map(
+          ([name, value]) =>
+            `--${boundary}\r\n` +
+            `Content-Disposition: form-data; name="${name}"\r\n\r\n` +
+            `${value}\r\n`
+        )
+        .join("");
+      const safeName = sanitizeMultipartFilename(
+        path.basename(selectedPath),
+        "selected-model-package.zip"
+      );
+      const prefix = Buffer.from(
+        textPrefix +
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+          "Content-Type: application/zip\r\n\r\n",
+        "utf8"
+      );
+      const suffix = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
+      const contentLength =
+        prefix.byteLength + openedMetadata.size + suffix.byteLength;
+      const source = fileHandle.createReadStream({
+        autoClose: false,
+        start: 0,
+        end: openedMetadata.size - 1,
+        highWaterMark: 64 * 1024
+      });
+      let observedByteLength = 0;
+      let fileSnapshotVerified = false;
+      const countingStream = new Transform({
+        transform(chunk, _encoding, callback) {
+          const bytes = Buffer.isBuffer(chunk)
+            ? chunk
+            : Buffer.from(chunk as Uint8Array);
+          observedByteLength += bytes.byteLength;
+          callback(null, bytes);
+        }
+      });
+
+      return await new Promise<unknown>((resolve, reject) => {
+        const request = http.request(
+          {
+            hostname: "127.0.0.1",
+            port: credentials.port,
+            method: "POST",
+            path: route,
+            headers: {
+              Authorization: `Bearer ${credentials.token}`,
+              Accept: "application/json",
+              "Cache-Control": "no-store",
+              "X-CSS-Contract-Version": "1.0.0",
+              "Idempotency-Key": input.idempotencyKey,
+              "Content-Type": `multipart/form-data; boundary=${boundary}`,
+              "Content-Length": contentLength
+            },
+            timeout: MODEL_PACKAGE_UPLOAD_TIMEOUT_MS
+          },
+          (response) => {
+            void parseNodeResponse(response).then((value) => {
+              if (!fileSnapshotVerified) {
+                reject(modelPackageFileChangedError());
+                return;
+              }
+              resolve(value);
+            }, reject);
+          }
+        );
+        request.once("timeout", () => {
+          request.destroy(
+            new DesktopMainError(
+              "MODEL_PACKAGE_UPLOAD_TIMEOUT",
+              "The local model package upload timed out.",
+              true
+            )
+          );
+        });
+        request.once("error", (error) => {
+          source.destroy();
+          countingStream.destroy();
+          reject(
+            error instanceof DesktopMainError
+              ? error
+              : new BackendUnavailableError()
+          );
+        });
+        request.write(prefix);
+        source.once("error", () => {
+          request.destroy(
+            new DesktopMainError(
+              "MODEL_PACKAGE_READ_FAILED",
+              "The selected model package could not be read.",
+              false
+            )
+          );
+        });
+        countingStream.once("error", () => {
+          request.destroy(
+            new DesktopMainError(
+              "MODEL_PACKAGE_READ_FAILED",
+              "The selected model package could not be read.",
+              false
+            )
+          );
+        });
+        countingStream.once("end", () => {
+          void (async () => {
+            try {
+              const [finalOpenedMetadata, finalPathMetadata] =
+                await Promise.all([fileHandle.stat(), lstat(selectedPath)]);
+              if (
+                observedByteLength !== openedMetadata.size ||
+                !finalOpenedMetadata.isFile() ||
+                finalPathMetadata.isSymbolicLink() ||
+                !sameFileIdentity(openedMetadata, finalOpenedMetadata) ||
+                !sameFileIdentity(finalOpenedMetadata, finalPathMetadata)
+              ) {
+                throw modelPackageFileChangedError();
+              }
+              fileSnapshotVerified = true;
+              request.end(suffix);
+            } catch {
+              request.destroy(modelPackageFileChangedError());
+            }
+          })();
+        });
+        source.pipe(countingStream).pipe(request, { end: false });
+      });
+    } finally {
+      await fileHandle.close().catch(() => undefined);
+    }
+  }
 }
 
 function analysisRunRoute(projectId: string, runId: string): string {
@@ -1028,6 +1742,15 @@ function castingRunRoute(projectId: string, runId: string): string {
   return `/api/v1/projects/${encodeURIComponent(
     projectId
   )}/casting-runs/${encodeURIComponent(runId)}`;
+}
+
+function auditionSessionRoute(
+  projectId: string,
+  auditionSessionId: string
+): string {
+  return `/api/v1/projects/${encodeURIComponent(
+    projectId
+  )}/audition-sessions/${encodeURIComponent(auditionSessionId)}`;
 }
 
 function cursorPageQuery(input: {
@@ -1135,7 +1858,7 @@ async function parseNodeResponse(
   let total = 0;
   for await (const rawChunk of response) {
     const chunk: unknown = rawChunk;
-    if (!(chunk instanceof Uint8Array)) {
+    if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array)) {
       throw new DesktopMainError(
         "SERVICE_RESPONSE_INVALID",
         "The local service returned an invalid response.",
@@ -1260,13 +1983,16 @@ function ensureFixedApiRoute(route: string): void {
   }
 }
 
-function sanitizeMultipartFilename(filename: string): string {
+function sanitizeMultipartFilename(
+  filename: string,
+  fallback = "selected-story.txt"
+): string {
   const sanitized = filename
     .replace(/[\r\n"]/gu, "_")
     .replace(/[^\p{L}\p{N}._ -]/gu, "_")
     .slice(0, 160);
   if (sanitized.length === 0 || sanitized === "." || sanitized === "..") {
-    return "selected-story.txt";
+    return fallback;
   }
   return sanitized;
 }
@@ -1295,10 +2021,66 @@ function sameFileIdentity(opened: Stats, current: Stats): boolean {
   );
 }
 
+function validateAuditionPcmWav(bytes: Buffer): void {
+  if (
+    bytes.byteLength < 44 ||
+    bytes.toString("ascii", 0, 4) !== "RIFF" ||
+    bytes.toString("ascii", 8, 12) !== "WAVE" ||
+    bytes.readUInt32LE(4) + 8 !== bytes.byteLength
+  ) {
+    throw invalidAuditionAudio();
+  }
+  let offset = 12;
+  let formatVerified = false;
+  let dataBytes = 0;
+  while (offset + 8 <= bytes.byteLength) {
+    const chunkId = bytes.toString("ascii", offset, offset + 4);
+    const chunkBytes = bytes.readUInt32LE(offset + 4);
+    const bodyStart = offset + 8;
+    const bodyEnd = bodyStart + chunkBytes;
+    if (bodyEnd > bytes.byteLength) throw invalidAuditionAudio();
+    if (chunkId === "fmt ") {
+      if (
+        chunkBytes < 16 ||
+        bytes.readUInt16LE(bodyStart) !== 1 ||
+        bytes.readUInt16LE(bodyStart + 2) !== 1 ||
+        bytes.readUInt32LE(bodyStart + 4) !== 24_000 ||
+        bytes.readUInt16LE(bodyStart + 12) !== 2 ||
+        bytes.readUInt16LE(bodyStart + 14) !== 16
+      ) {
+        throw invalidAuditionAudio();
+      }
+      formatVerified = true;
+    } else if (chunkId === "data") {
+      dataBytes += chunkBytes;
+    }
+    offset = bodyEnd + (chunkBytes % 2);
+  }
+  if (!formatVerified || dataBytes <= 0 || dataBytes % 2 !== 0) {
+    throw invalidAuditionAudio();
+  }
+}
+
+function invalidAuditionAudio(): DesktopMainError {
+  return new DesktopMainError(
+    "AUDITION_AUDIO_FORMAT_INVALID",
+    "The audition audio was not valid 24 kHz mono PCM WAV.",
+    false
+  );
+}
+
 function importFileChangedError(): DesktopMainError {
   return new DesktopMainError(
     "IMPORT_FILE_CHANGED",
     "The selected document changed while it was being imported.",
+    false
+  );
+}
+
+function modelPackageFileChangedError(): DesktopMainError {
+  return new DesktopMainError(
+    "MODEL_PACKAGE_FILE_CHANGED",
+    "The selected model package changed while it was being uploaded.",
     false
   );
 }
@@ -1822,7 +2604,8 @@ function validateJobResponse(
       "extract_document",
       "analyze_story",
       "analyze_whole_book",
-      "analyze_casting"
+      "analyze_casting",
+      "generate_audition"
     ],
     "job type"
   );
@@ -1844,7 +2627,13 @@ function validateJobResponse(
   rejectUnknownResponseFields(target, ["type", "id"], "job target");
   const targetType = requireOneOf(
     target.type,
-    ["document_extraction", "story", "analysis_run", "casting_run"],
+    [
+      "document_extraction",
+      "story",
+      "analysis_run",
+      "casting_run",
+      "audition_session"
+    ],
     "job target type"
   );
   requireIdentifier(target.id, "job target id");
@@ -1852,7 +2641,8 @@ function validateJobResponse(
     extract_document: "document_extraction",
     analyze_story: "story",
     analyze_whole_book: "analysis_run",
-    analyze_casting: "casting_run"
+    analyze_casting: "casting_run",
+    generate_audition: "audition_session"
   }[type];
   if (targetType !== expectedTargetType) {
     throw new ValidationError("The job target type is inconsistent.");

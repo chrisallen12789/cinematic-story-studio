@@ -294,10 +294,21 @@ export function CastingWorkspace({
     ) {
       return;
     }
-    const timer = window.setTimeout(() => {
-      void refreshRun(run.castingRunId, true);
-    }, 1_500);
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      await refreshRun(run.castingRunId, true);
+      if (!cancelled) {
+        timer = window.setTimeout(() => void poll(), 1_500);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 1_500);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [connected, refreshRun, run]);
 
   const createRun = async () => {

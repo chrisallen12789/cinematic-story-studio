@@ -49,6 +49,25 @@ import {
   parseListProductionRolesRequest,
   parseListVoiceCatalogRequest
 } from "./casting-validation.js";
+import {
+  parseAppendPronunciationEntryRequest,
+  parseClearAuditionCacheRequest,
+  parseCreateAuditionScriptRequest,
+  parseCreateAuditionSessionRequest,
+  parseDecideAuditionReviewRequest,
+  parseDecidePronunciationEntryRequest,
+  parseGenerateAuditionRequest,
+  parseGetAuditionWorkspaceRequest,
+  parseListAuditionClipsRequest,
+  parseListAuditionReviewDecisionsRequest,
+  parseListAuditionSessionsRequest,
+  parseListModelPackagesRequest,
+  parseListPronunciationEntriesRequest,
+  parseLoadAuditionAudioRequest,
+  parseModelPackageActionRequest,
+  parseSelectLocalModelPackageRequest,
+  parsePreviewAuditionNormalizationRequest
+} from "./audition-validation.js";
 import { DesktopMainError } from "./errors.js";
 import type { PreferenceStore } from "./preferences.js";
 import type { ServiceManager } from "./service-manager.js";
@@ -391,6 +410,193 @@ export function registerDesktopIpc(options: DesktopIpcOptions): () => void {
     );
   });
 
+  register(IPC_CHANNELS.auditionsGetWorkspace, async (raw) => {
+    const request = parseGetAuditionWorkspaceRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.getAuditionWorkspace(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsListModelPackages, async (raw) => {
+    const request = parseListModelPackagesRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listModelPackages(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsModelPackageAction, async (raw) => {
+    const request = parseModelPackageActionRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.performModelPackageAction(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsSelectLocalModelPackage, async (raw) => {
+    const request = parseSelectLocalModelPackageRequest(raw);
+    const epoch = projectSession.assertActive(request.payload.projectId);
+    const selection = await dialog.showOpenDialog(options.window, {
+      title:
+        request.payload.operation === "install"
+          ? "Install a local model package"
+          : "Repair a local model package",
+      buttonLabel:
+        request.payload.operation === "install"
+          ? "Install selected ZIP"
+          : "Repair from selected ZIP",
+      properties: ["openFile", "dontAddToRecent"],
+      filters: [{ name: "Model package ZIP", extensions: ["zip"] }]
+    });
+    projectSession.assertUnchanged(request.payload.projectId, epoch);
+    if (selection.canceled || selection.filePaths.length === 0) {
+      return null;
+    }
+    if (selection.filePaths.length !== 1) {
+      throw new ValidationError("Select exactly one local model package ZIP.");
+    }
+    const selectedPath = selection.filePaths[0];
+    if (
+      selectedPath === undefined ||
+      selectedPath.length > 4_096 ||
+      path.extname(selectedPath).toLowerCase() !== ".zip"
+    ) {
+      throw new ValidationError("The selected model package must be a ZIP file.");
+    }
+    const response = await options.api.applySelectedLocalModelPackage(
+      request.payload,
+      selectedPath
+    );
+    projectSession.assertUnchanged(request.payload.projectId, epoch);
+    return response;
+  });
+
+  register(IPC_CHANNELS.auditionsListPronunciations, async (raw) => {
+    const request = parseListPronunciationEntriesRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listPronunciationEntries(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsAppendPronunciation, async (raw) => {
+    const request = parseAppendPronunciationEntryRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.appendPronunciationEntry(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsDecidePronunciation, async (raw) => {
+    const request = parseDecidePronunciationEntryRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.decidePronunciationEntry(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsClearCache, async (raw) => {
+    const request = parseClearAuditionCacheRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.clearAuditionCache(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsListSessions, async (raw) => {
+    const request = parseListAuditionSessionsRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listAuditionSessions(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsCreateSession, async (raw) => {
+    const request = parseCreateAuditionSessionRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.createAuditionSession(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsCreateScript, async (raw) => {
+    const request = parseCreateAuditionScriptRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.createAuditionScript(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsPreviewNormalization, async (raw) => {
+    const request = parsePreviewAuditionNormalizationRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.previewAuditionNormalization(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsGenerate, async (raw) => {
+    const request = parseGenerateAuditionRequest(raw);
+    const response = await forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.generateAudition(request.payload)
+    );
+    projectSession.rememberProjectJobId(
+      response.jobId,
+      request.payload.projectId
+    );
+    return response;
+  });
+
+  register(IPC_CHANNELS.auditionsListClips, async (raw) => {
+    const request = parseListAuditionClipsRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listAuditionClips(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsListReviewDecisions, async (raw) => {
+    const request = parseListAuditionReviewDecisionsRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.listAuditionReviewDecisions(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsLoadAudio, async (raw) => {
+    const request = parseLoadAuditionAudioRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.loadAuditionAudio(request.payload)
+    );
+  });
+
+  register(IPC_CHANNELS.auditionsDecideReview, async (raw) => {
+    const request = parseDecideAuditionReviewRequest(raw);
+    return forActiveProject(
+      projectSession,
+      request.payload.projectId,
+      () => options.api.decideAuditionReview(request.payload)
+    );
+  });
+
   register(IPC_CHANNELS.dialogueCorrectSpeaker, async (raw) => {
     const request = parseCorrectSpeakerRequest(raw);
     return forActiveProject(
@@ -678,6 +884,11 @@ export class ActiveProjectSession {
         projectId: run.projectId
       });
     }
+  }
+
+  rememberProjectJobId(jobId: string, projectId: string): void {
+    this.assertJobProject(projectId);
+    this.#jobs.set(jobId, { jobId, projectId });
   }
 
   captureKnownJob(jobId: string): {

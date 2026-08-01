@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import {
+  ProcessInventoryError,
   runBoundedProcess,
   type OwnedProcess,
   type ProcessCommandRunner,
@@ -10,6 +11,10 @@ import {
 const maximumObservedProcesses = 32;
 const maximumOutputBytes = 16 * 1024;
 const observationTimeoutMs = 15_000;
+const observationInputEnvironmentVariable =
+  "CSS_OWNED_PROCESS_OBSERVATION_INPUT";
+const maximumObservationAttempts = 3;
+const observationRetryBackoffMs = Object.freeze([250, 750]);
 
 export interface OwnedProcessNetworkObservation {
   readonly method: "owned_pid_tcp_endpoint_inventory";
@@ -19,6 +24,7 @@ export interface OwnedProcessNetworkObservation {
 
 export interface OwnedProcessNetworkObservationDependencies {
   readonly run?: ProcessCommandRunner;
+  readonly delay?: (milliseconds: number) => Promise<void>;
   readonly platform?: NodeJS.Platform;
 }
 
@@ -30,7 +36,7 @@ export async function queryExactProcessIdentities(
   if ((dependencies.platform ?? process.platform) !== "win32") {
     throw new Error("Exact-PID process observation requires Windows.");
   }
-  const output = await (dependencies.run ?? runBoundedProcess)({
+  const output = await runObservationCommand({
     command: "powershell.exe",
     arguments: [
       "-NoLogo",
@@ -41,7 +47,7 @@ export async function queryExactProcessIdentities(
     ],
     timeoutMs: observationTimeoutMs,
     maximumOutputBytes
-  });
+  }, dependencies);
   const identities = parseExactProcessIdentityOutput(output);
   if (identities.some((item) => !expectedPids.includes(item.pid))) {
     throw new Error("The exact-PID process observation returned an unrelated PID.");
@@ -116,6 +122,42 @@ interface ObservationOutput {
   readonly observedNonLoopbackEndpointCount: number;
 }
 
+const observationFailureCodes = new Set([
+  "OBSERVATION_CMDLET_UNAVAILABLE",
+  "OBSERVATION_HELPER_FAILED",
+  "OBSERVATION_IDENTITY_CHANGED",
+  "OBSERVATION_IDENTITY_UNAVAILABLE",
+  "OBSERVATION_INPUT_INVALID"
+]);
+const observationFailureStages = new Set([
+  "bootstrap",
+  "endpoint_query",
+  "identity_compare",
+  "identity_iterate",
+  "identity_query",
+  "network_command_presence",
+  "network_command_type",
+  "network_definition_resolve",
+  "network_definition_validate",
+  "network_export_lookup",
+  "network_manifest_resolve",
+  "network_module_import"
+]);
+const observationFailureTypes = new Set([
+  "InvalidOperationException",
+  "MethodInvocationException",
+  "PropertyNotFoundException",
+  "RuntimeException",
+  "UnknownException"
+]);
+const observationObjectTypes = new Set([
+  "FunctionInfo",
+  "Null",
+  "ObjectArray",
+  "String",
+  "UnknownObject"
+]);
+
 /**
  * Observe TCP endpoints for exact, already-owned process identities only.
  *
@@ -143,18 +185,22 @@ export async function observeOwnedProcessNetworkEndpoints(
     ),
     "utf8"
   ).toString("base64");
-  const output = await (dependencies.run ?? runBoundedProcess)({
+  const output = await runObservationCommand({
     command: "powershell.exe",
     arguments: [
       "-NoLogo",
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      buildObservationScript(encodedExpected)
+      buildObservationScript()
     ],
+    environment: {
+      ...process.env,
+      [observationInputEnvironmentVariable]: encodedExpected
+    },
     timeoutMs: observationTimeoutMs,
     maximumOutputBytes
-  });
+  }, dependencies);
   const parsed = parseObservationOutput(output);
   const expectedPids = expected.map((item) => item.pid);
   if (
@@ -218,6 +264,38 @@ function validatePids(values: readonly number[]): readonly number[] {
   return [...values].sort((left, right) => left - right);
 }
 
+async function runObservationCommand(
+  request: Parameters<ProcessCommandRunner>[0],
+  dependencies: OwnedProcessNetworkObservationDependencies
+): Promise<string> {
+  const run = dependencies.run ?? runBoundedProcess;
+  const delay = dependencies.delay ?? boundedDelay;
+  for (let attempt = 0; attempt < maximumObservationAttempts; attempt += 1) {
+    try {
+      return await run(request);
+    } catch (error) {
+      if (
+        !(error instanceof ProcessInventoryError) ||
+        !error.retryable ||
+        attempt + 1 >= maximumObservationAttempts
+      ) {
+        throw error;
+      }
+      await delay(observationRetryBackoffMs[attempt] ?? 0);
+    }
+  }
+  throw new ProcessInventoryError(
+    "PROCESS_INVENTORY_COMMAND_FAILED",
+    false
+  );
+}
+
+function boundedDelay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
 function buildExactPidQueryScript(pids: readonly number[]): string {
   return [
     "$ErrorActionPreference = 'Stop'",
@@ -238,24 +316,56 @@ function buildExactPidQueryScript(pids: readonly number[]): string {
   ].join("\n");
 }
 
-function buildObservationScript(encodedExpected: string): string {
+function buildObservationScript(): string {
   return [
     "$ErrorActionPreference = 'Stop'",
     "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
-    `$encodedExpected = '${encodedExpected}'`,
+    "$failureStage = 'bootstrap'",
+    "$currentOwnedPid = 0",
+    "$commandObjectType = 'Null'",
+    "try {",
+    `$encodedExpected = [Environment]::GetEnvironmentVariable('${observationInputEnvironmentVariable}', 'Process')`,
+    `if ([String]::IsNullOrEmpty($encodedExpected) -or $encodedExpected.Length -gt ${maximumOutputBytes * 4} -or $encodedExpected -notmatch '^[A-Za-z0-9+/]+={0,2}$') { throw 'OBSERVATION_INPUT_INVALID' }`,
+    `[Environment]::SetEnvironmentVariable('${observationInputEnvironmentVariable}', $null, 'Process')`,
     "$expectedJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedExpected))",
-    "$expected = @(ConvertFrom-Json -InputObject $expectedJson)",
+    "$decodedExpected = ConvertFrom-Json -InputObject $expectedJson",
+    "$expected = @()",
+    "foreach ($decodedIdentity in $decodedExpected) { $expected += $decodedIdentity }",
+    `if ($expected.Count -lt 1 -or $expected.Count -gt ${maximumObservedProcesses}) { throw 'OBSERVATION_INPUT_INVALID' }`,
     "$observedPids = [Collections.Generic.List[int]]::new()",
     "$nonLoopbackCount = 0",
-    "if ($null -eq (Get-Command -Name Get-NetTCPConnection -CommandType Cmdlet -ErrorAction Stop)) { throw 'Get-NetTCPConnection is unavailable.' }",
+    "$failureStage = 'network_manifest_resolve'",
+    "$netTcpIpManifest = [IO.Path]::GetFullPath((Join-Path $PSHOME 'Modules\\NetTCPIP\\NetTCPIP.psd1'))",
+    "$manifestItem = Get-Item -LiteralPath $netTcpIpManifest -Force -ErrorAction Stop",
+    "if ($manifestItem.PSIsContainer -or ($manifestItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'OBSERVATION_CMDLET_UNAVAILABLE' }",
+    "$failureStage = 'network_module_import'",
+    "$networkModules = @(Import-Module -Name $netTcpIpManifest -Force -PassThru -ErrorAction Stop)",
+    "$failureStage = 'network_definition_resolve'",
+    "$netTcpIpCommandDefinition = [IO.Path]::GetFullPath((Join-Path $manifestItem.DirectoryName 'MSFT_NetTCPConnection.cdxml'))",
+    "$commandDefinitionItem = Get-Item -LiteralPath $netTcpIpCommandDefinition -Force -ErrorAction Stop",
+    "$failureStage = 'network_export_lookup'",
+    "$networkCommand = if ($networkModules.Count -eq 1) { $networkModules[0].ExportedCommands['Get-NetTCPConnection'] } else { $null }",
+    "$commandObjectTypeCandidate = if ($null -eq $networkCommand) { 'Null' } else { [string]$networkCommand.GetType().Name }",
+    "$commandObjectType = if ($commandObjectTypeCandidate -in @('FunctionInfo', 'ObjectArray', 'String')) { $commandObjectTypeCandidate } else { 'UnknownObject' }",
+    "$failureStage = 'network_definition_validate'",
+    "if ($commandDefinitionItem.PSIsContainer -or ($commandDefinitionItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'OBSERVATION_CMDLET_UNAVAILABLE' }",
+    "$failureStage = 'network_command_presence'",
+    "if ($null -eq $networkCommand) { throw 'OBSERVATION_CMDLET_UNAVAILABLE' }",
+    "$failureStage = 'network_command_type'",
+    "if ($commandObjectType -cne 'FunctionInfo') { throw 'OBSERVATION_CMDLET_UNAVAILABLE' }",
+    "$failureStage = 'identity_iterate'",
     "foreach ($identity in $expected) {",
     "  $ownedPid = [int]$identity.pid",
+    "  $currentOwnedPid = $ownedPid",
+    "  $failureStage = 'identity_query'",
     "  $process = @(Get-CimInstance -ClassName Win32_Process -Filter (\"ProcessId = {0}\" -f $ownedPid) -Property ProcessId,Name,ExecutablePath,CreationDate)",
-    "  if ($process.Count -ne 1) { throw 'An exact owned process identity was unavailable.' }",
+    "  if ($process.Count -ne 1) { throw 'OBSERVATION_IDENTITY_UNAVAILABLE' }",
     "  $actual = $process[0]",
     "  $actualCreation = $actual.CreationDate.ToUniversalTime().ToString('O', [Globalization.CultureInfo]::InvariantCulture)",
-    "  if ([int]$actual.ProcessId -ne $ownedPid -or -not [String]::Equals([string]$actual.Name, [string]$identity.name, [StringComparison]::OrdinalIgnoreCase) -or $null -eq $actual.ExecutablePath -or -not [String]::Equals([IO.Path]::GetFullPath([string]$actual.ExecutablePath), [IO.Path]::GetFullPath([string]$identity.executablePath), [StringComparison]::OrdinalIgnoreCase) -or -not [String]::Equals($actualCreation, [string]$identity.creationDate, [StringComparison]::Ordinal)) { throw 'An exact owned process identity changed before endpoint observation.' }",
-    "  foreach ($connection in @(Get-NetTCPConnection -OwningProcess $ownedPid -ErrorAction SilentlyContinue)) {",
+    "  $failureStage = 'identity_compare'",
+    "  if ([int]$actual.ProcessId -ne $ownedPid -or -not [String]::Equals([string]$actual.Name, [string]$identity.name, [StringComparison]::OrdinalIgnoreCase) -or $null -eq $actual.ExecutablePath -or -not [String]::Equals([IO.Path]::GetFullPath([string]$actual.ExecutablePath), [IO.Path]::GetFullPath([string]$identity.executablePath), [StringComparison]::OrdinalIgnoreCase) -or -not [String]::Equals($actualCreation, [string]$identity.creationDate, [StringComparison]::Ordinal)) { throw 'OBSERVATION_IDENTITY_CHANGED' }",
+    "  $failureStage = 'endpoint_query'",
+    "  foreach ($connection in @(& $networkCommand -OwningProcess $ownedPid -ErrorAction SilentlyContinue)) {",
     "    $state = [string]$connection.State",
     "    $localAddress = [string]$connection.LocalAddress",
     "    $remoteAddress = [string]$connection.RemoteAddress",
@@ -263,6 +373,17 @@ function buildObservationScript(encodedExpected: string): string {
     "    if ($isExternal) { $nonLoopbackCount += 1 }",
     "  }",
     "  $observedPids.Add($ownedPid)",
+    "}",
+    "} catch {",
+    "  $candidate = [string]$_.Exception.Message",
+    "  $candidateType = [string]$_.Exception.GetType().Name",
+    "  $allowed = @('OBSERVATION_CMDLET_UNAVAILABLE', 'OBSERVATION_IDENTITY_CHANGED', 'OBSERVATION_IDENTITY_UNAVAILABLE', 'OBSERVATION_INPUT_INVALID')",
+    "  $allowedTypes = @('InvalidOperationException', 'MethodInvocationException', 'PropertyNotFoundException', 'RuntimeException')",
+    "  $failureCode = if ($candidate -in $allowed) { $candidate } else { 'OBSERVATION_HELPER_FAILED' }",
+    "  $failureType = if ($candidateType -in $allowedTypes) { $candidateType } else { 'UnknownException' }",
+    "  $failure = [PSCustomObject]@{ commandObjectType = $commandObjectType; failureCode = $failureCode; failureStage = $failureStage; failureType = $failureType; ownedPid = $currentOwnedPid }",
+    "  [Console]::Out.Write((ConvertTo-Json -InputObject $failure -Compress))",
+    "  exit 0",
     "}",
     "$result = [PSCustomObject]@{ observedPids = @($observedPids | Sort-Object); observedNonLoopbackEndpointCount = $nonLoopbackCount }",
     "[Console]::Out.Write((ConvertTo-Json -InputObject $result -Compress))"
@@ -280,6 +401,23 @@ function parseObservationOutput(output: string): ObservationOutput {
     throw new Error("The owned-process endpoint observation was malformed.");
   }
   const value = raw as Record<string, unknown>;
+  if (
+    Object.keys(value).length === 5 &&
+    typeof value.commandObjectType === "string" &&
+    observationObjectTypes.has(value.commandObjectType) &&
+    typeof value.failureCode === "string" &&
+    observationFailureCodes.has(value.failureCode) &&
+    typeof value.failureStage === "string" &&
+    observationFailureStages.has(value.failureStage) &&
+    typeof value.failureType === "string" &&
+    observationFailureTypes.has(value.failureType) &&
+    Number.isSafeInteger(value.ownedPid) &&
+    (value.ownedPid as number) >= 0
+  ) {
+    throw new Error(
+      `The owned-process endpoint observation failed safely (${value.failureCode}, ${value.failureStage}, ${value.failureType}, ${value.commandObjectType}, owned PID ${String(value.ownedPid)}).`
+    );
+  }
   if (
     Object.keys(value).length !== 2 ||
     !("observedPids" in value) ||

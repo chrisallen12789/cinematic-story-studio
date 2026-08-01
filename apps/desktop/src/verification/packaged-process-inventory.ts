@@ -63,6 +63,7 @@ export interface PackagedProcessPaths {
 export interface ProcessCommandRequest {
   readonly command: string;
   readonly arguments: readonly string[];
+  readonly environment?: NodeJS.ProcessEnv;
   readonly timeoutMs: number;
   readonly maximumOutputBytes: number;
 }
@@ -605,6 +606,7 @@ export async function runBoundedProcess(
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(request.command, [...request.arguments], {
+      env: request.environment,
       shell: false,
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true

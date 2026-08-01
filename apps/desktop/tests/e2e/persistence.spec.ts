@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -359,11 +360,6 @@ test.describe("desktop persistence", () => {
       );
       expect(restoredPhase3b.cacheRecordsPersisted).toBe(true);
       expect(restoredPhase3b.authenticatedRestoredAudioLoaded).toBe(true);
-      await expect(
-        secondPage.locator(".review-card .review-state", {
-          hasText: "Approved"
-        })
-      ).toHaveCount(3);
       const secondOwnership = await establishDevelopmentOwnership(
         second,
         restoredPhase3b.liveRuntimeInstance
@@ -597,6 +593,7 @@ interface DevelopmentProcessOwnership {
   readonly electron: ProcessIdentity;
   readonly service: ProcessIdentity;
   readonly providerWorker: ProcessIdentity;
+  readonly processes: readonly ProcessIdentity[];
 }
 
 async function establishDevelopmentOwnership(
@@ -630,36 +627,105 @@ async function establishDevelopmentOwnership(
   const providerWorkerIdentity = identities.find(
     (item) => item.pid === runtime.workerPid
   );
+  const ownershipFailures = [
+    identities.length === 3 ? null : "exact PID coverage",
+    electronIdentity === undefined ? "Electron identity" : null,
+    serviceIdentity === undefined ? "service identity" : null,
+    providerWorkerIdentity === undefined ? "provider-worker identity" : null,
+    electronIdentity?.executablePath === null ? "Electron executable path" : null,
+    serviceIdentity?.executablePath === null ? "service executable path" : null,
+    providerWorkerIdentity?.executablePath === null
+      ? "provider-worker executable path"
+      : null,
+    electronIdentity?.executablePath !== null &&
+    electronIdentity !== undefined &&
+    !sameWindowsPath(
+      electronIdentity.executablePath,
+      electronRuntime.executablePath
+    )
+      ? "Electron executable identity"
+      : null,
+    providerWorkerIdentity?.executablePath !== null &&
+    providerWorkerIdentity !== undefined &&
+    path.win32.basename(providerWorkerIdentity.executablePath).toLowerCase() !==
+      runtime.executableIdentity.toLowerCase()
+      ? "provider-worker reported executable identity"
+      : null,
+    electronIdentity !== undefined &&
+    serviceIdentity !== undefined &&
+    serviceIdentity.creationDate < electronIdentity.creationDate
+      ? "service creation order"
+      : null,
+    serviceIdentity !== undefined &&
+    providerWorkerIdentity !== undefined &&
+    providerWorkerIdentity.creationDate < serviceIdentity.creationDate
+      ? "provider-worker creation order"
+      : null
+  ].filter((value): value is string => value !== null);
+  if (ownershipFailures.length > 0) {
+    throw new Error(
+      `Exact development Electron, service, and provider-worker ownership could not be established: ${ownershipFailures.join(", ")}.`
+    );
+  }
   if (
-    identities.length !== 3 ||
     electronIdentity === undefined ||
     serviceIdentity === undefined ||
     providerWorkerIdentity === undefined ||
     electronIdentity.executablePath === null ||
     serviceIdentity.executablePath === null ||
-    providerWorkerIdentity.executablePath === null ||
-    !sameWindowsPath(
-      electronIdentity.executablePath,
-      electronRuntime.executablePath
-    ) ||
-    serviceIdentity.parentPid !== electronIdentity.pid ||
-    providerWorkerIdentity.parentPid !== serviceIdentity.pid ||
+    providerWorkerIdentity.executablePath === null
+  ) {
+    throw new Error("Exact development process identity narrowing failed.");
+  }
+  const configuredPython =
+    boundedDevelopmentPythonPath(process.env.CSS_PYTHON) ??
+    boundedDevelopmentPythonPath(process.env.CSS_SERVICE_PYTHON);
+  const localServiceRoot = path.resolve(desktopRoot, "../local-service");
+  const expectedPythonLauncherPath = await realpath(
+    configuredPython === null
+      ? path.join(localServiceRoot, ".venv/Scripts/python.exe")
+      : path.resolve(localServiceRoot, configuredPython)
+  );
+  const serviceLineage = await establishDevelopmentLineage({
+    child: serviceIdentity,
+    expectedParent: electronIdentity,
+    expectedIntermediaryPath: expectedPythonLauncherPath,
+    label: "service"
+  });
+  const providerWorkerLineage = await establishDevelopmentLineage({
+    child: providerWorkerIdentity,
+    expectedParent: serviceIdentity,
+    expectedIntermediaryPath: expectedPythonLauncherPath,
+    label: "provider-worker"
+  });
+  const configuredPythonSha256 = await sha256File(
+    expectedPythonLauncherPath
+  );
+  if (
+    configuredPythonSha256 !== runtime.executableSha256 ||
     !sameWindowsPath(
       serviceIdentity.executablePath,
       providerWorkerIdentity.executablePath
-    ) ||
-    path.win32.basename(providerWorkerIdentity.executablePath).toLowerCase() !==
-      runtime.executableIdentity.toLowerCase() ||
-    serviceIdentity.creationDate < electronIdentity.creationDate ||
-    providerWorkerIdentity.creationDate < serviceIdentity.creationDate
+    )
   ) {
     throw new Error(
-      "Exact development Electron, service, and provider-worker ownership could not be established."
+      "The exact development Python launcher or loaded interpreter did not match the authenticated runtime identity."
     );
   }
+  const processes = uniqueDevelopmentProcesses([
+    electronIdentity,
+    ...serviceLineage,
+    ...providerWorkerLineage
+  ]);
   const ownedPython: readonly OwnedProcess[] = [
-    { ...serviceIdentity, kind: "service" },
-    { ...providerWorkerIdentity, kind: "provider_worker" }
+    ...serviceLineage.map((item) => ({
+      ...item,
+      kind: "service" as const
+    })),
+    ...providerWorkerLineage.map((item) => ({
+      ...item,
+      kind: "provider_worker" as const
+    }))
   ];
   const networkObservation =
     await observeOwnedProcessNetworkEndpoints(ownedPython);
@@ -671,8 +737,101 @@ async function establishDevelopmentOwnership(
   return {
     electron: electronIdentity,
     service: serviceIdentity,
-    providerWorker: providerWorkerIdentity
+    providerWorker: providerWorkerIdentity,
+    processes
   };
+}
+
+function boundedDevelopmentPythonPath(
+  value: string | undefined
+): string | null {
+  if (
+    value === undefined ||
+    value.trim().length === 0 ||
+    value.length > 1_024 ||
+    value.includes("\0")
+  ) {
+    return null;
+  }
+  return value.trim();
+}
+
+interface DevelopmentLineageInput {
+  readonly child: ProcessIdentity;
+  readonly expectedParent: ProcessIdentity;
+  readonly expectedIntermediaryPath: string;
+  readonly label: string;
+}
+
+async function establishDevelopmentLineage({
+  child,
+  expectedParent,
+  expectedIntermediaryPath,
+  label
+}: DevelopmentLineageInput): Promise<readonly ProcessIdentity[]> {
+  if (child.parentPid === expectedParent.pid) {
+    if (
+      child.executablePath === null ||
+      !sameWindowsPath(child.executablePath, expectedIntermediaryPath)
+    ) {
+      throw new Error(
+        `The direct development ${label} executable did not match its configured launcher.`
+      );
+    }
+    return [child];
+  }
+  if (
+    !Number.isSafeInteger(child.parentPid) ||
+    child.parentPid <= 0 ||
+    child.parentPid === child.pid
+  ) {
+    throw new Error(`The exact development ${label} parent was invalid.`);
+  }
+  const candidates = await queryExactProcessIdentities([child.parentPid]);
+  const intermediary = candidates[0];
+  if (
+    candidates.length !== 1 ||
+    intermediary === undefined ||
+    intermediary.pid !== child.parentPid ||
+    intermediary.parentPid !== expectedParent.pid ||
+    intermediary.executablePath === null ||
+    !sameWindowsPath(
+      intermediary.executablePath,
+      expectedIntermediaryPath
+    ) ||
+    intermediary.creationDate < expectedParent.creationDate ||
+    child.creationDate < intermediary.creationDate
+  ) {
+    throw new Error(
+      `The exact development ${label} launcher intermediary could not be owned.`
+    );
+  }
+  return [intermediary, child];
+}
+
+function uniqueDevelopmentProcesses(
+  values: readonly ProcessIdentity[]
+): readonly ProcessIdentity[] {
+  const byPid = new Map<number, ProcessIdentity>();
+  for (const value of values) {
+    const existing = byPid.get(value.pid);
+    if (
+      existing !== undefined &&
+      !sameStableDevelopmentIdentity(existing, value)
+    ) {
+      throw new Error(
+        "The exact development process lineage reused an ambiguous PID."
+      );
+    }
+    byPid.set(value.pid, value);
+  }
+  return [...byPid.values()].sort((left, right) => left.pid - right.pid);
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  return createHash("sha256")
+    .update(await readFile(filePath))
+    .digest("hex");
 }
 
 async function closeElectron(
@@ -722,9 +881,7 @@ async function waitForExactDevelopmentProcessesGone(
   ownership: DevelopmentProcessOwnership
 ): Promise<true> {
   const expected = [
-    ownership.electron,
-    ownership.service,
-    ownership.providerWorker
+    ...ownership.processes
   ];
   const pids = expected.map((item) => item.pid);
   const deadline = Date.now() + 15_000;

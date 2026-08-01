@@ -736,8 +736,9 @@ function phase3bPackagedResult(launches) {
       humanListeningClaimed: false,
     },
     runtime: {
-      profileId: "deterministic-pcm-wav-fixture-windows",
-      profileFingerprint: hash("runtime-profile"),
+      profileId: "deterministic-pcm-wav-fixture-windows-v1-0-1",
+      profileFingerprint:
+        "f3e5801f836ab4061eb76e52f4a3e1b4c7ba162238e0c70857e74fff705f75d6",
       protocolVersion: "1.0.0",
       runtimeInstanceIds: ["runtime-instance-1", "runtime-instance-2"],
       networkPolicy: "python_socket_api_denied",
@@ -753,13 +754,14 @@ function phase3bPackagedResult(launches) {
       providerVersion: "1.0.0",
     },
     realProviderAdapter: {
-      providerId: "kokoro-onnx-local",
+      providerId: "kokoro-local-onnx",
       providerVersion: "1.0.0",
     },
     model: {
       modelPackageId: "deterministic-pcm-wav-fixture-package",
       manifestVersion: "1.0.0",
-      modelPackageFingerprint: hash("model-package"),
+      modelPackageFingerprint:
+        "e0352282af67ff3675fe6067a63feca5d9d4fcaeef5a3f12b80a5e4d2c9635d6",
       installationRevision: 2,
       verificationId: "model-verification-1",
       verificationFingerprint: hash("model-verification"),
@@ -2025,6 +2027,56 @@ test("rejects stale or contradictory Phase 3A packaged evidence", async (t) => {
   );
 });
 
+test("rejects noncanonical Phase 3B runtime provenance", async (t) => {
+  const fixture = await createFixture(t);
+  const original = JSON.parse(
+    await readFile(fixture.phase3bResultPath, "utf8"),
+  );
+  const mutations = [
+    ["legacy runtime profile ID", (value) => {
+      value.runtime.profileId = "deterministic-pcm-wav-fixture-windows";
+    }],
+    ["arbitrary runtime profile fingerprint", (value) => {
+      value.runtime.profileFingerprint = "f".repeat(64);
+    }],
+    ["arbitrary fixture provider ID", (value) => {
+      value.fixtureProvider.providerId = "deterministic-pcm-wav-fixture-drift";
+    }],
+    ["arbitrary fixture provider version", (value) => {
+      value.fixtureProvider.providerVersion = "1.0.1";
+    }],
+    ["arbitrary real provider ID", (value) => {
+      value.realProviderAdapter.providerId = "kokoro-onnx-local";
+    }],
+    ["arbitrary real provider version", (value) => {
+      value.realProviderAdapter.providerVersion = "1.0.1";
+    }],
+    ["arbitrary fixture package ID", (value) => {
+      value.model.modelPackageId = "deterministic-pcm-wav-fixture-package-drift";
+    }],
+    ["arbitrary fixture manifest version", (value) => {
+      value.model.manifestVersion = "1.0.1";
+    }],
+    ["arbitrary fixture package fingerprint", (value) => {
+      value.model.modelPackageFingerprint = "f".repeat(64);
+    }],
+  ];
+  for (const [label, mutate] of mutations) {
+    const tampered = structuredClone(original);
+    mutate(tampered);
+    await writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(tampered)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      generateBuildEvidence(generationOptions(fixture, "success")),
+      /complete, valid machine evidence/u,
+      label,
+    );
+  }
+});
+
 test("rejects Phase 3B fixture quality overclaims and stale process proof", async (t) => {
   const fixture = await createFixture(t);
   const original = JSON.parse(
@@ -2329,6 +2381,216 @@ test("accepts an accumulated transient service descendant when identity and exit
   assert.equal(
     manifest.assertions.packagedE2eOwnershipExitProven,
     true,
+  );
+});
+
+test("rejects invalid machine process kinds and multiple app-service boundaries", async (t) => {
+  const fixture = await createFixture(t);
+  const original = await readFile(fixture.resultPath, "utf8");
+  const machineResult = JSON.parse(original);
+  const firstLaunch = machineResult.launches[0];
+  firstLaunch.ownership.processes.push({
+    pid: 4103,
+    parentPid: 4101,
+    kind: "app",
+    executableName: "Cinematic Story Studio.exe",
+    creationDate: "2026-07-29T18:15:21.7500000Z",
+  });
+  firstLaunch.exitProof.ownedPids.push(4103);
+  await writeFile(
+    fixture.resultPath,
+    `${JSON.stringify(machineResult)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  const secondBoundaryResult = JSON.parse(original);
+  const secondBoundaryLaunch = secondBoundaryResult.launches[0];
+  secondBoundaryLaunch.ownership.processes.push({
+    pid: 4103,
+    parentPid: 4100,
+    kind: "service",
+    executableName: "cinematic-story-service.exe",
+    creationDate: "2026-07-29T18:15:21.7500000Z",
+  });
+  secondBoundaryLaunch.exitProof.ownedPids.push(4103);
+  await writeFile(
+    fixture.resultPath,
+    `${JSON.stringify(secondBoundaryResult)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+});
+
+test("accepts a Windows provider-worker intermediary and rejects broken ancestry", async (t) => {
+  const fixture = await createFixture(t);
+  const machineResult = JSON.parse(
+    await readFile(fixture.resultPath, "utf8"),
+  );
+  const phase3bResult = JSON.parse(
+    await readFile(fixture.phase3bResultPath, "utf8"),
+  );
+  const machineLaunch = machineResult.launches[0];
+  const phase3bLaunch = phase3bResult.process.launches[0];
+  const runtimeExit = phase3bLaunch.providerRuntimeExit;
+  const worker = machineLaunch.ownership.processes.find(
+    (process) => process.pid === runtimeExit.workerPid,
+  );
+  const service = machineLaunch.ownership.processes.find(
+    (process) => process.pid === runtimeExit.parentPid,
+  );
+  assert.notEqual(worker, undefined);
+  assert.notEqual(service, undefined);
+  const intermediary = {
+    pid: 4103,
+    parentPid: service.pid,
+    kind: "provider_worker",
+    executableName: "cinematic-story-service.exe",
+    creationDate: "2026-07-29T18:15:21.2500000Z",
+  };
+  worker.parentPid = intermediary.pid;
+  machineLaunch.ownership.processes.push(intermediary);
+  machineLaunch.exitProof.ownedPids.push(intermediary.pid);
+  phase3bLaunch.ownedProcesses = machineLaunch.ownership.processes.map(
+    (process) => ({
+      pid: process.pid,
+      parentPid: process.parentPid,
+      kind: process.kind === "app" ? "electron" : process.kind,
+      executableName: process.executableName,
+      creationIdentity: process.creationDate,
+      goneAfterShutdown: true,
+    }),
+  );
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+
+  await assert.doesNotReject(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+  );
+
+  intermediary.creationDate = "2026-07-29T18:15:21.5000001Z";
+  phase3bLaunch.ownedProcesses.find(
+    (process) => process.pid === intermediary.pid,
+  ).creationIdentity = intermediary.creationDate;
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  intermediary.creationDate = "2026-07-29T18:15:21.2500000Z";
+  phase3bLaunch.ownedProcesses.find(
+    (process) => process.pid === intermediary.pid,
+  ).creationIdentity = intermediary.creationDate;
+
+  intermediary.kind = "service";
+  phase3bLaunch.ownedProcesses.find(
+    (process) => process.pid === intermediary.pid,
+  ).kind = "service";
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  intermediary.kind = "provider_worker";
+  const phase3bIntermediary = phase3bLaunch.ownedProcesses.find(
+    (process) => process.pid === intermediary.pid,
+  );
+  phase3bIntermediary.kind = "provider_worker";
+  const secondIntermediary = {
+    ...intermediary,
+    pid: 4104,
+    parentPid: service.pid,
+    creationDate: "2026-07-29T18:15:21.1250000Z",
+  };
+  intermediary.parentPid = secondIntermediary.pid;
+  machineLaunch.ownership.processes.push(secondIntermediary);
+  machineLaunch.exitProof.ownedPids.push(secondIntermediary.pid);
+  phase3bLaunch.ownedProcesses = machineLaunch.ownership.processes.map(
+    (process) => ({
+      pid: process.pid,
+      parentPid: process.parentPid,
+      kind: process.kind === "app" ? "electron" : process.kind,
+      executableName: process.executableName,
+      creationIdentity: process.creationDate,
+      goneAfterShutdown: true,
+    }),
+  );
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  machineLaunch.ownership.processes = machineLaunch.ownership.processes.filter(
+    (process) => process.pid !== secondIntermediary.pid,
+  );
+  machineLaunch.exitProof.ownedPids = machineLaunch.exitProof.ownedPids.filter(
+    (pid) => pid !== secondIntermediary.pid,
+  );
+  intermediary.parentPid = service.pid;
+  machineLaunch.ownership.processes.push({
+    ...intermediary,
+    pid: 4105,
+    parentPid: service.pid,
+    creationDate: "2026-07-29T18:15:21.3750000Z",
+  });
+  machineLaunch.exitProof.ownedPids.push(4105);
+  phase3bLaunch.ownedProcesses = machineLaunch.ownership.processes.map(
+    (process) => ({
+      pid: process.pid,
+      parentPid: process.parentPid,
+      kind: process.kind === "app" ? "electron" : process.kind,
+      executableName: process.executableName,
+      creationIdentity: process.creationDate,
+      goneAfterShutdown: true,
+    }),
+  );
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
   );
 });
 

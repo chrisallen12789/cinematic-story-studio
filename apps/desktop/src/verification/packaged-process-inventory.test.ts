@@ -468,6 +468,45 @@ describe("packaged process inventory", () => {
     ]);
   });
 
+  it("rejects an application-image descendant below the service boundary", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const service = ownedProcess({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:21.0000000Z",
+      kind: "service"
+    });
+    const invalidAppChild = processIdentity({
+      pid: 4102,
+      parentPid: service.pid,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      creationDate: "2026-07-29T18:15:22.0000000Z"
+    });
+
+    expect(() =>
+      adoptVerifiedProcessTree({
+        current: [root, service, invalidAppChild],
+        baseline: [],
+        owned: [root, service],
+        rootPid: root.pid,
+        packaged
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
+      })
+    );
+  });
+
   it("adopts a transient service-image child only from an owned service", () => {
     const root = ownedProcess({
       pid: 4100,

@@ -88,7 +88,7 @@ import {
   type ProcessIdentity
 } from "../../src/verification/packaged-process-inventory";
 import {
-  observeOwnedProcessNetworkEndpoints,
+  observeStableOwnedProcessNetworkEndpoints,
   type OwnedProcessNetworkObservation
 } from "../../src/verification/owned-process-network-observation";
 import {
@@ -538,7 +538,11 @@ test.describe("packaged desktop verification", () => {
         phase3bWorkflow.liveRuntimeInstance.parentPid
       );
       phase3bNetworkObservations.push(
-        await requireNoOwnedPythonExternalEndpoints(firstOwnership)
+        await requireNoOwnedPythonExternalEndpoints(
+          firstOwnership,
+          phase3bWorkflow.liveRuntimeInstance.workerPid,
+          phase3bWorkflow.liveRuntimeInstance.parentPid
+        )
       );
 
       await checkpointStage("shutdown_1");
@@ -732,7 +736,11 @@ test.describe("packaged desktop verification", () => {
         phase3bRestartEvidence.liveRuntimeInstance.parentPid
       );
       phase3bNetworkObservations.push(
-        await requireNoOwnedPythonExternalEndpoints(secondOwnership)
+        await requireNoOwnedPythonExternalEndpoints(
+          secondOwnership,
+          phase3bRestartEvidence.liveRuntimeInstance.workerPid,
+          phase3bRestartEvidence.liveRuntimeInstance.parentPid
+        )
       );
       await checkpointStage("screenshot");
       await secondPage.screenshot({
@@ -1650,22 +1658,40 @@ async function bindPhase3bProviderWorkerOwnership(
 }
 
 async function requireNoOwnedPythonExternalEndpoints(
-  ownership: LaunchOwnership
+  ownership: LaunchOwnership,
+  workerPid: number,
+  reportedParentPid: number
 ): Promise<OwnedProcessNetworkObservation> {
-  const ownedPythonProcesses = ownership.processes.filter(
+  const historicalOwnedPythonProcesses = ownership.processes.filter(
     (item) => item.kind === "service" || item.kind === "provider_worker"
   );
   if (
-    !ownedPythonProcesses.some((item) => item.kind === "service") ||
-    !ownedPythonProcesses.some((item) => item.kind === "provider_worker")
+    !historicalOwnedPythonProcesses.some(
+      (item) => item.pid === reportedParentPid && item.kind === "service"
+    ) ||
+    !historicalOwnedPythonProcesses.some(
+      (item) => item.pid === workerPid && item.kind === "provider_worker"
+    )
   ) {
     throw new Error(
       "Exact service and provider-worker ownership is required before endpoint observation."
     );
   }
-  const observation = await observeOwnedProcessNetworkEndpoints(
-    ownedPythonProcesses
+  const stable = await observeStableOwnedProcessNetworkEndpoints(
+    ownership.processes,
+    [reportedParentPid, workerPid],
+    async (current) => {
+      ownership.processes = [...current];
+      const rebound = await bindPhase3bProviderWorkerOwnership(
+        ownership,
+        workerPid,
+        reportedParentPid
+      );
+      return rebound.processes;
+    }
   );
+  ownership.processes = [...stable.ownedProcesses];
+  const observation = stable.observation;
   if (observation.observedNonLoopbackEndpointCount !== 0) {
     throw new Error(
       "An exact owned Python process exposed or used a non-loopback TCP endpoint."

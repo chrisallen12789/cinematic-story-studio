@@ -6,6 +6,7 @@ import {
   phase3bPackagedE2eSchemaVersion,
   validatePhase3bPackagedE2eResult,
   type Phase3bAuditionEvidence,
+  type Phase3bOwnedProcessEvidence,
   type Phase3bPackagedE2eResult
 } from "./phase3b-packaged-e2e-evidence";
 
@@ -15,11 +16,135 @@ const shaC = "c".repeat(64);
 const shaD = "d".repeat(64);
 const cacheKeyA = "e".repeat(64);
 const completedAt = "2026-07-31T12:00:00.000Z";
+const processCreatedAt = "2026-07-31T12:00:00.0000000Z";
 
 describe("Phase 3B packaged E2E evidence", () => {
   it("accepts complete fixture-lifecycle, cache, invalidation, restart, and exit proof", () => {
     const result = fixtureResult();
     expect(validatePhase3bPackagedE2eResult(result)).toBe(result);
+  });
+
+  it("accepts Windows worker intermediaries and rejects broken owned ancestry", () => {
+    const result = withWindowsWorkerIntermediaries(fixtureResult());
+    expect(validatePhase3bPackagedE2eResult(result)).toBe(result);
+
+    const launch = result.process.launches[0];
+    expect(launch).toBeDefined();
+    if (launch === undefined) return;
+    const worker = launch.ownedProcesses.find(
+      (item) => item.pid === launch.providerRuntimeExit.workerPid
+    );
+    const intermediary = launch.ownedProcesses.find(
+      (item) => item.pid === worker?.parentPid
+    );
+    expect(worker).toBeDefined();
+    expect(intermediary).toBeDefined();
+    if (worker === undefined || intermediary === undefined) return;
+    const secondIntermediaryPid =
+      Math.max(...launch.ownedProcesses.map((item) => item.pid)) + 1;
+
+    const rootedTreeFailures: readonly (readonly Phase3bOwnedProcessEvidence[])[] = [
+      launch.ownedProcesses.map((item) =>
+        item.pid === intermediary.pid ? { ...item, parentPid: 9999 } : item
+      ),
+      launch.ownedProcesses.map((item) =>
+        item.pid === intermediary.pid
+          ? { ...item, parentPid: worker.pid }
+          : item
+      ),
+      launch.ownedProcesses.map((item) =>
+        item.pid === intermediary.pid
+          ? {
+              ...item,
+              creationIdentity: "2026-07-31T12:00:00.0000001Z"
+            }
+          : item
+      )
+    ];
+    for (const ownedProcesses of rootedTreeFailures) {
+      expect(() =>
+        validatePhase3bPackagedE2eResult(
+          withFirstLaunchProcesses(result, ownedProcesses)
+        )
+      ).toThrow("one rooted Electron tree");
+    }
+
+    const lineageFailures: readonly (readonly Phase3bOwnedProcessEvidence[])[] = [
+      launch.ownedProcesses.map((item) =>
+        item.pid === intermediary.pid
+          ? { ...item, kind: "service" as const }
+          : item
+      ),
+      [
+        ...launch.ownedProcesses.map((item) =>
+          item.pid === intermediary.pid
+            ? { ...item, parentPid: secondIntermediaryPid }
+            : item
+        ),
+        {
+          ...intermediary,
+          pid: secondIntermediaryPid,
+          parentPid: launch.providerRuntimeExit.parentPid
+        }
+      ]
+    ];
+    for (const ownedProcesses of lineageFailures) {
+      expect(() =>
+        validatePhase3bPackagedE2eResult(
+          withFirstLaunchProcesses(result, ownedProcesses)
+        )
+      ).toThrow("exact owned worker tree");
+    }
+
+    expect(() =>
+      validatePhase3bPackagedE2eResult(
+        withFirstLaunchProcesses(result, [
+          ...launch.ownedProcesses,
+          {
+            ...intermediary,
+            pid: secondIntermediaryPid + 1,
+            parentPid: launch.providerRuntimeExit.parentPid
+          }
+        ])
+      )
+    ).toThrow("exact owned worker tree");
+
+    const electronRoot = launch.ownedProcesses.find(
+      (item) => item.kind === "electron" &&
+        !launch.ownedProcesses.some((candidate) => candidate.pid === item.parentPid)
+    );
+    const serviceBoundary = launch.ownedProcesses.find(
+      (item) =>
+        item.kind === "service" && item.parentPid === electronRoot?.pid
+    );
+    expect(electronRoot).toBeDefined();
+    expect(serviceBoundary).toBeDefined();
+    if (electronRoot === undefined || serviceBoundary === undefined) return;
+    expect(() =>
+      validatePhase3bPackagedE2eResult(
+        withFirstLaunchProcesses(result, [
+          ...launch.ownedProcesses,
+          {
+            ...serviceBoundary,
+            pid: secondIntermediaryPid + 2,
+            parentPid: electronRoot.pid
+          }
+        ])
+      )
+    ).toThrow("one rooted Electron tree");
+
+    expect(() =>
+      validatePhase3bPackagedE2eResult(
+        withFirstLaunchProcesses(
+          result,
+          launch.ownedProcesses.map((item) =>
+            item.pid === launch.providerRuntimeExit.parentPid
+              ? { ...item, parentPid: 9999 }
+              : item
+          )
+        )
+      )
+    ).toThrow("one rooted Electron tree");
   });
 
   it("rejects quality overclaims, missing worker ownership, and private paths", () => {
@@ -578,7 +703,7 @@ function launch(
         parentPid: 100,
         kind: "electron",
         executableName: "Cinematic Story Studio.exe",
-        creationIdentity: completedAt,
+        creationIdentity: processCreatedAt,
         goneAfterShutdown: true
       },
       {
@@ -586,7 +711,7 @@ function launch(
         parentPid: rootPid,
         kind: "service",
         executableName: "cinematic-story-service.exe",
-        creationIdentity: completedAt,
+        creationIdentity: processCreatedAt,
         goneAfterShutdown: true
       },
       {
@@ -594,7 +719,7 @@ function launch(
         parentPid: rootPid + 1,
         kind: "provider_worker",
         executableName: "cinematic-story-service.exe",
-        creationIdentity: completedAt,
+        creationIdentity: processCreatedAt,
         goneAfterShutdown: true
       }
     ],
@@ -632,5 +757,57 @@ function runtimeExit(
     ownedProcessesConfirmedExited: true,
     jobObjectAssigned: true,
     deniedNetworkAttemptCount: 0
+  };
+}
+
+function withWindowsWorkerIntermediaries(
+  result: Phase3bPackagedE2eResult
+): Phase3bPackagedE2eResult {
+  return {
+    ...result,
+    process: {
+      launches: result.process.launches.map((launch) => {
+        const worker = launch.ownedProcesses.find(
+          (item) => item.pid === launch.providerRuntimeExit.workerPid
+        );
+        const logicalParent = launch.ownedProcesses.find(
+          (item) => item.pid === launch.providerRuntimeExit.parentPid
+        );
+        if (worker === undefined || logicalParent === undefined) {
+          throw new Error("The fixture worker topology was incomplete.");
+        }
+        const intermediaryPid =
+          Math.max(...launch.ownedProcesses.map((item) => item.pid)) + 1;
+        return {
+          ...launch,
+          ownedProcesses: [
+            ...launch.ownedProcesses.map((item) =>
+              item.pid === worker.pid
+                ? { ...item, parentPid: intermediaryPid }
+                : item
+            ),
+            {
+              ...worker,
+              pid: intermediaryPid,
+              parentPid: logicalParent.pid
+            }
+          ]
+        };
+      })
+    }
+  };
+}
+
+function withFirstLaunchProcesses(
+  result: Phase3bPackagedE2eResult,
+  ownedProcesses: readonly Phase3bOwnedProcessEvidence[]
+): Phase3bPackagedE2eResult {
+  return {
+    ...result,
+    process: {
+      launches: result.process.launches.map((launch, index) =>
+        index === 0 ? { ...launch, ownedProcesses } : launch
+      )
+    }
   };
 }

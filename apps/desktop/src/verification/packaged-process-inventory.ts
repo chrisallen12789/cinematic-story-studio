@@ -336,6 +336,19 @@ export function adoptVerifiedProcessTree({
         );
       }
       if (
+        item.name !== serviceExecutableName &&
+        verifiedParent.kind !== "app"
+      ) {
+        /*
+         * Electron descendants may only descend from the Electron side of
+         * the owned tree. The service image never launches the application.
+         */
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false
+        );
+      }
+      if (
         item.name === serviceExecutableName &&
         verifiedParent.kind !== "service" &&
         verifiedParent.kind !== "provider_worker" &&

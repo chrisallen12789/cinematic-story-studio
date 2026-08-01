@@ -9,6 +9,8 @@ export const phase3bPackagedE2eResultEnvironment =
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,199}$/u;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T/u;
+const PROCESS_CREATION_TIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/u;
 const maximumResultBytes = 1024 * 1024;
 
 export const phase3bAssertionKeys = Object.freeze([
@@ -838,6 +840,7 @@ function validateProcess(
     if (launch.launch !== index + 1 || launch.unrelatedProcessesInspected !== false || launch.unrelatedProcessesTerminated !== false) fail("The process launch proof was invalid.");
     if (array(launch.forcedPids, "forced PIDs", 0, 0).length !== 0 || array(launch.remainingPids, "remaining PIDs", 0, 0).length !== 0) fail("An owned process required force or remained alive.");
     const processes = array(launch.ownedProcesses, "owned processes", 3, 64);
+    const processRecords: Record<string, unknown>[] = [];
     const kinds = new Set<string>();
     const pids = new Set<number>();
     for (const rawProcess of processes) {
@@ -851,10 +854,14 @@ function validateProcess(
       if (
         (processValue.kind === "electron" && processValue.executableName !== "Cinematic Story Studio.exe") ||
         (processValue.kind !== "electron" && processValue.executableName !== "cinematic-story-service.exe") ||
-        !isTimestamp(processValue.creationIdentity) ||
+        !isInvariantProcessCreationTimestamp(processValue.creationIdentity) ||
         processValue.goneAfterShutdown !== true
       ) fail("An owned process identity was invalid.");
       kinds.add(processValue.kind as string);
+      processRecords.push(processValue);
+    }
+    if (!hasSingleRootedOwnedProcessTree(processRecords)) {
+      fail("The owned process evidence was not one rooted Electron tree.");
     }
     if (["electron", "service", "provider_worker"].some((kind) => !kinds.has(kind))) fail("Electron, service, and provider-worker ownership was not proven.");
     const runtimeExit = validateRuntimeExit(
@@ -865,21 +872,11 @@ function validateProcess(
     if (
       !runtimeInstanceIds.has(runtimeInstanceId) ||
       exitRuntimeInstanceIds.has(runtimeInstanceId) ||
-      !processes.some((item) => {
-        const processValue = record(item, "owned process");
-        return (
-          processValue.kind === "provider_worker" &&
-          processValue.pid === runtimeExit.workerPid &&
-          processValue.parentPid === runtimeExit.parentPid
-        );
-      }) ||
-      !processes.some((item) => {
-        const processValue = record(item, "owned process");
-        return (
-          processValue.kind === "service" &&
-          processValue.pid === runtimeExit.parentPid
-        );
-      })
+      !hasOwnedProviderWorkerLineage(
+        processRecords,
+        runtimeExit.workerPid,
+        runtimeExit.parentPid
+      )
     ) {
       fail("The provider runtime exit did not bind the exact owned worker tree.");
     }
@@ -893,6 +890,104 @@ function validateProcess(
       fail("The persisted prior-launch runtime exit did not match its sidecar proof.");
     }
   }
+}
+
+function hasOwnedProviderWorkerLineage(
+  processes: readonly Record<string, unknown>[],
+  workerPid: unknown,
+  logicalParentPid: unknown
+): boolean {
+  if (
+    !Number.isSafeInteger(workerPid) ||
+    !Number.isSafeInteger(logicalParentPid)
+  ) return false;
+  const workerPidValue = workerPid as number;
+  const logicalParentPidValue = logicalParentPid as number;
+  const byPid = new Map<number, Record<string, unknown>>(
+    processes.map((item) => [item.pid as number, item])
+  );
+  const logicalParent = byPid.get(logicalParentPidValue);
+  const worker = byPid.get(workerPidValue);
+  const providerBoundaries = processes.filter((item) => {
+    const parent = byPid.get(item.parentPid as number);
+    return item.kind === "provider_worker" && parent?.kind === "service";
+  });
+  if (
+    logicalParent?.kind !== "service" ||
+    worker?.kind !== "provider_worker" ||
+    providerBoundaries.length !== 1 ||
+    providerBoundaries[0]?.parentPid !== logicalParentPidValue
+  ) return false;
+  if ((worker.parentPid as number) === logicalParentPidValue) {
+    return processCreatedNotEarlier(worker, logicalParent);
+  }
+  const intermediary = byPid.get(worker.parentPid as number);
+  return (
+    intermediary?.kind === "provider_worker" &&
+    intermediary.parentPid === logicalParentPidValue &&
+    processCreatedNotEarlier(intermediary, logicalParent) &&
+    processCreatedNotEarlier(worker, intermediary)
+  );
+}
+
+function hasSingleRootedOwnedProcessTree(
+  processes: readonly Record<string, unknown>[]
+): boolean {
+  const byPid = new Map<number, Record<string, unknown>>(
+    processes.map((item) => [item.pid as number, item])
+  );
+  const roots = processes.filter(
+    (item) => !byPid.has(item.parentPid as number)
+  );
+  const root = roots[0];
+  if (roots.length !== 1 || root?.kind !== "electron") return false;
+  const serviceBoundaries = processes.filter((item) => {
+    const parent = byPid.get(item.parentPid as number);
+    return item.kind === "service" && parent?.kind === "electron";
+  });
+  if (serviceBoundaries.length !== 1) return false;
+  const rootPid = root.pid as number;
+  for (const processIdentity of processes) {
+    if ((processIdentity.pid as number) === rootPid) continue;
+    const visited = new Set<number>();
+    let child = processIdentity;
+    while ((child.pid as number) !== rootPid) {
+      const childPid = child.pid as number;
+      const parent = byPid.get(child.parentPid as number);
+      if (
+        visited.has(childPid) ||
+        parent === undefined ||
+        !validOwnedProcessKindTransition(parent.kind, child.kind) ||
+        !processCreatedNotEarlier(child, parent)
+      ) return false;
+      visited.add(childPid);
+      child = parent;
+    }
+  }
+  return true;
+}
+
+function validOwnedProcessKindTransition(
+  parentKind: unknown,
+  childKind: unknown
+): boolean {
+  return (
+    (parentKind === "electron" &&
+      (childKind === "electron" || childKind === "service")) ||
+    (parentKind === "service" &&
+      (childKind === "service" || childKind === "provider_worker")) ||
+    (parentKind === "provider_worker" && childKind === "provider_worker")
+  );
+}
+
+function processCreatedNotEarlier(
+  child: Record<string, unknown>,
+  parent: Record<string, unknown>
+): boolean {
+  return (
+    (child.creationIdentity as string) >=
+    (parent.creationIdentity as string)
+  );
 }
 
 function validateAllTrueRecord(raw: unknown, keys: readonly string[], label: string): void {
@@ -947,6 +1042,15 @@ function positive(raw: unknown, label: string): number {
 
 function isTimestamp(raw: unknown): raw is string {
   return typeof raw === "string" && ISO_TIME.test(raw) && Number.isFinite(Date.parse(raw));
+}
+
+function isInvariantProcessCreationTimestamp(raw: unknown): raw is string {
+  if (typeof raw !== "string" || !PROCESS_CREATION_TIME.test(raw)) return false;
+  const milliseconds = `${raw.slice(0, 23)}Z`;
+  const parsed = new Date(milliseconds);
+  return (
+    Number.isFinite(parsed.valueOf()) && parsed.toISOString() === milliseconds
+  );
 }
 
 function fail(message: string): never {

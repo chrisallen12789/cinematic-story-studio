@@ -2,6 +2,7 @@ import path from "node:path";
 
 import {
   ProcessInventoryError,
+  remainingOwnedProcesses,
   runBoundedProcess,
   type OwnedProcess,
   type ProcessCommandRunner,
@@ -15,6 +16,7 @@ const observationInputEnvironmentVariable =
   "CSS_OWNED_PROCESS_OBSERVATION_INPUT";
 const maximumObservationAttempts = 3;
 const observationRetryBackoffMs = Object.freeze([250, 750]);
+const maximumStableLedgerAttempts = 3;
 
 export interface OwnedProcessNetworkObservation {
   readonly method: "owned_pid_tcp_endpoint_inventory";
@@ -26,6 +28,15 @@ export interface OwnedProcessNetworkObservationDependencies {
   readonly run?: ProcessCommandRunner;
   readonly delay?: (milliseconds: number) => Promise<void>;
   readonly platform?: NodeJS.Platform;
+}
+
+export interface StableOwnedProcessNetworkObservation {
+  readonly ownedProcesses: readonly OwnedProcess[];
+  readonly observation: OwnedProcessNetworkObservation;
+}
+
+export interface StableOwnedProcessNetworkObservationDependencies {
+  readonly observe?: typeof observeLiveOwnedProcessNetworkEndpoints;
 }
 
 export async function queryExactProcessIdentities(
@@ -135,6 +146,7 @@ const observationFailureStages = new Set([
   "identity_compare",
   "identity_iterate",
   "identity_query",
+  "identity_requery",
   "network_command_presence",
   "network_command_type",
   "network_definition_resolve",
@@ -217,6 +229,188 @@ export async function observeOwnedProcessNetworkEndpoints(
     observedNonLoopbackEndpointCount:
       parsed.observedNonLoopbackEndpointCount
   };
+}
+
+/**
+ * Narrow an append-only ownership ledger to the exact identities that are
+ * still live before performing endpoint observation.
+ *
+ * Historical helpers that have already exited remain in the caller's ledger
+ * for shutdown proof. Their absence is established by exact PID only; a reused
+ * or changed identity still fails closed. Every live owned identity is passed
+ * to the strict observer, and the authenticated runtime anchors must remain
+ * live throughout the observation.
+ */
+export async function observeLiveOwnedProcessNetworkEndpoints(
+  ownedProcesses: readonly OwnedProcess[],
+  requiredLivePids: readonly number[],
+  dependencies: OwnedProcessNetworkObservationDependencies = {}
+): Promise<OwnedProcessNetworkObservation> {
+  const historical = validateExpectedProcesses(ownedProcesses);
+  const required = validatePids(requiredLivePids);
+  if (
+    required.some(
+      (pid) => !historical.some((processIdentity) => processIdentity.pid === pid)
+    )
+  ) {
+    throw new Error(
+      "A required runtime identity was outside the owned-process ledger."
+    );
+  }
+  const current = await queryExactProcessIdentities(
+    historical.map((item) => item.pid),
+    dependencies
+  );
+  const live = remainingOwnedProcesses(current, historical);
+  if (required.some((pid) => !live.some((item) => item.pid === pid))) {
+    throw new Error(
+      "An authenticated service or provider-worker identity was not live."
+    );
+  }
+  return observeOwnedProcessNetworkEndpoints(live, dependencies);
+}
+
+/**
+ * Require the append-only ownership ledger to remain stable across endpoint
+ * observation. A newly adopted descendant invalidates the prior observation,
+ * expands the ledger, and causes every still-live owned Python PID to be
+ * observed again. Bounded churn fails closed.
+ */
+export async function observeStableOwnedProcessNetworkEndpoints(
+  ownedProcesses: readonly OwnedProcess[],
+  requiredLivePids: readonly number[],
+  refreshOwnedProcesses: (
+    current: readonly OwnedProcess[]
+  ) => Promise<readonly OwnedProcess[]>,
+  dependencies: StableOwnedProcessNetworkObservationDependencies = {}
+): Promise<StableOwnedProcessNetworkObservation> {
+  let ledger = validateOwnedLedger(ownedProcesses);
+  const required = validatePids(requiredLivePids);
+  const pendingRequiredPids = new Set<number>();
+  const observe =
+    dependencies.observe ?? observeLiveOwnedProcessNetworkEndpoints;
+  let maximumNonLoopbackEndpointCount = 0;
+  for (
+    let attempt = 0;
+    attempt < maximumStableLedgerAttempts;
+    attempt += 1
+  ) {
+    const before = validateRefreshedOwnedLedger(
+      ledger,
+      await refreshOwnedProcesses(ledger)
+    );
+    for (const item of newlyAddedOwnedProcesses(ledger, before)) {
+      if (item.kind === "service" || item.kind === "provider_worker") {
+        pendingRequiredPids.add(item.pid);
+      }
+    }
+    const ownedPythonProcesses = before.filter(
+      (item) => item.kind === "service" || item.kind === "provider_worker"
+    );
+    const requiredForAttempt = [
+      ...new Set([...required, ...pendingRequiredPids])
+    ].sort((left, right) => left - right);
+    const observation = await observe(
+      ownedPythonProcesses,
+      requiredForAttempt
+    );
+    pendingRequiredPids.clear();
+    maximumNonLoopbackEndpointCount = Math.max(
+      maximumNonLoopbackEndpointCount,
+      observation.observedNonLoopbackEndpointCount
+    );
+    const after = validateRefreshedOwnedLedger(
+      before,
+      await refreshOwnedProcesses(before)
+    );
+    for (const item of newlyAddedOwnedProcesses(before, after)) {
+      if (item.kind === "service" || item.kind === "provider_worker") {
+        pendingRequiredPids.add(item.pid);
+      }
+    }
+    if (sameOwnedLedger(before, after)) {
+      return {
+        ownedProcesses: after,
+        observation: {
+          ...observation,
+          observedNonLoopbackEndpointCount:
+            maximumNonLoopbackEndpointCount
+        }
+      };
+    }
+    ledger = after;
+  }
+  throw new Error(
+    "The owned-process ledger did not stabilize across endpoint observation."
+  );
+}
+
+function validateOwnedLedger(
+  values: readonly OwnedProcess[]
+): readonly OwnedProcess[] {
+  if (values.length === 0 || values.length > 256) {
+    throw new Error("The owned-process ledger was out of bounds.");
+  }
+  const sorted = [...values].sort((left, right) => left.pid - right.pid);
+  if (new Set(sorted.map((item) => item.pid)).size !== sorted.length) {
+    throw new Error("The owned-process ledger contained duplicate PIDs.");
+  }
+  return sorted;
+}
+
+function validateRefreshedOwnedLedger(
+  prior: readonly OwnedProcess[],
+  refreshed: readonly OwnedProcess[]
+): readonly OwnedProcess[] {
+  const validated = validateOwnedLedger(refreshed);
+  if (
+    prior.some(
+      (expected) =>
+        !validated.some((candidate) => sameOwnedLedgerIdentity(candidate, expected))
+    )
+  ) {
+    throw new Error(
+      "The append-only owned-process ledger lost or changed an established identity."
+    );
+  }
+  return validated;
+}
+
+function sameOwnedLedger(
+  left: readonly OwnedProcess[],
+  right: readonly OwnedProcess[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((item, index) =>
+      sameOwnedLedgerIdentity(item, right[index])
+    )
+  );
+}
+
+function newlyAddedOwnedProcesses(
+  prior: readonly OwnedProcess[],
+  refreshed: readonly OwnedProcess[]
+): readonly OwnedProcess[] {
+  return refreshed.filter(
+    (candidate) =>
+      !prior.some((expected) => sameOwnedLedgerIdentity(candidate, expected))
+  );
+}
+
+function sameOwnedLedgerIdentity(
+  left: OwnedProcess,
+  right: OwnedProcess | undefined
+): boolean {
+  return (
+    right !== undefined &&
+    left.pid === right.pid &&
+    left.parentPid === right.parentPid &&
+    left.name === right.name &&
+    left.executablePath === right.executablePath &&
+    left.creationDate === right.creationDate &&
+    left.kind === right.kind
+  );
 }
 
 function validateExpectedProcesses(
@@ -320,6 +514,12 @@ function buildObservationScript(): string {
   return [
     "$ErrorActionPreference = 'Stop'",
     "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
+    "function Test-OwnedIdentity {",
+    "  param($Actual, $Expected, [int]$OwnedPid)",
+    "  if ($null -eq $Actual -or $null -eq $Actual.ExecutablePath) { return $false }",
+    "  $creation = $Actual.CreationDate.ToUniversalTime().ToString('O', [Globalization.CultureInfo]::InvariantCulture)",
+    "  return [int]$Actual.ProcessId -eq $OwnedPid -and [String]::Equals([string]$Actual.Name, [string]$Expected.name, [StringComparison]::OrdinalIgnoreCase) -and [String]::Equals([IO.Path]::GetFullPath([string]$Actual.ExecutablePath), [IO.Path]::GetFullPath([string]$Expected.executablePath), [StringComparison]::OrdinalIgnoreCase) -and [String]::Equals($creation, [string]$Expected.creationDate, [StringComparison]::Ordinal)",
+    "}",
     "$failureStage = 'bootstrap'",
     "$currentOwnedPid = 0",
     "$commandObjectType = 'Null'",
@@ -361,17 +561,28 @@ function buildObservationScript(): string {
     "  $process = @(Get-CimInstance -ClassName Win32_Process -Filter (\"ProcessId = {0}\" -f $ownedPid) -Property ProcessId,Name,ExecutablePath,CreationDate)",
     "  if ($process.Count -ne 1) { throw 'OBSERVATION_IDENTITY_UNAVAILABLE' }",
     "  $actual = $process[0]",
-    "  $actualCreation = $actual.CreationDate.ToUniversalTime().ToString('O', [Globalization.CultureInfo]::InvariantCulture)",
     "  $failureStage = 'identity_compare'",
-    "  if ([int]$actual.ProcessId -ne $ownedPid -or -not [String]::Equals([string]$actual.Name, [string]$identity.name, [StringComparison]::OrdinalIgnoreCase) -or $null -eq $actual.ExecutablePath -or -not [String]::Equals([IO.Path]::GetFullPath([string]$actual.ExecutablePath), [IO.Path]::GetFullPath([string]$identity.executablePath), [StringComparison]::OrdinalIgnoreCase) -or -not [String]::Equals($actualCreation, [string]$identity.creationDate, [StringComparison]::Ordinal)) { throw 'OBSERVATION_IDENTITY_CHANGED' }",
+    "  if (-not (Test-OwnedIdentity $actual $identity $ownedPid)) { throw 'OBSERVATION_IDENTITY_CHANGED' }",
     "  $failureStage = 'endpoint_query'",
-    "  foreach ($connection in @(& $networkCommand -OwningProcess $ownedPid -ErrorAction SilentlyContinue)) {",
+    "  $connections = @()",
+    "  try {",
+    "    $connections = @(& $networkCommand -OwningProcess $ownedPid -ErrorAction Stop)",
+    "  } catch {",
+    "    $noEndpointError = 'CmdletizationQuery_NotFound_OwningProcess,Get-NetTCPConnection'",
+    "    if (-not [String]::Equals([string]$_.FullyQualifiedErrorId, $noEndpointError, [StringComparison]::Ordinal)) { throw }",
+    "  }",
+    "  foreach ($connection in $connections) {",
     "    $state = [string]$connection.State",
     "    $localAddress = [string]$connection.LocalAddress",
     "    $remoteAddress = [string]$connection.RemoteAddress",
     "    $isExternal = if ($state -eq 'Listen') { $localAddress -notin @('127.0.0.1', '::1') } else { $remoteAddress -notin @('', '0.0.0.0', '::', '127.0.0.1', '::1') }",
     "    if ($isExternal) { $nonLoopbackCount += 1 }",
     "  }",
+    "  $failureStage = 'identity_requery'",
+    "  $processAfter = @(Get-CimInstance -ClassName Win32_Process -Filter (\"ProcessId = {0}\" -f $ownedPid) -Property ProcessId,Name,ExecutablePath,CreationDate)",
+    "  if ($processAfter.Count -ne 1) { throw 'OBSERVATION_IDENTITY_UNAVAILABLE' }",
+    "  $actualAfter = $processAfter[0]",
+    "  if (-not (Test-OwnedIdentity $actualAfter $identity $ownedPid)) { throw 'OBSERVATION_IDENTITY_CHANGED' }",
     "  $observedPids.Add($ownedPid)",
     "}",
     "} catch {",

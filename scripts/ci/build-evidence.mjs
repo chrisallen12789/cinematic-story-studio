@@ -45,6 +45,19 @@ const PHASE_3_PACKAGED_E2E_RESULT_SCHEMA_VERSION = "5.0.0";
 const PHASE_3B_PACKAGED_E2E_RESULT_SCHEMA_VERSION = "7.0.0";
 const PHASE_3B_EVIDENCE_CLASSIFICATION =
   "deterministic_fixture_lifecycle_only";
+const PHASE_3B_RUNTIME_PROFILE_ID =
+  "deterministic-pcm-wav-fixture-windows-v1-0-1";
+const PHASE_3B_RUNTIME_PROFILE_FINGERPRINT =
+  "f3e5801f836ab4061eb76e52f4a3e1b4c7ba162238e0c70857e74fff705f75d6";
+const PHASE_3B_FIXTURE_PROVIDER_ID = "deterministic-pcm-wav-fixture";
+const PHASE_3B_FIXTURE_PROVIDER_VERSION = "1.0.0";
+const PHASE_3B_REAL_PROVIDER_ID = "kokoro-local-onnx";
+const PHASE_3B_REAL_PROVIDER_VERSION = "1.0.0";
+const PHASE_3B_FIXTURE_MODEL_PACKAGE_ID =
+  "deterministic-pcm-wav-fixture-package";
+const PHASE_3B_FIXTURE_MANIFEST_VERSION = "1.0.0";
+const PHASE_3B_FIXTURE_MODEL_PACKAGE_FINGERPRINT =
+  "e0352282af67ff3675fe6067a63feca5d9d4fcaeef5a3f12b80a5e4d2c9635d6";
 const PHASE_3B_ASSERTION_KEYS = Object.freeze([
   "phase0ThroughPhase3aPrerequisitesCurrent",
   "fixtureProviderClearlyClassified",
@@ -2262,8 +2275,16 @@ async function inspectPhase3bEvidence(
       completedAt !== phase3HarnessResult.completedAt ||
       !validPhase3bFixtureClaims(value.fixtureClaims) ||
       !validPhase3bRuntime(value.runtime) ||
-      !validPhase3bProvider(value.fixtureProvider) ||
-      !validPhase3bProvider(value.realProviderAdapter) ||
+      !validPhase3bProvider(
+        value.fixtureProvider,
+        PHASE_3B_FIXTURE_PROVIDER_ID,
+        PHASE_3B_FIXTURE_PROVIDER_VERSION,
+      ) ||
+      !validPhase3bProvider(
+        value.realProviderAdapter,
+        PHASE_3B_REAL_PROVIDER_ID,
+        PHASE_3B_REAL_PROVIDER_VERSION,
+      ) ||
       !validPhase3bModel(value.model) ||
       !validPhase3bPronunciation(value.pronunciation) ||
       !validPhase3bRestart(value.restart) ||
@@ -2349,8 +2370,8 @@ function validPhase3bRuntime(value) {
       "observedNetworkRequestCount",
       "externalNetworkObservation",
     ]) &&
-    isPhase3Id(value.profileId) &&
-    isSha256(value.profileFingerprint) &&
+    value.profileId === PHASE_3B_RUNTIME_PROFILE_ID &&
+    value.profileFingerprint === PHASE_3B_RUNTIME_PROFILE_FINGERPRINT &&
     value.protocolVersion === "1.0.0" &&
     isUniquePhase3IdArray(value.runtimeInstanceIds, 1, 10) &&
     value.networkPolicy === "python_socket_api_denied" &&
@@ -2368,12 +2389,12 @@ function validPhase3bRuntime(value) {
   );
 }
 
-function validPhase3bProvider(value) {
+function validPhase3bProvider(value, expectedProviderId, expectedProviderVersion) {
   return (
     isPlainObject(value) &&
     hasExactKeys(value, ["providerId", "providerVersion"]) &&
-    isPhase3Id(value.providerId) &&
-    isPhase3Id(value.providerVersion)
+    value.providerId === expectedProviderId &&
+    value.providerVersion === expectedProviderVersion
   );
 }
 
@@ -2390,9 +2411,10 @@ function validPhase3bModel(value) {
       "verified",
       "active",
     ]) &&
-    isPhase3Id(value.modelPackageId) &&
-    isPhase3Id(value.manifestVersion) &&
-    isSha256(value.modelPackageFingerprint) &&
+    value.modelPackageId === PHASE_3B_FIXTURE_MODEL_PACKAGE_ID &&
+    value.manifestVersion === PHASE_3B_FIXTURE_MANIFEST_VERSION &&
+    value.modelPackageFingerprint ===
+      PHASE_3B_FIXTURE_MODEL_PACKAGE_FINGERPRINT &&
     isBoundedPositiveInteger(value.installationRevision) &&
     isPhase3Id(value.verificationId) &&
     isSha256(value.verificationFingerprint) &&
@@ -2999,17 +3021,7 @@ function validPhase3bProcessProof(
       !Array.isArray(runtimeInstanceIds) ||
       !runtimeInstanceIds.includes(runtimeExit.runtimeInstanceId) ||
       exitInstanceIds.has(runtimeExit.runtimeInstanceId) ||
-      !expected.some(
-        (process) =>
-          process.kind === "provider_worker" &&
-          process.pid === runtimeExit.workerPid &&
-          process.parentPid === runtimeExit.parentPid,
-      ) ||
-      !expected.some(
-        (process) =>
-          process.kind === "service" &&
-          process.pid === runtimeExit.parentPid,
-      ) ||
+      !validPhase3bProviderWorkerLineage(expected, runtimeExit) ||
       (index === 0 &&
         !jsonValuesEqual(runtimeExit, priorLaunchRuntimeExit))
     ) {
@@ -3023,6 +3035,35 @@ function validPhase3bProcessProof(
       jsonValuesEqual(item.ownedProcesses, expected)
     );
   });
+}
+
+function validPhase3bProviderWorkerLineage(processes, runtimeExit) {
+  const byPid = new Map(processes.map((process) => [process.pid, process]));
+  const logicalParent = byPid.get(runtimeExit.parentPid);
+  const worker = byPid.get(runtimeExit.workerPid);
+  const providerBoundaries = processes.filter((process) => {
+    const parent = byPid.get(process.parentPid);
+    return process.kind === "provider_worker" && parent?.kind === "service";
+  });
+  if (
+    byPid.size !== processes.length ||
+    logicalParent?.kind !== "service" ||
+    worker?.kind !== "provider_worker" ||
+    providerBoundaries.length !== 1 ||
+    providerBoundaries[0]?.parentPid !== runtimeExit.parentPid
+  ) {
+    return false;
+  }
+  if (worker.parentPid === runtimeExit.parentPid) {
+    return worker.creationIdentity >= logicalParent.creationIdentity;
+  }
+  const intermediary = byPid.get(worker.parentPid);
+  return (
+    intermediary?.kind === "provider_worker" &&
+    intermediary.parentPid === runtimeExit.parentPid &&
+    intermediary.creationIdentity >= logicalParent.creationIdentity &&
+    worker.creationIdentity >= intermediary.creationIdentity
+  );
 }
 
 function validPhase3bScreenshot(value, screenshotEvidence) {
@@ -4899,6 +4940,14 @@ function validRootedProcessTree(processes, launcherPid, rootPid) {
     return false;
   }
 
+  const serviceBoundaries = processes.filter((process) => {
+    const parent = byPid.get(process.parentPid);
+    return process.kind === "service" && parent?.kind === "app";
+  });
+  if (serviceBoundaries.length !== 1) {
+    return false;
+  }
+
   for (const process of processes) {
     if (process.pid === rootPid) {
       continue;
@@ -4910,6 +4959,7 @@ function validRootedProcessTree(processes, launcherPid, rootPid) {
       if (
         parent === undefined ||
         visited.has(parent.pid) ||
+        !validOwnedProcessKindTransition(parent.kind, child.kind) ||
         parent.creationDate > child.creationDate
       ) {
         return false;
@@ -4919,6 +4969,16 @@ function validRootedProcessTree(processes, launcherPid, rootPid) {
     }
   }
   return true;
+}
+
+function validOwnedProcessKindTransition(parentKind, childKind) {
+  return (
+    (parentKind === "app" &&
+      (childKind === "app" || childKind === "service")) ||
+    (parentKind === "service" &&
+      (childKind === "service" || childKind === "provider_worker")) ||
+    (parentKind === "provider_worker" && childKind === "provider_worker")
+  );
 }
 
 function sortedUniquePids(value) {

@@ -100,8 +100,20 @@ profile/package fingerprints, and Windows Job Object ownership before accepting
 it. Service-reported runtime evidence carries the service-computed SHA-256 of the
 resolved executable after identity validation. On
 both closes, Electron, service, and every exact owned provider-worker PID must be
-absent. Ambiguous ownership fails the gate and never authorizes enumeration or
-termination by process name.
+absent. Ambiguous ownership fails the gate; endpoint enumeration and process
+termination are never authorized by name.
+
+The packaged gate samples the owned tree every 100 ms while the UI flow runs.
+Before endpoint acceptance it stops that sampler and performs a bounded
+refresh-bind-observe-refresh reconciliation. Ledger growth invalidates the
+prior observation; each newly adopted service-image PID becomes mandatory on
+the next exact-PID query, all live owned service-image PIDs are observed again,
+and any earlier non-loopback finding is retained. Endpoint enumeration uses
+terminating errors, permits only the exact Windows no-connection result as an
+empty set, and revalidates process identity both before and after the query.
+Three unstable attempts fail closed. This is bounded process-table evidence,
+not a kernel process-event ledger or packet capture; a relevant child whose
+entire lifetime falls between samples is not individually recorded.
 
 The generated manifest adds only IDs, revisions, fingerprints, hashes, audio
 properties, cache/invalidation/QC/decision assertions, and exact process-exit

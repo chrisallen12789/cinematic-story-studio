@@ -345,7 +345,7 @@ describe("Phase 3B desktop audition validation", () => {
         planFingerprint: sha,
         provenance: provenance()
       },
-      session: sessionResponse(2)
+      session: sessionResponse(1)
     };
 
     expect(validateCreateAuditionScriptResponse(response, expected)).toBe(response);
@@ -365,7 +365,7 @@ describe("Phase 3B desktop audition validation", () => {
       validateCreateAuditionScriptResponse(
         {
           ...response,
-          session: { ...response.session, revision: 3 }
+          session: { ...response.session, revision: 2 }
         },
         expected
       )
@@ -912,8 +912,7 @@ describe("Phase 3B desktop audition validation", () => {
   it.each([
     ["approvedCastSnapshotFingerprint", "b".repeat(64)],
     ["runtimeProfileFingerprint", "c".repeat(64)],
-    ["modelVerificationFingerprint", "d".repeat(64)],
-    ["rightsEvidenceFingerprint", "e".repeat(64)]
+    ["modelVerificationFingerprint", "d".repeat(64)]
   ] as const)(
     "rejects a decision response whose snapshot has a stale %s",
     (field, staleValue) => {
@@ -930,6 +929,48 @@ describe("Phase 3B desktop audition validation", () => {
           fixture.request
         )
       ).toThrow("did not match the returned review evidence");
+    }
+  );
+
+  it.each([
+    "pronunciation_review",
+    "voice_readiness_review"
+  ] as const)(
+    "rejects a %s response whose all-role readiness rights evidence is stale",
+    (gateId) => {
+      const fixture = boundReviewDecisionResponse(gateId);
+      expect(() =>
+        validateDecideAuditionReviewResponse(
+          {
+            ...fixture.response,
+            voiceReadinessSnapshot: {
+              ...fixture.response.voiceReadinessSnapshot,
+              rightsEvidenceFingerprint: "e".repeat(64)
+            }
+          },
+          fixture.request
+        )
+      ).toThrow("did not match the returned review evidence");
+    }
+  );
+
+  it.each([
+    "narrator_audition_review",
+    "character_audition_review"
+  ] as const)(
+    "accepts a %s response when its scoped rights hash differs from the all-role snapshot",
+    (gateId) => {
+      const fixture = boundReviewDecisionResponse(gateId);
+      const response = {
+        ...fixture.response,
+        voiceReadinessSnapshot: {
+          ...fixture.response.voiceReadinessSnapshot,
+          rightsEvidenceFingerprint: "e".repeat(64)
+        }
+      };
+      expect(
+        validateDecideAuditionReviewResponse(response, fixture.request)
+      ).toBe(response);
     }
   );
 
@@ -1101,6 +1142,21 @@ describe("Phase 3B desktop audition validation", () => {
           ...response,
           installation: {
             ...response.installation,
+            provenance: {
+              ...response.installation.provenance,
+              details: { restrictedLocalUseAcknowledged: true }
+            }
+          }
+        },
+        payload
+      )
+    ).toThrow("unknown field");
+    expect(() =>
+      validateModelPackageActionResponse(
+        {
+          ...response,
+          installation: {
+            ...response.installation,
             absolutePath: "C:\\private\\models\\active"
           }
         },
@@ -1207,6 +1263,26 @@ describe("Phase 3B desktop audition validation", () => {
     };
     expect(validateModelPackagesResponse(response, { projectId: "project-1" }))
       .toBe(response);
+    expect(() =>
+      validateModelPackagesResponse(
+        {
+          ...response,
+          items: [
+            {
+              ...response.items[0],
+              manifest: {
+                ...response.items[0].manifest,
+                provenance: {
+                  ...response.items[0].manifest.provenance,
+                  conversionRepository: "https://example.invalid/model"
+                }
+              }
+            }
+          ]
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("unknown field");
     expect(() =>
       validateModelPackagesResponse(
         { ...response, pageSize: 0 },

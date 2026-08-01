@@ -1010,7 +1010,7 @@ export function validateCreateAuditionScriptResponse(
   const session = validateSession(response.session, expected.projectId);
   if (
     session.auditionSessionId !== script.auditionSessionId ||
-    session.revision !== expected.expectedSessionRevision + 1 ||
+    session.revision !== expected.expectedSessionRevision ||
     session.roleId !== script.roleId ||
     normalizationPlan.providerId !== session.providerId ||
     pronunciationPlan.providerId !== session.providerId ||
@@ -3347,13 +3347,17 @@ function validateDecisionResponseVoiceReadinessSnapshot(
   if (snapshot === null) return;
 
   const evidence = review.evidence;
+  const snapshotRightsMustMatchReview =
+    review.gateId === "pronunciation_review" ||
+    review.gateId === "voice_readiness_review";
   if (
     snapshot.approvedCastSnapshotFingerprint !==
       evidence.approvedCastSnapshotFingerprint ||
     snapshot.runtimeProfileFingerprint !== evidence.runtimeProfileFingerprint ||
     snapshot.modelVerificationFingerprint !==
       evidence.modelVerificationFingerprint ||
-    snapshot.rightsEvidenceFingerprint !== evidence.rightsRecordFingerprint
+    (snapshotRightsMustMatchReview &&
+      snapshot.rightsEvidenceFingerprint !== evidence.rightsRecordFingerprint)
   ) {
     fail("The voice readiness snapshot did not match the returned review evidence.");
   }

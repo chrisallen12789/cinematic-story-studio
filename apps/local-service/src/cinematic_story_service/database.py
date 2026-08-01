@@ -25,10 +25,11 @@ from .util import (
     utc_now,
 )
 
-_DATABASE_SCHEMA_VERSION = 4
+_DATABASE_SCHEMA_VERSION = 5
 _OLDEST_MIGRATABLE_SCHEMA_VERSION = 1
 _PHASE1_SCHEMA_VERSION = 2
 _PHASE2_SCHEMA_VERSION = 3
+_PHASE3A_SCHEMA_VERSION = 4
 _SCHEMA_LEDGER_TABLE = "schema_migrations"
 _STORAGE_LOCK_FILENAME = ".cinematic-story-studio.lock"
 
@@ -1757,6 +1758,894 @@ _V4_SCHEMA_SQL_FINGERPRINTS = frozenset(
         "5eea446d0c1aefce883468880dd647494cd3ffe5292b713b02375632a907048a",
     }
 )
+# Schema version 5 freezes the Phase 3B managed-speech and audition boundary.
+# Keep the new-table literals independent from runtime ORM reflection.
+_PHASE3B_TABLE_NAMES: tuple[str, ...] = (
+    'speech_runtime_profiles',
+    'speech_runtime_instances',
+    'model_package_manifests',
+    'model_installations',
+    'model_verifications',
+    'voice_runtime_bindings',
+    'pronunciation_dictionaries',
+    'pronunciation_entries',
+    'audition_sessions',
+    'audition_scripts',
+    'text_normalization_plans',
+    'speech_provider_requests',
+    'audition_clips',
+    'audio_artifacts',
+    'audition_cache_records',
+    'audio_quality_records',
+    'audition_review_records',
+    'audition_review_decisions',
+    'voice_readiness_snapshots',
+    'voice_readiness_reviews',
+    'voice_readiness_decisions',
+    'audition_evidence_invalidations',
+)
+
+_V5_TABLE_COLUMNS: dict[str, frozenset[str]] = {
+    **_V4_TABLE_COLUMNS,
+    'speech_runtime_profiles': frozenset(
+        {
+            'id',
+            'profile_id',
+            'profile_version',
+            'provider_id',
+            'provider_version',
+            'runtime_id',
+            'runtime_version',
+            'protocol_version',
+            'platform',
+            'architecture',
+            'network_policy',
+            'startup_timeout_ms',
+            'request_timeout_ms',
+            'idle_shutdown_ms',
+            'maximum_concurrency',
+            'output_format_json',
+            'limits_json',
+            'profile_fingerprint',
+            'active',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'speech_runtime_instances': frozenset(
+        {
+            'id',
+            'runtime_profile_id',
+            'model_installation_record_id',
+            'model_verification_id',
+            'provider_id',
+            'provider_version',
+            'runtime_id',
+            'runtime_version',
+            'model_id',
+            'model_version',
+            'model_package_fingerprint',
+            'runtime_profile_fingerprint',
+            'protocol_version',
+            'handshake_fingerprint',
+            'worker_pid',
+            'parent_pid',
+            'executable_identity',
+            'executable_sha256',
+            'creation_identity',
+            'state',
+            'health_status',
+            'exit_code',
+            'warnings_json',
+            'provenance_json',
+            'started_at',
+            'ready_at',
+            'last_health_at',
+            'last_used_at',
+            'stopped_at',
+        }
+    ),
+    'model_package_manifests': frozenset(
+        {
+            'id',
+            'package_id',
+            'manifest_version',
+            'provider_id',
+            'provider_version',
+            'model_id',
+            'model_version',
+            'runtime_id',
+            'runtime_version',
+            'platform',
+            'architecture',
+            'source_classification',
+            'official_source_reference',
+            'license_identifier',
+            'commercial_use_classification',
+            'attribution_requirements_json',
+            'file_inventory_json',
+            'file_count',
+            'total_expanded_size',
+            'package_archive_sha256',
+            'required_runtime_dependencies_json',
+            'compatibility_constraints_json',
+            'revocation_state',
+            'manifest_fingerprint',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'model_installations': frozenset(
+        {
+            'id',
+            'installation_id',
+            'manifest_id',
+            'revision',
+            'operation',
+            'state',
+            'storage_key',
+            'installed_byte_count',
+            'package_fingerprint',
+            'job_id',
+            'supersedes_installation_record_id',
+            'actor_id',
+            'reason',
+            'idempotency_key',
+            'warnings_json',
+            'provenance_json',
+            'created_at',
+            'completed_at',
+        }
+    ),
+    'model_verifications': frozenset(
+        {
+            'id',
+            'installation_record_id',
+            'installation_id',
+            'manifest_id',
+            'revision',
+            'outcome',
+            'manifest_fingerprint',
+            'package_fingerprint',
+            'verified_file_count',
+            'verified_byte_count',
+            'verifier_id',
+            'verifier_version',
+            'findings_json',
+            'verification_fingerprint',
+            'supersedes_verification_id',
+            'provenance_json',
+            'started_at',
+            'finished_at',
+        }
+    ),
+    'voice_runtime_bindings': frozenset(
+        {
+            'id',
+            'binding_kind',
+            'voice_profile_record_id',
+            'voice_profile_id',
+            'voice_profile_version',
+            'voice_profile_fingerprint',
+            'source_provider_descriptor_id',
+            'source_provider_id',
+            'source_provider_version',
+            'source_provider_fingerprint',
+            'source_model_descriptor_id',
+            'source_model_id',
+            'source_model_version',
+            'source_model_fingerprint',
+            'provider_id',
+            'provider_version',
+            'provider_voice_id',
+            'model_id',
+            'model_version',
+            'model_manifest_id',
+            'model_package_id',
+            'model_package_fingerprint',
+            'runtime_profile_record_id',
+            'runtime_profile_id',
+            'runtime_profile_fingerprint',
+            'binding_fingerprint',
+            'active',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'pronunciation_dictionaries': frozenset(
+        {
+            'id',
+            'project_id',
+            'dictionary_id',
+            'revision',
+            'default_language',
+            'default_locale',
+            'entry_count',
+            'active_entry_ids_json',
+            'dictionary_fingerprint',
+            'producer_id',
+            'producer_version',
+            'supersedes_dictionary_record_id',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'pronunciation_entries': frozenset(
+        {
+            'id',
+            'project_id',
+            'dictionary_record_id',
+            'dictionary_id',
+            'dictionary_revision',
+            'entry_id',
+            'revision',
+            'written_form',
+            'normalized_lookup_form',
+            'language',
+            'locale',
+            'scope_type',
+            'scope_target_id',
+            'provider_neutral_value',
+            'ipa_value',
+            'provider_specific_json',
+            'case_sensitive',
+            'whole_word',
+            'priority',
+            'verification_state',
+            'entry_fingerprint',
+            'actor_id',
+            'reason',
+            'supersedes_entry_record_id',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'audition_sessions': frozenset(
+        {
+            'id',
+            'project_id',
+            'revision',
+            'source_document_id',
+            'source_revision',
+            'extraction_id',
+            'extraction_revision',
+            'extracted_text_sha256',
+            'analysis_run_id',
+            'analysis_snapshot_id',
+            'analysis_snapshot_fingerprint',
+            'analysis_correction_set_fingerprint',
+            'casting_run_id',
+            'cast_snapshot_id',
+            'cast_snapshot_revision',
+            'cast_snapshot_fingerprint',
+            'phase2_gate_decision_ids_json',
+            'phase3a_gate_decision_ids_json',
+            'role_id',
+            'assignment_id',
+            'assignment_revision',
+            'voice_profile_record_id',
+            'voice_profile_id',
+            'voice_profile_version',
+            'voice_runtime_binding_id',
+            'voice_runtime_binding_fingerprint',
+            'provider_voice_id',
+            'provider_id',
+            'provider_version',
+            'model_id',
+            'model_version',
+            'catalog_revision_id',
+            'catalog_fingerprint',
+            'rights_record_id',
+            'rights_revision',
+            'pronunciation_dictionary_record_id',
+            'pronunciation_dictionary_revision',
+            'pronunciation_dictionary_fingerprint',
+            'runtime_profile_id',
+            'runtime_profile_fingerprint',
+            'model_manifest_id',
+            'model_installation_record_id',
+            'model_verification_id',
+            'model_package_fingerprint',
+            'producer_id',
+            'producer_version',
+            'request_fingerprint',
+            'state',
+            'idempotency_key',
+            'supersedes_session_id',
+            'warnings_json',
+            'provenance_json',
+            'created_at',
+            'published_at',
+        }
+    ),
+    'audition_scripts': frozenset(
+        {
+            'id',
+            'project_id',
+            'session_id',
+            'script_id',
+            'revision',
+            'script_type',
+            'role_id',
+            'source_document_id',
+            'extraction_id',
+            'source_start_offset',
+            'source_end_offset',
+            'source_analysis_entity_id',
+            'source_analysis_entity_collection',
+            'source_analysis_entity_effective_revision',
+            'source_analysis_entity_fingerprint',
+            'exact_text_sha256',
+            'text_storage_key',
+            'synthetic_text_id',
+            'text_codepoint_count',
+            'script_fingerprint',
+            'supersedes_script_record_id',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'text_normalization_plans': frozenset(
+        {
+            'id',
+            'project_id',
+            'session_id',
+            'script_id',
+            'revision',
+            'normalization_profile_id',
+            'normalization_profile_version',
+            'provider_id',
+            'provider_version',
+            'original_text_sha256',
+            'normalized_text_sha256',
+            'transformations_json',
+            'pronunciation_dictionary_record_id',
+            'pronunciation_dictionary_revision',
+            'pronunciation_dictionary_fingerprint',
+            'pronunciation_entry_ids_json',
+            'compiled_pronunciation_json',
+            'pronunciation_plan_fingerprint',
+            'unsupported_characters_json',
+            'warnings_json',
+            'human_approval_required',
+            'plan_fingerprint',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'speech_provider_requests': frozenset(
+        {
+            'id',
+            'project_id',
+            'job_id',
+            'attempt',
+            'session_id',
+            'script_id',
+            'normalization_plan_id',
+            'runtime_profile_id',
+            'runtime_instance_id',
+            'model_installation_record_id',
+            'model_verification_id',
+            'voice_profile_record_id',
+            'assignment_id',
+            'assignment_revision',
+            'provider_id',
+            'provider_version',
+            'provider_operation_id',
+            'model_id',
+            'model_version',
+            'model_package_fingerprint',
+            'runtime_profile_fingerprint',
+            'voice_profile_id',
+            'voice_profile_version',
+            'voice_runtime_binding_id',
+            'voice_runtime_binding_fingerprint',
+            'provider_voice_id',
+            'normalized_text_sha256',
+            'pronunciation_plan_fingerprint',
+            'provider_control_fingerprint',
+            'cache_key',
+            'request_fingerprint',
+            'idempotency_key',
+            'outcome',
+            'retryable',
+            'output_artifact_sha256',
+            'audio_properties_json',
+            'warnings_json',
+            'provenance_json',
+            'started_at',
+            'finished_at',
+        }
+    ),
+    'audition_clips': frozenset(
+        {
+            'id',
+            'project_id',
+            'session_id',
+            'script_id',
+            'provider_request_id',
+            'artifact_id',
+            'cache_record_id',
+            'role_id',
+            'assignment_id',
+            'assignment_revision',
+            'voice_profile_record_id',
+            'revision',
+            'request_fingerprint',
+            'cache_key',
+            'cache_hit',
+            'clip_fingerprint',
+            'producer_id',
+            'producer_version',
+            'supersedes_clip_id',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'audio_artifacts': frozenset(
+        {
+            'id',
+            'project_id',
+            'provider_request_id',
+            'storage_key',
+            'content_sha256',
+            'byte_count',
+            'container_format',
+            'codec',
+            'sample_format',
+            'sample_rate_hz',
+            'channel_count',
+            'sample_width_bytes',
+            'frame_count',
+            'duration_ms',
+            'artifact_fingerprint',
+            'availability',
+            'provenance_json',
+            'created_at',
+            'purged_at',
+        }
+    ),
+    'audition_cache_records': frozenset(
+        {
+            'id',
+            'project_id',
+            'cache_key',
+            'voice_runtime_binding_id',
+            'voice_runtime_binding_fingerprint',
+            'provider_voice_id',
+            'artifact_id',
+            'provider_request_id',
+            'session_id',
+            'script_id',
+            'expected_artifact_sha256',
+            'expected_byte_count',
+            'expected_audio_properties_json',
+            'verification_fingerprint',
+            'state',
+            'hit_count',
+            'created_at',
+            'last_verified_at',
+            'last_hit_at',
+            'purged_at',
+        }
+    ),
+    'audio_quality_records': frozenset(
+        {
+            'id',
+            'project_id',
+            'clip_id',
+            'artifact_id',
+            'provider_request_id',
+            'revision',
+            'policy_id',
+            'policy_version',
+            'policy_fingerprint',
+            'outcome',
+            'peak_millidbfs',
+            'rms_millidbfs',
+            'silence_ratio_ppm',
+            'clipped_sample_count',
+            'warning_count',
+            'blocking_finding_count',
+            'findings_json',
+            'quality_fingerprint',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'audition_review_records': frozenset(
+        {
+            'id',
+            'project_id',
+            'gate_id',
+            'scope_key',
+            'subject_type',
+            'revision',
+            'session_id',
+            'clip_id',
+            'role_id',
+            'pronunciation_dictionary_record_id',
+            'eligible',
+            'evidence_json',
+            'evidence_fingerprint',
+            'required_decision_ids_json',
+            'blockers_json',
+            'warnings_json',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'audition_review_decisions': frozenset(
+        {
+            'id',
+            'project_id',
+            'review_record_id',
+            'gate_id',
+            'scope_key',
+            'revision',
+            'decision',
+            'evidence_fingerprint',
+            'actor_classification',
+            'actor_id',
+            'warning_acknowledgements_json',
+            'rationale',
+            'supersedes_decision_id',
+            'idempotency_key',
+            'provenance_json',
+            'decided_at',
+            'created_at',
+        }
+    ),
+    'voice_readiness_snapshots': frozenset(
+        {
+            'id',
+            'project_id',
+            'revision',
+            'cast_snapshot_id',
+            'model_verification_id',
+            'pronunciation_dictionary_record_id',
+            'narrator_review_decision_id',
+            'character_review_decision_id',
+            'pronunciation_review_decision_id',
+            'phase3a_gate_decision_ids_json',
+            'required_role_count',
+            'approved_role_count',
+            'blocking_finding_count',
+            'evidence_json',
+            'snapshot_fingerprint',
+            'blockers_json',
+            'warnings_json',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'voice_readiness_reviews': frozenset(
+        {
+            'id',
+            'project_id',
+            'snapshot_id',
+            'gate_id',
+            'revision',
+            'eligible',
+            'evidence_fingerprint',
+            'required_decision_ids_json',
+            'blockers_json',
+            'warnings_json',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+    'voice_readiness_decisions': frozenset(
+        {
+            'id',
+            'project_id',
+            'snapshot_id',
+            'review_id',
+            'gate_id',
+            'revision',
+            'decision',
+            'evidence_fingerprint',
+            'actor_classification',
+            'actor_id',
+            'warning_acknowledgements_json',
+            'rationale',
+            'supersedes_decision_id',
+            'idempotency_key',
+            'provenance_json',
+            'decided_at',
+            'created_at',
+        }
+    ),
+    'audition_evidence_invalidations': frozenset(
+        {
+            'id',
+            'project_id',
+            'clip_id',
+            'session_id',
+            'role_id',
+            'source_kind',
+            'source_record_id',
+            'previous_fingerprint',
+            'current_fingerprint',
+            'reason_code',
+            'affected_review_ids_json',
+            'invalidation_fingerprint',
+            'provenance_json',
+            'created_at',
+        }
+    ),
+}
+
+_V5_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    **_V4_PRIMARY_KEYS,
+    'speech_runtime_profiles': ('id',),
+    'speech_runtime_instances': ('id',),
+    'model_package_manifests': ('id',),
+    'model_installations': ('id',),
+    'model_verifications': ('id',),
+    'voice_runtime_bindings': ('id',),
+    'pronunciation_dictionaries': ('id',),
+    'pronunciation_entries': ('id',),
+    'audition_sessions': ('id',),
+    'audition_scripts': ('id',),
+    'text_normalization_plans': ('id',),
+    'speech_provider_requests': ('id',),
+    'audition_clips': ('id',),
+    'audio_artifacts': ('id',),
+    'audition_cache_records': ('id',),
+    'audio_quality_records': ('id',),
+    'audition_review_records': ('id',),
+    'audition_review_decisions': ('id',),
+    'voice_readiness_snapshots': ('id',),
+    'voice_readiness_reviews': ('id',),
+    'voice_readiness_decisions': ('id',),
+    'audition_evidence_invalidations': ('id',),
+}
+
+_V5_NAMED_INDEXES: dict[str, frozenset[str]] = {
+    **_V4_NAMED_INDEXES,
+    'speech_runtime_profiles': frozenset(
+        {
+            'ix_speech_runtime_profile_provider_active',
+        }
+    ),
+    'speech_runtime_instances': frozenset(
+        {
+            'ix_speech_runtime_instances_model_installation_record_id',
+            'ix_speech_runtime_instances_model_verification_id',
+            'ix_speech_runtime_instances_runtime_profile_id',
+            'ix_speech_runtime_process_identity',
+            'ix_speech_runtime_profile_state_started',
+        }
+    ),
+    'model_package_manifests': frozenset(
+        {
+            'ix_model_package_provider_model_version',
+        }
+    ),
+    'model_installations': frozenset(
+        {
+            'ix_model_installation_identity_revision',
+            'ix_model_installation_manifest_state',
+            'ix_model_installations_job_id',
+            'ix_model_installations_manifest_id',
+        }
+    ),
+    'model_verifications': frozenset(
+        {
+            'ix_model_verification_installation_revision',
+            'ix_model_verifications_installation_record_id',
+            'ix_model_verifications_manifest_id',
+        }
+    ),
+    'voice_runtime_bindings': frozenset(
+        {
+            'ix_voice_runtime_binding_profile_active',
+            'ix_voice_runtime_binding_target',
+            'ix_voice_runtime_bindings_model_manifest_id',
+            'ix_voice_runtime_bindings_runtime_profile_record_id',
+            'ix_voice_runtime_bindings_source_model_descriptor_id',
+            'ix_voice_runtime_bindings_source_provider_descriptor_id',
+            'ix_voice_runtime_bindings_voice_profile_record_id',
+        }
+    ),
+    'pronunciation_dictionaries': frozenset(
+        {
+            'ix_pronunciation_dictionaries_project_id',
+            'ix_pronunciation_dictionary_identity_revision',
+            'ix_pronunciation_dictionary_project_created',
+        }
+    ),
+    'pronunciation_entries': frozenset(
+        {
+            'ix_pronunciation_entries_dictionary_record_id',
+            'ix_pronunciation_entries_project_id',
+            'ix_pronunciation_entry_dictionary_order',
+            'ix_pronunciation_entry_project_lookup_scope',
+        }
+    ),
+    'audition_sessions': frozenset(
+        {
+            'ix_audition_session_assignment_evidence',
+            'ix_audition_session_project_created',
+            'ix_audition_session_project_role_created',
+            'ix_audition_sessions_analysis_run_id',
+            'ix_audition_sessions_analysis_snapshot_id',
+            'ix_audition_sessions_assignment_id',
+            'ix_audition_sessions_cast_snapshot_id',
+            'ix_audition_sessions_casting_run_id',
+            'ix_audition_sessions_catalog_revision_id',
+            'ix_audition_sessions_extraction_id',
+            'ix_audition_sessions_model_installation_record_id',
+            'ix_audition_sessions_model_manifest_id',
+            'ix_audition_sessions_model_verification_id',
+            'ix_audition_sessions_project_id',
+            'ix_audition_sessions_pronunciation_dictionary_record_id',
+            'ix_audition_sessions_rights_record_id',
+            'ix_audition_sessions_role_id',
+            'ix_audition_sessions_runtime_profile_id',
+            'ix_audition_sessions_source_document_id',
+            'ix_audition_sessions_voice_profile_record_id',
+            'ix_audition_sessions_voice_runtime_binding_id',
+        }
+    ),
+    'audition_scripts': frozenset(
+        {
+            'ix_audition_script_session_created',
+            'ix_audition_scripts_extraction_id',
+            'ix_audition_scripts_project_id',
+            'ix_audition_scripts_role_id',
+            'ix_audition_scripts_session_id',
+            'ix_audition_scripts_source_document_id',
+            'ix_audition_scripts_source_analysis_entity_id',
+        }
+    ),
+    'text_normalization_plans': frozenset(
+        {
+            'ix_text_normalization_plans_project_id',
+            'ix_text_normalization_plans_pronunciation_dictionary_record_id',
+            'ix_text_normalization_plans_script_id',
+            'ix_text_normalization_plans_session_id',
+            'ix_text_normalization_session_script_revision',
+        }
+    ),
+    'speech_provider_requests': frozenset(
+        {
+            'ix_speech_provider_request_cache_key',
+            'ix_speech_provider_request_project_started',
+            'ix_speech_provider_requests_assignment_id',
+            'ix_speech_provider_requests_job_id',
+            'ix_speech_provider_requests_model_installation_record_id',
+            'ix_speech_provider_requests_model_verification_id',
+            'ix_speech_provider_requests_normalization_plan_id',
+            'ix_speech_provider_requests_project_id',
+            'ix_speech_provider_requests_runtime_instance_id',
+            'ix_speech_provider_requests_runtime_profile_id',
+            'ix_speech_provider_requests_script_id',
+            'ix_speech_provider_requests_session_id',
+            'ix_speech_provider_requests_voice_profile_record_id',
+            'ix_speech_provider_requests_voice_runtime_binding_id',
+        }
+    ),
+    'audition_clips': frozenset(
+        {
+            'ix_audition_clip_project_created',
+            'ix_audition_clip_project_role_created',
+            'ix_audition_clip_session_script_revision',
+            'ix_audition_clips_artifact_id',
+            'ix_audition_clips_assignment_id',
+            'ix_audition_clips_cache_record_id',
+            'ix_audition_clips_project_id',
+            'ix_audition_clips_provider_request_id',
+            'ix_audition_clips_role_id',
+            'ix_audition_clips_script_id',
+            'ix_audition_clips_session_id',
+            'ix_audition_clips_voice_profile_record_id',
+        }
+    ),
+    'audio_artifacts': frozenset(
+        {
+            'ix_audio_artifact_project_content',
+            'ix_audio_artifact_project_created',
+            'ix_audio_artifacts_project_id',
+            'ix_audio_artifacts_provider_request_id',
+        }
+    ),
+    'audition_cache_records': frozenset(
+        {
+            'ix_audition_cache_project_created',
+            'ix_audition_cache_project_state_verified',
+            'ix_audition_cache_records_artifact_id',
+            'ix_audition_cache_records_project_id',
+            'ix_audition_cache_records_provider_request_id',
+            'ix_audition_cache_records_script_id',
+            'ix_audition_cache_records_session_id',
+            'ix_audition_cache_records_voice_runtime_binding_id',
+        }
+    ),
+    'audio_quality_records': frozenset(
+        {
+            'ix_audio_quality_clip_revision',
+            'ix_audio_quality_project_created',
+            'ix_audio_quality_records_artifact_id',
+            'ix_audio_quality_records_clip_id',
+            'ix_audio_quality_records_project_id',
+            'ix_audio_quality_records_provider_request_id',
+        }
+    ),
+    'audition_review_records': frozenset(
+        {
+            'ix_audition_review_project_created',
+            'ix_audition_review_project_gate_scope_revision',
+            'ix_audition_review_records_clip_id',
+            'ix_audition_review_records_project_id',
+            'ix_audition_review_records_pronunciation_dictionary_record_id',
+            'ix_audition_review_records_role_id',
+            'ix_audition_review_records_session_id',
+        }
+    ),
+    'audition_review_decisions': frozenset(
+        {
+            'ix_audition_review_decision_project_gate_scope',
+            'ix_audition_review_decisions_project_id',
+            'ix_audition_review_decisions_review_record_id',
+        }
+    ),
+    'voice_readiness_snapshots': frozenset(
+        {
+            'ix_voice_readiness_snapshot_project_created',
+            'ix_voice_readiness_snapshots_cast_snapshot_id',
+            'ix_voice_readiness_snapshots_character_review_decision_id',
+            'ix_voice_readiness_snapshots_model_verification_id',
+            'ix_voice_readiness_snapshots_narrator_review_decision_id',
+            'ix_voice_readiness_snapshots_project_id',
+            'ix_voice_readiness_snapshots_pronunciation_dictionary_record_id',
+            'ix_voice_readiness_snapshots_pronunciation_review_decision_id',
+        }
+    ),
+    'voice_readiness_reviews': frozenset(
+        {
+            'ix_voice_readiness_review_project_revision',
+            'ix_voice_readiness_reviews_project_id',
+            'ix_voice_readiness_reviews_snapshot_id',
+        }
+    ),
+    'voice_readiness_decisions': frozenset(
+        {
+            'ix_voice_readiness_decision_project_revision',
+            'ix_voice_readiness_decisions_project_id',
+            'ix_voice_readiness_decisions_review_id',
+            'ix_voice_readiness_decisions_snapshot_id',
+        }
+    ),
+    'audition_evidence_invalidations': frozenset(
+        {
+            'ix_audition_evidence_invalidation_project_created',
+            'ix_audition_evidence_invalidation_role',
+            'ix_audition_evidence_invalidation_source',
+            'ix_audition_evidence_invalidations_clip_id',
+            'ix_audition_evidence_invalidations_project_id',
+            'ix_audition_evidence_invalidations_role_id',
+            'ix_audition_evidence_invalidations_session_id',
+        }
+    ),
+}
+
+# Fresh/v4 creation and the supported older migration chain have two exact
+# pre-v5 column/default orderings; both freeze the same v5 nullability contract.
+_V5_TABLE_XINFO_FINGERPRINTS = frozenset(
+    {
+        "53c3d00b4068e81238ce310e24c18a65a743c1081551d4de46fe4c190f9e92a7",
+        "3217d17fe82e7aeb3486cbd5e8c1347cd92d1cd153a354738af2eeb869ef5d6c",
+    }
+)
+_V5_INDEX_FINGERPRINT = "6bc0dc622ae8c2d408cd6058f864a779af5f04244f48b13d7533144d4ab60754"
+_V5_SCHEMA_SQL_FINGERPRINTS = frozenset(
+    {
+        "0d7b10d66021ec05de61abe653f38c7b5e647b5dd26f0615f335cb70ab2dbc58",
+        "873280a52933dfc3804e6a3203aefaa01616c44229acc6b41e3c0a923fb462cc",
+    }
+)
 
 
 def _signature_digest(value: object) -> str:
@@ -2065,6 +2954,7 @@ class Database:
                     _OLDEST_MIGRATABLE_SCHEMA_VERSION,
                     _PHASE1_SCHEMA_VERSION,
                     _PHASE2_SCHEMA_VERSION,
+                    _PHASE3A_SCHEMA_VERSION,
                     _DATABASE_SCHEMA_VERSION,
                 }:
                     raise _unsupported_schema_error()
@@ -2082,8 +2972,10 @@ class Database:
                     self._validate_v2_schema_signature(connection)
                 elif current_version == _PHASE2_SCHEMA_VERSION:
                     self._validate_v3_schema_signature(connection)
-                elif current_version == _DATABASE_SCHEMA_VERSION:
+                elif current_version == _PHASE3A_SCHEMA_VERSION:
                     self._validate_v4_schema_signature(connection)
+                elif current_version == _DATABASE_SCHEMA_VERSION:
+                    self._validate_v5_schema_signature(connection)
 
                 # End SQLAlchemy's read-only autobegin before backup/journal changes.
                 connection.rollback()
@@ -2093,6 +2985,8 @@ class Database:
                     self._create_verified_v2_backup()
                 elif current_version == _PHASE2_SCHEMA_VERSION:
                     self._create_verified_v3_backup()
+                elif current_version == _PHASE3A_SCHEMA_VERSION:
+                    self._create_verified_v4_backup()
 
                 connection.exec_driver_sql("PRAGMA journal_mode=WAL")
                 connection.commit()
@@ -2111,7 +3005,7 @@ class Database:
                         connection.exec_driver_sql(
                             "INSERT INTO schema_migrations "
                             "(version, applied_at, service_version) "
-                            "VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)",
+                            "VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)",
                             (
                                 1,
                                 utc_now(),
@@ -2122,6 +3016,9 @@ class Database:
                                 _PHASE2_SCHEMA_VERSION,
                                 utc_now(),
                                 SERVICE_VERSION,
+                                _PHASE3A_SCHEMA_VERSION,
+                                utc_now(),
+                                SERVICE_VERSION,
                                 _DATABASE_SCHEMA_VERSION,
                                 utc_now(),
                                 SERVICE_VERSION,
@@ -2130,7 +3027,7 @@ class Database:
                         connection.exec_driver_sql(
                             f"PRAGMA user_version = {_DATABASE_SCHEMA_VERSION}"
                         )
-                        self._validate_v4_schema_signature(connection)
+                        self._validate_v5_schema_signature(connection)
                     except Exception:
                         connection.rollback()
                         raise
@@ -2142,12 +3039,20 @@ class Database:
                     self._migrate_v2_to_v3(connection)
                     self._create_verified_v3_backup()
                     self._migrate_v3_to_v4(connection)
+                    self._create_verified_v4_backup()
+                    self._migrate_v4_to_v5(connection)
                 elif current_version == _PHASE1_SCHEMA_VERSION:
                     self._migrate_v2_to_v3(connection)
                     self._create_verified_v3_backup()
                     self._migrate_v3_to_v4(connection)
+                    self._create_verified_v4_backup()
+                    self._migrate_v4_to_v5(connection)
                 elif current_version == _PHASE2_SCHEMA_VERSION:
                     self._migrate_v3_to_v4(connection)
+                    self._create_verified_v4_backup()
+                    self._migrate_v4_to_v5(connection)
+                elif current_version == _PHASE3A_SCHEMA_VERSION:
+                    self._migrate_v4_to_v5(connection)
         except ServiceError:
             raise
         except Exception as exc:
@@ -2382,6 +3287,45 @@ class Database:
         except Exception as exc:
             raise _unsupported_schema_error() from exc
 
+    @staticmethod
+    def _validate_v5_schema_signature(
+        connection: Connection,
+    ) -> None:
+        """Require the exact frozen Phase 3B schema for every same-version open."""
+
+        try:
+            v5_tables = frozenset(_V5_TABLE_COLUMNS)
+            _validate_sqlite_object_allow_list(
+                connection,
+                expected_tables=v5_tables,
+                expected_named_indexes=_V5_NAMED_INDEXES,
+            )
+            if (
+                _schema_sql_fingerprint(connection) not in _V5_SCHEMA_SQL_FINGERPRINTS
+                or _table_xinfo_fingerprint(connection, v5_tables)
+                not in _V5_TABLE_XINFO_FINGERPRINTS
+                or _index_fingerprint(connection, v5_tables) != _V5_INDEX_FINGERPRINT
+            ):
+                raise _unsupported_schema_error()
+
+            schema = inspect(connection)
+            for table_name, expected_columns in _V5_TABLE_COLUMNS.items():
+                actual_columns = frozenset(
+                    str(column["name"]) for column in schema.get_columns(table_name)
+                )
+                if actual_columns != expected_columns:
+                    raise _unsupported_schema_error()
+                primary_key = schema.get_pk_constraint(table_name)
+                actual_primary_key = tuple(
+                    str(column) for column in primary_key["constrained_columns"]
+                )
+                if actual_primary_key != _V5_PRIMARY_KEYS[table_name]:
+                    raise _unsupported_schema_error()
+        except ServiceError:
+            raise
+        except Exception as exc:
+            raise _unsupported_schema_error() from exc
+
     @property
     def v1_backup_path(self) -> Path:
         """Stable recovery location retained after a successful v1-to-v2 migration."""
@@ -2399,6 +3343,12 @@ class Database:
         """Stable verified recovery location retained before the v3-to-v4 migration."""
 
         return self.path.with_name(f"{self.path.stem}.v3-backup{self.path.suffix}")
+
+    @property
+    def v4_backup_path(self) -> Path:
+        """Stable verified recovery location retained before the v4-to-v5 migration."""
+
+        return self.path.with_name(f"{self.path.stem}.v4-backup{self.path.suffix}")
 
     @staticmethod
     def _logical_database_digest(connection: sqlite3.Connection) -> str:
@@ -2586,6 +3536,85 @@ class Database:
             except OSError:
                 pass
             if self._verified_v3_digest(temporary_path) != source_digest:
+                raise _backup_failed_error()
+            os.replace(temporary_path, backup_path)
+        except ServiceError:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        except Exception as exc:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise _backup_failed_error() from exc
+
+    @classmethod
+    def _verified_v4_digest(cls, path: Path) -> str:
+        """Validate exact issued v4 structure and return its canonical logical digest."""
+
+        validation_engine = create_engine(f"sqlite:///{path.resolve(strict=False).as_posix()}")
+        try:
+            with validation_engine.connect() as validation_connection:
+                cls._validate_schema_ledger(
+                    validation_connection,
+                    True,
+                    current_version=_PHASE3A_SCHEMA_VERSION,
+                )
+                cls._validate_v4_schema_signature(validation_connection)
+            with closing(sqlite3.connect(path)) as connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise _backup_failed_error()
+                if (
+                    int(connection.execute("PRAGMA user_version").fetchone()[0])
+                    != _PHASE3A_SCHEMA_VERSION
+                ):
+                    raise _backup_failed_error()
+                if list(connection.execute("PRAGMA foreign_key_check")):
+                    raise _backup_failed_error()
+                versions = [
+                    int(row[0])
+                    for row in connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    )
+                ]
+                if versions != [
+                    1,
+                    _PHASE1_SCHEMA_VERSION,
+                    _PHASE2_SCHEMA_VERSION,
+                    _PHASE3A_SCHEMA_VERSION,
+                ]:
+                    raise _backup_failed_error()
+                return cls._logical_database_digest(connection)
+        except Exception as exc:
+            raise _backup_failed_error() from exc
+        finally:
+            validation_engine.dispose()
+
+    def _create_verified_v4_backup(self) -> None:
+        backup_path = self.v4_backup_path
+        source_digest = self._verified_v4_digest(self.path)
+        if backup_path.exists():
+            if self._verified_v4_digest(backup_path) != source_digest:
+                raise _backup_failed_error()
+            return
+
+        temporary_path = backup_path.with_name(f"{backup_path.name}.tmp-{os.getpid()}-{new_id()}")
+        try:
+            with (
+                closing(sqlite3.connect(self.path)) as source,
+                closing(sqlite3.connect(temporary_path)) as destination,
+            ):
+                source.backup(destination)
+                destination.commit()
+            try:
+                os.chmod(temporary_path, 0o600)
+            except OSError:
+                pass
+            if self._verified_v4_digest(temporary_path) != source_digest:
                 raise _backup_failed_error()
             os.replace(temporary_path, backup_path)
         except ServiceError:
@@ -2810,6 +3839,39 @@ class Database:
             connection.exec_driver_sql(
                 "INSERT INTO schema_migrations "
                 "(version, applied_at, service_version) VALUES (?, ?, ?)",
+                (_PHASE3A_SCHEMA_VERSION, utc_now(), SERVICE_VERSION),
+            )
+            connection.exec_driver_sql(f"PRAGMA user_version = {_PHASE3A_SCHEMA_VERSION}")
+            violations = list(connection.exec_driver_sql("PRAGMA foreign_key_check"))
+            if violations:
+                raise ServiceError(
+                    503,
+                    "DATABASE_INTEGRITY_FAILED",
+                    "The project database needs recovery before it can be changed.",
+                )
+            self._validate_v4_schema_signature(connection)
+        except Exception:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
+
+    def _migrate_v4_to_v5(self, connection: Connection) -> None:
+        """Atomically add empty governed local-speech and audition storage."""
+
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            # The direct-open path validates v4 before backup. Historical upgrade chains
+            # validate v4 at the end of the preceding committed migration and again here,
+            # immediately before the v5 mutation boundary.
+            self._validate_v4_schema_signature(connection)
+            Base.metadata.create_all(
+                connection,
+                tables=[Base.metadata.tables[table_name] for table_name in _PHASE3B_TABLE_NAMES],
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO schema_migrations "
+                "(version, applied_at, service_version) VALUES (?, ?, ?)",
                 (_DATABASE_SCHEMA_VERSION, utc_now(), SERVICE_VERSION),
             )
             connection.exec_driver_sql(f"PRAGMA user_version = {_DATABASE_SCHEMA_VERSION}")
@@ -2820,7 +3882,7 @@ class Database:
                     "DATABASE_INTEGRITY_FAILED",
                     "The project database needs recovery before it can be changed.",
                 )
-            self._validate_v4_schema_signature(connection)
+            self._validate_v5_schema_signature(connection)
         except Exception:
             connection.rollback()
             raise

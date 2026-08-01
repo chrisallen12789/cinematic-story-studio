@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,6 +13,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from .analysis import analyze_story, validate_analysis_entity_limit
+from .audition_jobs import AUDITION_CHECKPOINT_SCHEMA_VERSION, AUDITION_PIPELINE_STAGES
 from .casting import (
     CASTING_JOB_STAGES,
     CASTING_PRODUCER_ID,
@@ -43,6 +45,7 @@ from .models import (
     JobEventRow,
     JobRow,
     ParserExecutionRow,
+    ProjectRow,
     SourceDocumentRow,
 )
 from .parser_process import DocumentExtractionRunner, SpawnedDocumentExtractionRunner
@@ -77,8 +80,12 @@ _EXTRACTION_PRODUCER_VERSION = f"document-ingest@{INGEST_CONTRACT_VERSION}"
 _EXTRACTION_TARGET_TYPE = "document_extraction"
 _ANALYSIS_RUN_TARGET_TYPE = "analysis_run"
 _CASTING_RUN_TARGET_TYPE = "casting_run"
+_AUDITION_SESSION_TARGET_TYPE = "audition_session"
 _WHOLE_BOOK_CHECKPOINT_SCHEMA_VERSION = 2
 _CASTING_CHECKPOINT_SCHEMA_VERSION = 1
+_AUDITION_PRODUCER_VERSION = "local-speech-audition-orchestrator@1.0.0"
+_MAX_AUDITION_CHECKPOINT_BYTES = 64 * 1024
+_MAX_AUDITION_JOB_PAYLOAD_BYTES = 16 * 1024
 # Keep a bounded scheduling/unwind margin above SQLite's five-second lock wait.
 _WORKER_STOP_TIMEOUT_SECONDS = 15.0
 
@@ -209,6 +216,55 @@ class JobRepository:
         self.casting = casting
         self.instance_id = instance_id
         self.parser_deadline_seconds = parser_deadline_seconds
+        self._audition_terminal_handler: Callable[[Session, JobRow, str], None] | None = None
+        self._audition_publication_handler: (
+            Callable[
+                [Session, JobRow, Mapping[str, Any]],
+                Callable[[], None] | None,
+            ]
+            | None
+        ) = None
+        self._audition_before_publication: Callable[[str], bool] | None = None
+        self._audition_after_publication_claim: Callable[[], bool] | None = None
+
+    def set_audition_terminal_handler(
+        self,
+        handler: Callable[[Session, JobRow, str], None],
+    ) -> None:
+        """Attach the Phase 3B state sink without coupling the legacy queue to its repository."""
+
+        self._audition_terminal_handler = handler
+
+    def set_audition_publication_handler(
+        self,
+        handler: Callable[
+            [Session, JobRow, Mapping[str, Any]],
+            Callable[[], None] | None,
+        ],
+    ) -> None:
+        """Attach the transactional Phase 3B publication sink."""
+
+        self._audition_publication_handler = handler
+
+    def set_audition_publication_boundaries(
+        self,
+        *,
+        before_publication: Callable[[str], bool],
+        after_write_claim: Callable[[], bool],
+    ) -> None:
+        """Attach worker-owned deterministic publication race boundaries."""
+
+        self._audition_before_publication = before_publication
+        self._audition_after_publication_claim = after_write_claim
+
+    def _mark_audition_state(
+        self,
+        session: Session,
+        job: JobRow,
+        state: str,
+    ) -> None:
+        if job.type == "generate_audition" and self._audition_terminal_handler is not None:
+            self._audition_terminal_handler(session, job, state)
 
     @staticmethod
     def _begin_immediate(session: Session) -> None:
@@ -224,6 +280,8 @@ class JobRepository:
             return ANALYSIS_PRODUCER_VERSION
         if job_type == "analyze_casting":
             return CASTING_PRODUCER_ID
+        if job_type == "generate_audition":
+            return _AUDITION_PRODUCER_VERSION
         return ANALYZER_VERSION
 
     @staticmethod
@@ -232,6 +290,8 @@ class JobRepository:
             return "whole_book_analysis", _WHOLE_BOOK_CHECKPOINT_SCHEMA_VERSION
         if job_type == "analyze_casting":
             return "voice_casting", _CASTING_CHECKPOINT_SCHEMA_VERSION
+        if job_type == "generate_audition":
+            return "speech_audition", AUDITION_CHECKPOINT_SCHEMA_VERSION
         return "analysis_projection", CHECKPOINT_SCHEMA_VERSION
 
     @staticmethod
@@ -397,6 +457,7 @@ class JobRepository:
                         job=job,
                         state="interrupted",
                     )
+                self._mark_audition_state(session, job, "interrupted")
                 self._append_event(
                     session,
                     job,
@@ -584,6 +645,208 @@ class JobRepository:
                 409,
                 "JOB_ALREADY_ACTIVE",
                 "Analysis is already active for this story revision.",
+            ) from exc
+
+    def create_audition_job(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        input_revision: int,
+        input_fingerprint: str,
+        payload: Mapping[str, object],
+        idempotency_key: str,
+        transaction_session: Session | None = None,
+    ) -> dict[str, Any]:
+        """Queue one hash-only audition request bound to an immutable session revision.
+
+        A caller that must publish additional claim-time evidence can supply its active
+        transaction so the queued job does not become visible before that evidence.
+        """
+
+        if input_revision < 1 or len(input_fingerprint) != 64 or any(
+            character not in "0123456789abcdef" for character in input_fingerprint
+        ):
+            raise ServiceError(
+                422,
+                "AUDITION_JOB_INPUT_INVALID",
+                "The audition job input evidence is invalid.",
+            )
+        if not session_id or len(session_id) > 36:
+            raise ServiceError(
+                422,
+                "AUDITION_JOB_TARGET_INVALID",
+                "The audition job target is invalid.",
+            )
+        if not idempotency_key or len(idempotency_key) > 160 or any(
+            ord(character) < 33 for character in idempotency_key
+        ):
+            raise ServiceError(
+                400,
+                "INVALID_IDEMPOTENCY_KEY",
+                "The idempotency key is invalid.",
+            )
+        payload_value = dict(payload)
+        allowed_payload_keys = {
+            "requestFingerprint",
+            "schemaVersion",
+            "scriptId",
+            "sessionId",
+        }
+        if set(payload_value) != allowed_payload_keys or payload_value.get(
+            "schemaVersion"
+        ) != 1:
+            raise ServiceError(
+                422,
+                "AUDITION_JOB_PAYLOAD_INVALID",
+                "The audition job payload is invalid.",
+            )
+        for key in ("requestFingerprint", "scriptId", "sessionId"):
+            value = payload_value.get(key)
+            if not isinstance(value, str) or not value or len(value) > 160:
+                raise ServiceError(
+                    422,
+                    "AUDITION_JOB_PAYLOAD_INVALID",
+                    "The audition job payload is invalid.",
+                )
+        if payload_value["sessionId"] != session_id:
+            raise ServiceError(
+                422,
+                "AUDITION_JOB_PAYLOAD_INVALID",
+                "The audition job payload is invalid.",
+            )
+        request_fingerprint_value = payload_value["requestFingerprint"]
+        if not isinstance(request_fingerprint_value, str) or (
+            len(request_fingerprint_value) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in request_fingerprint_value
+            )
+        ):
+            raise ServiceError(
+                422,
+                "AUDITION_JOB_PAYLOAD_INVALID",
+                "The audition job payload is invalid.",
+            )
+        payload_json = canonical_json(payload_value)
+        if len(payload_json.encode("utf-8")) > _MAX_AUDITION_JOB_PAYLOAD_BYTES:
+            raise ServiceError(
+                413,
+                "AUDITION_JOB_PAYLOAD_TOO_LARGE",
+                "The audition job payload exceeds its fixed bound.",
+            )
+        request_hash = request_fingerprint(
+            {
+                "inputFingerprint": input_fingerprint,
+                "inputRevision": input_revision,
+                "payload": payload_value,
+                "projectId": project_id,
+                "sessionId": session_id,
+                "type": "generate_audition",
+            }
+        )
+        scope = f"create_audition_job:{project_id}"
+        session_context = (
+            nullcontext(transaction_session)
+            if transaction_session is not None
+            else self.database.session()
+        )
+        try:
+            with session_context as session:
+                if transaction_session is None:
+                    self._begin_immediate(session)
+                if session.get(ProjectRow, project_id) is None:
+                    raise not_found("project")
+                existing = session.get(
+                    IdempotencyRow,
+                    {"scope": scope, "key": idempotency_key},
+                )
+                if existing is not None:
+                    if existing.request_hash != request_hash:
+                        raise ServiceError(
+                            409,
+                            "IDEMPOTENCY_CONFLICT",
+                            "That idempotency key was already used for another audition.",
+                        )
+                    job = session.get(JobRow, existing.resource_id)
+                    if job is None:
+                        raise ServiceError(
+                            500,
+                            "IDEMPOTENCY_RECORD_INVALID",
+                            "The saved audition job is unavailable.",
+                        )
+                    return job_dict(job)
+                active = self._active_conflict(
+                    session,
+                    project_id=project_id,
+                    job_type="generate_audition",
+                    input_revision=input_revision,
+                    input_fingerprint=input_fingerprint,
+                    target_type=_AUDITION_SESSION_TARGET_TYPE,
+                    target_id=session_id,
+                )
+                if active is not None:
+                    raise ServiceError(
+                        409,
+                        "JOB_ALREADY_ACTIVE",
+                        "An audition is already active for this session revision.",
+                        details={"jobId": active.id},
+                    )
+                now = utc_now()
+                job = JobRow(
+                    id=new_id(),
+                    project_id=project_id,
+                    type="generate_audition",
+                    state="queued",
+                    input_revision=input_revision,
+                    input_fingerprint=input_fingerprint,
+                    target_type=_AUDITION_SESSION_TARGET_TYPE,
+                    target_id=session_id,
+                    payload_json=payload_json,
+                    current_attempt=1,
+                    stage="queued",
+                    progress=0,
+                    checkpoint_available=False,
+                    cancellation_requested=False,
+                    resume_requested=False,
+                    warnings_json="[]",
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(job)
+                session.flush()
+                self._acquire_active_key(session, job)
+                session.add(
+                    JobAttemptRow(
+                        job_id=job.id,
+                        number=1,
+                        producer_version=_AUDITION_PRODUCER_VERSION,
+                    )
+                )
+                session.add(
+                    IdempotencyRow(
+                        scope=scope,
+                        key=idempotency_key,
+                        request_hash=request_hash,
+                        resource_id=job.id,
+                        created_at=now,
+                    )
+                )
+                self._append_event(
+                    session,
+                    job,
+                    event_type="created",
+                    state="queued",
+                    stage="queued",
+                    progress=0,
+                )
+                session.flush()
+                return job_dict(job)
+        except IntegrityError as exc:
+            raise ServiceError(
+                409,
+                "JOB_ALREADY_ACTIVE",
+                "An audition is already active for this session revision.",
             ) from exc
 
     def create_whole_book_run(
@@ -1329,6 +1592,7 @@ class JobRepository:
                     job=job,
                     state="running",
                 )
+            self._mark_audition_state(session, job, "running")
             self._append_event(
                 session,
                 job,
@@ -1412,11 +1676,12 @@ class JobRepository:
             job = session.get(JobRow, job_id)
             if job is None:
                 return False
-            checkpoint_limit = (
-                MAX_CASTING_CHECKPOINT_BYTES
-                if job.type == "analyze_casting"
-                else MAX_WHOLE_BOOK_CHECKPOINT_BYTES
-            )
+            if job.type == "analyze_casting":
+                checkpoint_limit = MAX_CASTING_CHECKPOINT_BYTES
+            elif job.type == "generate_audition":
+                checkpoint_limit = _MAX_AUDITION_CHECKPOINT_BYTES
+            else:
+                checkpoint_limit = MAX_WHOLE_BOOK_CHECKPOINT_BYTES
             if len(payload_json.encode()) > checkpoint_limit:
                 raise ServiceError(
                     422,
@@ -1493,6 +1758,155 @@ class JobRepository:
                 )
             )
             return True
+
+    def publish_audition_and_finish(
+        self,
+        job_id: str,
+        *,
+        result: Mapping[str, Any],
+        after_write_claim: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Atomically claim, publish, checkpoint, and complete one audition attempt."""
+
+        if self._audition_publication_handler is None:
+            raise ServiceError(
+                500,
+                "AUDITION_PUBLICATION_UNAVAILABLE",
+                "The audition publication handler is unavailable.",
+            )
+        if (
+            self._audition_before_publication is not None
+            and not self._audition_before_publication(job_id)
+        ):
+            return False
+        publication_claim_boundary = (
+            after_write_claim
+            if after_write_claim is not None
+            else self._audition_after_publication_claim
+        )
+        cleanup: Callable[[], None] | None = None
+        try:
+            with self.database.session() as session:
+                write_claim = session.execute(
+                    update(JobRow)
+                    .where(
+                        JobRow.id == job_id,
+                        JobRow.type == "generate_audition",
+                        JobRow.state == "running",
+                        JobRow.cancellation_requested.is_(False),
+                    )
+                    .values(updated_at=JobRow.updated_at)
+                    .returning(JobRow.id)
+                    .execution_options(synchronize_session=False)
+                )
+                if write_claim.scalar_one_or_none() is None:
+                    job = session.get(JobRow, job_id, populate_existing=True)
+                    if job is not None and (
+                        job.state == "cancel_requested" or job.cancellation_requested
+                    ):
+                        self._finish_cancelled(session, job.id)
+                    return False
+                if (
+                    publication_claim_boundary is not None
+                    and not publication_claim_boundary()
+                ):
+                    return False
+                job = session.get(JobRow, job_id, populate_existing=True)
+                if job is None:
+                    return False
+                cleanup = self._audition_publication_handler(session, job, result)
+
+                checkpoint_value = result.get("checkpoint")
+                if not isinstance(checkpoint_value, dict):
+                    raise ServiceError(
+                        500,
+                        "AUDITION_CHECKPOINT_INVALID",
+                        "The final audition checkpoint is invalid.",
+                    )
+                checkpoint_json = canonical_json(checkpoint_value)
+                if len(checkpoint_json.encode()) > _MAX_AUDITION_CHECKPOINT_BYTES:
+                    raise ServiceError(
+                        422,
+                        "CHECKPOINT_LIMIT_EXCEEDED",
+                        "The job checkpoint exceeded its durable size limit.",
+                    )
+                checkpoint_sha256 = sha256_text(checkpoint_json)
+                existing_checkpoint = session.get(
+                    JobCheckpointRow,
+                    {"job_id": job.id, "attempt": job.current_attempt},
+                )
+                if existing_checkpoint is not None:
+                    if existing_checkpoint.payload_sha256 != checkpoint_sha256:
+                        raise ServiceError(
+                            409,
+                            "CHECKPOINT_CONFLICT",
+                            "A different checkpoint already exists for this attempt.",
+                        )
+                else:
+                    checkpoint_sequence = self._next_sequence(session, job.id)
+                    session.add(
+                        JobCheckpointRow(
+                            job_id=job.id,
+                            attempt=job.current_attempt,
+                            sequence=checkpoint_sequence,
+                            checkpoint_type="speech_audition",
+                            schema_version=AUDITION_CHECKPOINT_SCHEMA_VERSION,
+                            input_revision=job.input_revision,
+                            input_fingerprint=job.input_fingerprint,
+                            producer_version=_AUDITION_PRODUCER_VERSION,
+                            payload_json=checkpoint_json,
+                            payload_sha256=checkpoint_sha256,
+                            created_at=utc_now(),
+                        )
+                    )
+                    session.add(
+                        JobEventRow(
+                            job_id=job.id,
+                            sequence=checkpoint_sequence,
+                            attempt=job.current_attempt,
+                            type="checkpoint",
+                            state="running",
+                            stage="release_or_idle_runtime",
+                            progress=max(job.progress, 990_000),
+                            created_at=utc_now(),
+                        )
+                    )
+                now = utc_now()
+                job.state = "succeeded"
+                job.stage = "completed"
+                job.progress = _PROGRESS_SCALE
+                job.cancellation_requested = False
+                job.resume_requested = False
+                job.checkpoint_available = True
+                job.updated_at = now
+                job.terminal_at = now
+                attempt = session.get(
+                    JobAttemptRow,
+                    {"job_id": job.id, "number": job.current_attempt},
+                )
+                if attempt is not None:
+                    attempt.ended_at = now
+                    attempt.outcome = "succeeded"
+                self._mark_audition_state(session, job, "succeeded")
+                self._append_event(
+                    session,
+                    job,
+                    event_type="completed",
+                    state="succeeded",
+                    stage="completed",
+                    progress=_PROGRESS_SCALE,
+                    completed_units=len(AUDITION_PIPELINE_STAGES),
+                    total_units=len(AUDITION_PIPELINE_STAGES),
+                )
+                self._release_active_key(session, job)
+            return True
+        except Exception:
+            if cleanup is not None:
+                try:
+                    cleanup()
+                except OSError:
+                    pass
+            raise
 
     def load_resume_checkpoint(self, job_id: str) -> dict[str, Any] | None:
         with self.database.session() as session:
@@ -1691,6 +2105,7 @@ class JobRepository:
             if attempt is not None:
                 attempt.ended_at = now
                 attempt.outcome = "succeeded"
+            self._mark_audition_state(session, job, "succeeded")
             self._append_event(
                 session,
                 job,
@@ -2117,6 +2532,7 @@ class JobRepository:
                     job=job,
                     state="failed",
                 )
+            self._mark_audition_state(session, job, "failed")
             self._append_event(
                 session,
                 job,
@@ -2186,6 +2602,7 @@ class JobRepository:
                     job=job,
                     state="interrupted",
                 )
+            self._mark_audition_state(session, job, "interrupted")
             self._append_event(
                 session,
                 job,
@@ -2248,6 +2665,7 @@ class JobRepository:
                 job=job,
                 state="cancelled",
             )
+        self._mark_audition_state(session, job, "cancelled")
         self._append_event(
             session,
             job,
@@ -2335,6 +2753,7 @@ class JobWorker:
         jobs: JobRepository,
         projects: ProjectRepository,
         parser_runner: DocumentExtractionRunner | None = None,
+        audition_runner: Callable[[dict[str, Any], JobRepository], None] | None = None,
     ) -> None:
         self.settings = settings
         self.jobs = jobs
@@ -2342,6 +2761,7 @@ class JobWorker:
         self.parser_runner = parser_runner or SpawnedDocumentExtractionRunner(
             poll_seconds=settings.worker_poll_seconds
         )
+        self.audition_runner = audition_runner
         self.controls = WorkerControls(
             claim_gate=threading.Event(),
             execution_gate=threading.Event(),
@@ -2358,6 +2778,13 @@ class JobWorker:
         self.controls.after_agent_checkpoint_gate.set()
         self.controls.before_publication_gate.set()
         self.controls.publication_claim_gate.set()
+        self.jobs.set_audition_publication_boundaries(
+            before_publication=lambda job_id: self._wait_at_boundary(
+                self.controls.before_publication_gate,
+                job_id,
+            ),
+            after_write_claim=self._wait_after_publication_claim,
+        )
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -2448,6 +2875,44 @@ class JobWorker:
                     self._run_whole_book_analysis(claimed)
                 elif claimed["type"] == "analyze_casting":
                     self._run_casting(claimed)
+                elif claimed["type"] == "generate_audition":
+                    if not self._wait_at_boundary(
+                        self.controls.execution_gate,
+                        claimed["jobId"],
+                    ):
+                        continue
+                    if self.audition_runner is None:
+                        self.jobs.finish_failed(
+                            claimed["jobId"],
+                            code="AUDITION_RUNNER_UNAVAILABLE",
+                            message="Audition generation is unavailable.",
+                            retryable=False,
+                        )
+                        continue
+                    if self._consume_injected_failure():
+                        self.jobs.finish_failed(
+                            claimed["jobId"],
+                            code="AUDITION_FAILED",
+                            message="Audition generation could not be completed safely.",
+                            retryable=True,
+                        )
+                        continue
+                    try:
+                        self.audition_runner(claimed, self.jobs)
+                    except ServiceError as exc:
+                        self.jobs.finish_failed(
+                            claimed["jobId"],
+                            code=exc.code,
+                            message="Audition generation could not be completed safely.",
+                            retryable=exc.retryable,
+                        )
+                    except Exception:
+                        self.jobs.finish_failed(
+                            claimed["jobId"],
+                            code="AUDITION_FAILED",
+                            message="Audition generation could not be completed safely.",
+                            retryable=True,
+                        )
                 else:
                     self.jobs.finish_failed(
                         claimed["jobId"],

@@ -6859,6 +6859,126 @@ class StoryIntelligenceRepository:
             )
             return items, next_cursor, total
 
+    def effective_structure_context_for_span(
+        self,
+        session: Session,
+        *,
+        run: AnalysisRunRow,
+        story: ImportedStoryRow,
+        start_offset: int,
+        end_offset: int,
+    ) -> tuple[str | None, str | None]:
+        """Resolve one exact source span against the current corrected structure graph."""
+
+        if (
+            run.story_id != story.id
+            or run.project_id != story.project_id
+            or start_offset < 0
+            or end_offset <= start_offset
+            or end_offset > len(story.exact_text)
+        ):
+            return None, None
+        graph = self._effective_structure_graph(
+            session,
+            run=run,
+            story=story,
+        )
+
+        def candidates(collection: str) -> list[dict[str, Any]]:
+            target_ids = set(
+                graph.chapter_target_ids
+                if collection == "chapters"
+                else graph.scene_target_ids
+            )
+            active_ids = (
+                graph.active_chapter_ids
+                if collection == "chapters"
+                else graph.active_scene_ids
+            )
+            projected = [
+                item
+                for values in (
+                    graph.chapter_items_by_source.values()
+                    if collection == "chapters"
+                    else graph.scene_items_by_source.values()
+                )
+                for item in values
+            ]
+            statement = select(AnalysisEntityRow).where(
+                AnalysisEntityRow.run_id == run.id,
+                AnalysisEntityRow.collection == collection,
+                AnalysisEntityRow.start_offset.is_not(None),
+                AnalysisEntityRow.end_offset.is_not(None),
+                AnalysisEntityRow.start_offset <= start_offset,
+                AnalysisEntityRow.end_offset >= end_offset,
+            )
+            for offset in range(0, len(target_ids), 400):
+                statement = statement.where(
+                    ~AnalysisEntityRow.id.in_(
+                        sorted(target_ids)[offset : offset + 400]
+                    )
+                )
+            rows = list(
+                session.scalars(
+                    statement.order_by(
+                        AnalysisEntityRow.end_offset - AnalysisEntityRow.start_offset,
+                        AnalysisEntityRow.ordinal,
+                        AnalysisEntityRow.id,
+                    ).limit(MAX_EFFECTIVE_PROJECTION_TARGETS)
+                )
+            )
+            normal = [
+                self._entity_dict(
+                    session,
+                    run=run,
+                    entity=row,
+                    story=story,
+                )
+                for row in rows
+                if not active_ids or row.id in active_ids
+            ]
+            return [*projected, *normal]
+
+        def containing(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+            matches: list[tuple[int, int, str, dict[str, Any]]] = []
+            for item in items:
+                span = item.get("sourceSpan")
+                if not isinstance(span, dict):
+                    continue
+                start = span.get("startOffset")
+                end = span.get("endOffset")
+                entity_id = item.get("entityId")
+                ordinal = item.get("ordinal")
+                if (
+                    isinstance(start, int)
+                    and isinstance(end, int)
+                    and isinstance(entity_id, str)
+                    and isinstance(ordinal, int)
+                    and start <= start_offset
+                    and end >= end_offset
+                ):
+                    matches.append((end - start, ordinal, entity_id, item))
+            if not matches:
+                return None
+            selected = min(matches, key=lambda value: value[:3])
+            return selected[3]
+
+        chapter = containing(candidates("chapters"))
+        scene = containing(candidates("scenes"))
+        scene_id = (
+            str(scene["entityId"])
+            if scene is not None and isinstance(scene.get("entityId"), str)
+            else None
+        )
+        chapter_id = (
+            str(scene["chapterId"])
+            if scene is not None and isinstance(scene.get("chapterId"), str)
+            else str(chapter["entityId"])
+            if chapter is not None and isinstance(chapter.get("entityId"), str)
+            else None
+        )
+        return chapter_id, scene_id
+
     def _correction_dict(
         self,
         session: Session,

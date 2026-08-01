@@ -2,41 +2,65 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
-from typing import Annotated, Any, BinaryIO, cast
+from typing import Annotated, Any, BinaryIO, Literal, cast
 
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from pydantic import ValidationError as PydanticValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.exceptions import HTTPException as StarletteHttpException
 from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.types import Message, Receive
 
+from .audition_repository import (
+    DEFAULT_AUDITION_PAGE_SIZE,
+    MAX_AUDITION_PAGE_SIZE,
+    AuditionRepository,
+)
+from .auditions import MAX_AUDITION_AUDIO_BYTES
 from .casting import DEFAULT_CASTING_PAGE_SIZE, MAX_CASTING_PAGE_SIZE
 from .casting_repository import CastingRepository
 from .config import ServiceSettings
 from .database import Database
 from .errors import ServiceError
 from .jobs import JobRepository, JobWorker
+from .model_packages import (
+    KOKORO_LOCAL_ONNX_MANIFEST,
+    MAX_MANAGED_MODEL_DIRECTORY_ENTRIES,
+    ModelPackageError,
+)
 from .projects import ProjectRepository, StoryImportService
 from .providers import ProviderRegistry
 from .schemas import (
     AppendAnalysisCorrectionRequest,
     AppendCastingCorrectionRequest,
+    ClearAuditionCacheRequest,
     CorrectDialogueSpeakerRequest,
     CreateAnalysisRunRequest,
+    CreateAuditionScriptRequest,
+    CreateAuditionSessionRequest,
     CreateCastingRunRequest,
     CreateCustomProductionRoleRequest,
     CreateJobRequest,
     CreateProjectRequest,
+    CreatePronunciationEntryRequest,
     DecideAnalysisReviewRequest,
+    DecideAuditionReviewRequest,
     DecideCastingReviewRequest,
     DecideImportReviewRequest,
+    DecidePronunciationEntryRequest,
+    GenerateAuditionRequest,
+    InstallModelPackageRequest,
+    ListAuditionReviewDecisionsQuery,
+    ModelInstallationOperationRequest,
+    PreviewNormalizationRequest,
 )
 from .story_intelligence import StoryIntelligenceRepository
 from .tools import FfmpegCapabilityChecker
@@ -45,6 +69,7 @@ from .util import (
     SERVICE_VERSION,
     ensure_private_directory,
     new_id,
+    resolve_beneath,
     utc_now,
 )
 from .whole_book_analysis import (
@@ -55,7 +80,13 @@ from .whole_book_analysis import (
 _LOGGER = logging.getLogger("cinematic_story_service")
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "testserver"}
 _MULTIPART_OVERHEAD_ALLOWANCE = 64 * 1024
-_PHASE_2_MUTATION_BODY_LIMIT = 64 * 1024
+_MUTATION_BODY_LIMIT = 64 * 1024
+_LOCAL_ACTOR_ID = "local_user"
+_MAX_MODEL_PACKAGE_UPLOAD_BYTES = KOKORO_LOCAL_ONNX_MANIFEST.total_size_bytes + (1024 * 1024)
+_MODEL_STAGING_ARCHIVE_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.zip$"
+)
+_REPARSE_POINT_ATTRIBUTE = 0x400
 _PHASE_2_MUTATION_PATH = re.compile(
     r"^/api/v1/projects/[^/]+/analysis-runs"
     r"(?:$|/[^/]+/(?:corrections|reviews/[^/]+/decisions)$)"
@@ -63,6 +94,16 @@ _PHASE_2_MUTATION_PATH = re.compile(
 _PHASE_3_MUTATION_PATH = re.compile(
     r"^/api/v1/projects/[^/]+/casting-runs"
     r"(?:$|/[^/]+/(?:roles|corrections|reviews/[^/]+/decisions)$)"
+)
+_PHASE_3B_MUTATION_PATHS = (
+    re.compile(r"^/api/v1/projects/[^/]+/speech/model-packages/[^/]+/actions$"),
+    re.compile(r"^/api/v1/projects/[^/]+/pronunciations/entries(?:/[^/]+/decisions)?$"),
+    re.compile(
+        r"^/api/v1/projects/[^/]+/audition-sessions"
+        r"(?:$|/[^/]+/(?:scripts|normalization-preview|generate)$)"
+    ),
+    re.compile(r"^/api/v1/projects/[^/]+/audition-reviews/[^/]+/[^/]+/decisions$"),
+    re.compile(r"^/api/v1/projects/[^/]+/audition-cache/clear$"),
 )
 
 
@@ -121,6 +162,8 @@ async def _bounded_import_form(
     request: Request,
     max_import_bytes: int,
     spool_directory: Path,
+    *,
+    max_fields: int = 2,
 ) -> Any:
     body_limit = max_import_bytes + _MULTIPART_OVERHEAD_ALLOWANCE
     raw_content_length = request.headers.get("content-length")
@@ -151,7 +194,7 @@ async def _bounded_import_form(
                 request.stream(),
                 spool_directory=spool_directory,
                 max_files=1,
-                max_fields=2,
+                max_fields=max_fields,
                 max_part_size=min(max_import_bytes + 1024, 101 * 1024 * 1024),
             )
             return await parser.parse()
@@ -163,7 +206,103 @@ async def _bounded_import_form(
         request._receive = original_receive
 
 
-async def _bounded_phase_2_json_call(
+def _stage_private_model_archive(
+    upload: StarletteUploadFile,
+    staging_directory: Path,
+) -> Path:
+    if Path(upload.filename or "").suffix.casefold() != ".zip":
+        raise ServiceError(
+            422,
+            "MODEL_PACKAGE_ARCHIVE_REQUIRED",
+            "The selected local model package must be a ZIP archive.",
+        )
+    staged = resolve_beneath(staging_directory, f"{new_id()}.zip")
+    written = 0
+    try:
+        upload.file.seek(0)
+        with staged.open("xb") as destination:
+            while True:
+                chunk = upload.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > _MAX_MODEL_PACKAGE_UPLOAD_BYTES:
+                    raise ServiceError(
+                        413,
+                        "MODEL_PACKAGE_TOO_LARGE",
+                        "The local model package exceeded its fixed upload bound.",
+                    )
+                destination.write(chunk)
+            destination.flush()
+            os.fsync(destination.fileno())
+        if written == 0:
+            raise ServiceError(
+                422,
+                "MODEL_PACKAGE_ARCHIVE_EMPTY",
+                "The selected local model package was empty.",
+            )
+        try:
+            os.chmod(staged, 0o600)
+        except OSError:
+            pass
+        return staged
+    except Exception:
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _reconcile_model_staging(staging_directory: Path) -> int:
+    root = staging_directory.resolve(strict=True)
+    entries: list[Path] = []
+    try:
+        with os.scandir(root) as scanner:
+            for entry in scanner:
+                if len(entries) >= MAX_MANAGED_MODEL_DIRECTORY_ENTRIES:
+                    raise ModelPackageError(
+                        "MODEL_PACKAGE_ENTRY_LIMIT",
+                        "The model staging directory exceeded its fixed entry bound.",
+                    )
+                candidate = Path(entry.path)
+                entries.append(candidate)
+    except ModelPackageError:
+        raise
+    except OSError as exc:
+        raise ModelPackageError(
+            "MODEL_PACKAGE_IO_ERROR",
+            "The model staging directory could not be inspected.",
+        ) from exc
+
+    removable: list[Path] = []
+    for candidate in entries:
+        if _MODEL_STAGING_ARCHIVE_PATTERN.fullmatch(candidate.name) is not None:
+            try:
+                metadata = candidate.lstat()
+            except OSError:
+                continue
+            if (
+                not candidate.is_file()
+                or candidate.is_symlink()
+                or int(getattr(metadata, "st_file_attributes", 0)) & _REPARSE_POINT_ATTRIBUTE
+            ):
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError:
+                continue
+            if resolved.parent == root:
+                removable.append(resolved)
+
+    removed = 0
+    for resolved in removable:
+        try:
+            resolved.unlink()
+        except OSError:
+            continue
+        removed += 1
+    return removed
+
+
+async def _bounded_mutation_json_call(
     request: Request,
     call_next: Any,
 ) -> Any:
@@ -174,6 +313,7 @@ async def _bounded_phase_2_json_call(
         and (
             _PHASE_2_MUTATION_PATH.fullmatch(request.url.path) is not None
             or _PHASE_3_MUTATION_PATH.fullmatch(request.url.path) is not None
+            or any(pattern.fullmatch(request.url.path) for pattern in _PHASE_3B_MUTATION_PATHS)
         )
     )
     if not applies:
@@ -200,26 +340,26 @@ async def _bounded_phase_2_json_call(
                     "The request content length is invalid.",
                 ),
             )
-        if content_length > _PHASE_2_MUTATION_BODY_LIMIT:
+        if content_length > _MUTATION_BODY_LIMIT:
             return _error_response(
                 request,
                 ServiceError(
                     413,
                     "REQUEST_BODY_TOO_LARGE",
-                    "The Phase 2 mutation body exceeds 64 KiB.",
+                    "The mutation body exceeds 64 KiB.",
                 ),
             )
     chunks: list[bytes] = []
     received = 0
     async for chunk in request.stream():
         received += len(chunk)
-        if received > _PHASE_2_MUTATION_BODY_LIMIT:
+        if received > _MUTATION_BODY_LIMIT:
             return _error_response(
                 request,
                 ServiceError(
                     413,
                     "REQUEST_BODY_TOO_LARGE",
-                    "The Phase 2 mutation body exceeds 64 KiB.",
+                    "The mutation body exceeds 64 KiB.",
                 ),
             )
         chunks.append(chunk)
@@ -254,6 +394,13 @@ def create_app(settings: ServiceSettings) -> FastAPI:
     settings = settings.validated()
     database = Database(settings.database_path)
     multipart_spool_directory = ensure_private_directory(settings.data_dir / "multipart-staging")
+    model_staging_directory = ensure_private_directory(settings.data_dir / "model-staging")
+    reconciled_model_staging = _reconcile_model_staging(model_staging_directory)
+    if reconciled_model_staging:
+        _LOGGER.info(
+            "reconciled_model_staging count=%d",
+            reconciled_model_staging,
+        )
     projects = ProjectRepository(database)
     story_intelligence = StoryIntelligenceRepository(database, projects)
     casting = CastingRepository(database, projects, story_intelligence)
@@ -272,9 +419,21 @@ def create_app(settings: ServiceSettings) -> FastAPI:
         story_intelligence=story_intelligence,
         casting=casting,
     )
+    auditions = AuditionRepository(
+        database,
+        settings,
+        story_intelligence=story_intelligence,
+    )
+    jobs.set_audition_terminal_handler(auditions.mark_job_terminal)
+    jobs.set_audition_publication_handler(auditions.publish_generation_result)
     jobs.reconcile_interrupted()
     jobs.reconcile_orphaned_extractions()
-    worker = JobWorker(settings, jobs, projects)
+    worker = JobWorker(
+        settings,
+        jobs,
+        projects,
+        audition_runner=auditions.run_generation_job,
+    )
     providers = ProviderRegistry(settings)
     ffmpeg = FfmpegCapabilityChecker(settings)
 
@@ -285,8 +444,39 @@ def create_app(settings: ServiceSettings) -> FastAPI:
         try:
             yield
         finally:
+            auditions.begin_runtime_shutdown()
+            worker_quiesced = not settings.worker_enabled
+            initial_worker_error: Exception | None = None
             if settings.worker_enabled:
-                worker.stop()
+                try:
+                    worker.stop()
+                    worker_quiesced = True
+                except Exception as exc:
+                    initial_worker_error = exc
+            runtime_shutdown_error: Exception | None = None
+            try:
+                auditions.shutdown_runtimes()
+            except Exception as exc:
+                runtime_shutdown_error = exc
+            second_worker_drain = False
+            if not worker_quiesced:
+                try:
+                    worker.stop()
+                    worker_quiesced = True
+                    second_worker_drain = True
+                except Exception as exc:
+                    cause = runtime_shutdown_error or initial_worker_error
+                    if cause is not None:
+                        raise exc from cause
+                    raise
+            if runtime_shutdown_error is not None or second_worker_drain:
+                try:
+                    auditions.shutdown_runtimes()
+                    runtime_shutdown_error = None
+                except Exception as exc:
+                    if runtime_shutdown_error is not None:
+                        raise exc from runtime_shutdown_error
+                    raise
             database.close()
 
     app = FastAPI(
@@ -304,6 +494,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
     app.state.casting = casting
     app.state.imports = imports
     app.state.jobs = jobs
+    app.state.auditions = auditions
     app.state.worker = worker
     app.state.providers = providers
     app.state.ffmpeg = ffmpeg
@@ -342,7 +533,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
                 )
                 response.headers["WWW-Authenticate"] = "Bearer"
             else:
-                response = await _bounded_phase_2_json_call(request, call_next)
+                response = await _bounded_mutation_json_call(request, call_next)
         else:
             response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
@@ -1046,9 +1237,7 @@ def create_app(settings: ServiceSettings) -> FastAPI:
             run_id=run_id,
             definition_id=body.definition_id,
             label=body.label,
-            performance_requirements=body.performance_requirements.model_dump(
-                by_alias=True
-            ),
+            performance_requirements=body.performance_requirements.model_dump(by_alias=True),
             reason=body.reason,
             expected_run_fingerprint=body.expected_run_fingerprint,
             expected_catalog_revision_id=body.expected_catalog_revision_id,
@@ -1056,12 +1245,8 @@ def create_app(settings: ServiceSettings) -> FastAPI:
             expected_snapshot_id=body.expected_snapshot_id,
             expected_snapshot_revision=body.expected_snapshot_revision,
             expected_snapshot_fingerprint=body.expected_snapshot_fingerprint,
-            expected_correction_set_fingerprint=(
-                body.expected_correction_set_fingerprint
-            ),
-            expected_casting_profile_fingerprint=(
-                body.expected_casting_profile_fingerprint
-            ),
+            expected_correction_set_fingerprint=(body.expected_correction_set_fingerprint),
+            expected_casting_profile_fingerprint=(body.expected_casting_profile_fingerprint),
             idempotency_key=body.idempotency_key,
         )
         return {
@@ -1444,6 +1629,558 @@ def create_app(settings: ServiceSettings) -> FastAPI:
             "decision": decision,
             "snapshot": snapshot,
             "run": run,
+        }
+
+    def audition_page_response(
+        request: Request,
+        project_id: str,
+        page: tuple[list[dict[str, Any]], str | None, int],
+    ) -> dict[str, Any]:
+        items, next_cursor, total = page
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "projectId": project_id,
+            "pageSize": len(items),
+            "total": total,
+            "items": items,
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    @app.get("/api/v1/projects/{project_id}/auditions/workspace")
+    def audition_workspace(
+        request: Request,
+        project_id: str,
+        role_cursor: Annotated[str | None, Query(max_length=512, alias="roleCursor")] = None,
+        role_limit: Annotated[
+            int,
+            Query(ge=1, le=MAX_AUDITION_PAGE_SIZE, alias="roleLimit"),
+        ] = DEFAULT_AUDITION_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            "workspace": auditions.workspace_snapshot(
+                project_id,
+                role_cursor=role_cursor,
+                role_limit=role_limit,
+            ),
+        }
+
+    @app.get("/api/v1/projects/{project_id}/speech/model-packages")
+    def list_model_packages(
+        request: Request,
+        project_id: str,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_AUDITION_PAGE_SIZE)] = (
+            DEFAULT_AUDITION_PAGE_SIZE
+        ),
+    ) -> dict[str, Any]:
+        return audition_page_response(
+            request,
+            project_id,
+            auditions.list_model_packages(
+                project_id=project_id,
+                cursor=cursor,
+                limit=limit,
+            ),
+        )
+
+    async def apply_local_model_archive(
+        request: Request,
+        *,
+        project_id: str,
+        model_package_id: str,
+        operation: Literal["install", "repair"],
+    ) -> dict[str, Any]:
+        try:
+            form = await _bounded_import_form(
+                request,
+                _MAX_MODEL_PACKAGE_UPLOAD_BYTES,
+                model_staging_directory,
+                max_fields=5,
+            )
+        except _BodyLimitExceeded as exc:
+            raise ServiceError(
+                413,
+                "MODEL_PACKAGE_TOO_LARGE",
+                "The local model package exceeded its fixed upload bound.",
+            ) from exc
+        except ServiceError:
+            raise
+        except Exception as exc:
+            raise ServiceError(
+                400,
+                "MALFORMED_MODEL_PACKAGE_UPLOAD",
+                "The local model package upload was malformed.",
+            ) from exc
+        staged_archive: Path | None = None
+        try:
+            keys = [str(key) for key, _value in form.multi_items()]
+            allowed = {
+                "file",
+                "expectedManifestFingerprint",
+                "expectedInstallationRevision",
+                "acknowledgeRestrictedLocalUse",
+                "reason",
+                "idempotencyKey",
+            }
+            required = allowed - {"expectedInstallationRevision"}
+            if (
+                len(keys) != len(set(keys))
+                or not required.issubset(keys)
+                or any(key not in allowed for key in keys)
+            ):
+                raise ServiceError(
+                    422,
+                    "INVALID_MODEL_PACKAGE_UPLOAD",
+                    "The local model package upload fields were invalid.",
+                )
+            upload = form.get("file")
+            if not isinstance(upload, StarletteUploadFile):
+                raise ServiceError(
+                    422,
+                    "MODEL_PACKAGE_ARCHIVE_REQUIRED",
+                    "A local model package ZIP archive is required.",
+                )
+            values: dict[str, str | None] = {}
+            for key in required - {"file"}:
+                value = form.get(key)
+                if not isinstance(value, str):
+                    raise ServiceError(
+                        422,
+                        "INVALID_MODEL_PACKAGE_UPLOAD",
+                        "The local model package upload fields were invalid.",
+                    )
+                values[key] = value
+            revision_value = form.get("expectedInstallationRevision")
+            if revision_value is not None and not isinstance(revision_value, str):
+                raise ServiceError(
+                    422,
+                    "INVALID_MODEL_PACKAGE_UPLOAD",
+                    "The local model package upload fields were invalid.",
+                )
+            values["expectedInstallationRevision"] = revision_value
+            if values["acknowledgeRestrictedLocalUse"] not in {"true", "false"}:
+                raise ServiceError(
+                    422,
+                    "INVALID_MODEL_PACKAGE_UPLOAD",
+                    "The restricted-use acknowledgement must be explicit.",
+                )
+            try:
+                upload_request = InstallModelPackageRequest.model_validate(values)
+            except PydanticValidationError as exc:
+                raise ServiceError(
+                    422,
+                    "INVALID_MODEL_PACKAGE_UPLOAD",
+                    "The local model package upload fields were invalid.",
+                ) from exc
+            staged_archive = _stage_private_model_archive(
+                upload,
+                model_staging_directory,
+            )
+            action = (
+                auditions.install_model_package
+                if operation == "install"
+                else auditions.repair_model_package
+            )
+            return {
+                "correlationId": _correlation_id(request),
+                **action(
+                    project_id=project_id,
+                    model_package_id=model_package_id,
+                    request=upload_request,
+                    archive_path=staged_archive,
+                    actor_id=_LOCAL_ACTOR_ID,
+                ),
+            }
+        finally:
+            if staged_archive is not None:
+                staged_archive.unlink(missing_ok=True)
+            await form.close()
+
+    @app.post("/api/v1/projects/{project_id}/speech/model-packages/{model_package_id}/install")
+    async def install_local_model_package(
+        request: Request,
+        project_id: str,
+        model_package_id: str,
+    ) -> dict[str, Any]:
+        return await apply_local_model_archive(
+            request,
+            project_id=project_id,
+            model_package_id=model_package_id,
+            operation="install",
+        )
+
+    @app.post("/api/v1/projects/{project_id}/speech/model-packages/{model_package_id}/repair")
+    async def repair_local_model_package(
+        request: Request,
+        project_id: str,
+        model_package_id: str,
+    ) -> dict[str, Any]:
+        return await apply_local_model_archive(
+            request,
+            project_id=project_id,
+            model_package_id=model_package_id,
+            operation="repair",
+        )
+
+    @app.post("/api/v1/projects/{project_id}/speech/model-packages/{model_package_id}/actions")
+    def perform_model_package_action(
+        request: Request,
+        project_id: str,
+        model_package_id: str,
+        body: ModelInstallationOperationRequest,
+    ) -> dict[str, Any]:
+        if body.model_package_id != model_package_id:
+            raise ServiceError(
+                422,
+                "MODEL_PACKAGE_ID_MISMATCH",
+                "The model package identifier does not match the request path.",
+            )
+        return {
+            "correlationId": _correlation_id(request),
+            **auditions.perform_model_package_action(
+                project_id=project_id,
+                request=body,
+                actor_id=_LOCAL_ACTOR_ID,
+            ),
+        }
+
+    @app.get("/api/v1/projects/{project_id}/pronunciations/entries")
+    def list_pronunciation_entries(
+        request: Request,
+        project_id: str,
+        expected_dictionary_revision: Annotated[
+            int | None,
+            Query(alias="expectedDictionaryRevision", ge=1),
+        ] = None,
+        expected_dictionary_fingerprint: Annotated[
+            str | None,
+            Query(
+                alias="expectedDictionaryFingerprint",
+                pattern=r"^[a-f0-9]{64}$",
+            ),
+        ] = None,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_AUDITION_PAGE_SIZE)] = (
+            DEFAULT_AUDITION_PAGE_SIZE
+        ),
+    ) -> dict[str, Any]:
+        dictionary, items, next_cursor, total = auditions.list_pronunciation_entries(
+            project_id=project_id,
+            cursor=cursor,
+            limit=limit,
+            expected_dictionary_revision=expected_dictionary_revision,
+            expected_dictionary_fingerprint=expected_dictionary_fingerprint,
+        )
+        result: dict[str, Any] = {
+            "correlationId": _correlation_id(request),
+            "projectId": project_id,
+            "dictionary": dictionary,
+            "pageSize": len(items),
+            "total": total,
+            "items": items,
+        }
+        if next_cursor is not None:
+            result["nextCursor"] = next_cursor
+        return result
+
+    @app.post("/api/v1/projects/{project_id}/pronunciations/entries")
+    def create_pronunciation_entry(
+        request: Request,
+        project_id: str,
+        body: CreatePronunciationEntryRequest,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            **auditions.create_pronunciation_entry(
+                project_id=project_id,
+                request=body,
+                actor_id=_LOCAL_ACTOR_ID,
+            ),
+        }
+
+    @app.post("/api/v1/projects/{project_id}/pronunciations/entries/{entry_id}/decisions")
+    def decide_pronunciation_entry(
+        request: Request,
+        project_id: str,
+        entry_id: str,
+        body: DecidePronunciationEntryRequest,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            **auditions.decide_pronunciation_entry(
+                project_id=project_id,
+                entry_id=entry_id,
+                request=body,
+                actor_id=_LOCAL_ACTOR_ID,
+            ),
+        }
+
+    @app.get("/api/v1/projects/{project_id}/audition-sessions")
+    def list_audition_sessions(
+        request: Request,
+        project_id: str,
+        role_id: Annotated[
+            str | None,
+            Query(alias="roleId", min_length=1, max_length=128),
+        ] = None,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_AUDITION_PAGE_SIZE)] = (
+            DEFAULT_AUDITION_PAGE_SIZE
+        ),
+    ) -> dict[str, Any]:
+        return audition_page_response(
+            request,
+            project_id,
+            auditions.list_sessions(
+                project_id=project_id,
+                cursor=cursor,
+                limit=limit,
+                role_id=role_id,
+            ),
+        )
+
+    @app.post("/api/v1/projects/{project_id}/audition-sessions")
+    def create_audition_session(
+        request: Request,
+        project_id: str,
+        body: CreateAuditionSessionRequest,
+    ) -> dict[str, Any]:
+        if body.evidence.project_id != project_id:
+            raise ServiceError(
+                422,
+                "AUDITION_PROJECT_ID_MISMATCH",
+                "The audition project identifier does not match the request path.",
+            )
+        return {
+            "correlationId": _correlation_id(request),
+            "session": auditions.create_session(project_id=project_id, request=body),
+        }
+
+    @app.post("/api/v1/projects/{project_id}/audition-sessions/{audition_session_id}/scripts")
+    def create_audition_script(
+        request: Request,
+        project_id: str,
+        audition_session_id: str,
+        body: CreateAuditionScriptRequest,
+    ) -> dict[str, Any]:
+        if body.audition_session_id != audition_session_id:
+            raise ServiceError(
+                422,
+                "AUDITION_SESSION_ID_MISMATCH",
+                "The audition session identifier does not match the request path.",
+            )
+        return {
+            "correlationId": _correlation_id(request),
+            **auditions.create_script(project_id=project_id, request=body),
+        }
+
+    @app.post(
+        "/api/v1/projects/{project_id}/audition-sessions/{audition_session_id}"
+        "/normalization-preview"
+    )
+    def preview_audition_normalization(
+        request: Request,
+        project_id: str,
+        audition_session_id: str,
+        body: PreviewNormalizationRequest,
+    ) -> dict[str, Any]:
+        if body.audition_session_id != audition_session_id:
+            raise ServiceError(
+                422,
+                "AUDITION_SESSION_ID_MISMATCH",
+                "The audition session identifier does not match the request path.",
+            )
+        return {
+            "correlationId": _correlation_id(request),
+            **auditions.preview_normalization(project_id=project_id, request=body),
+        }
+
+    @app.post(
+        "/api/v1/projects/{project_id}/audition-sessions/{audition_session_id}/generate",
+        status_code=202,
+    )
+    def generate_audition(
+        request: Request,
+        project_id: str,
+        audition_session_id: str,
+        body: GenerateAuditionRequest,
+    ) -> dict[str, Any]:
+        if body.preview.audition_session_id != audition_session_id:
+            raise ServiceError(
+                422,
+                "AUDITION_SESSION_ID_MISMATCH",
+                "The audition session identifier does not match the request path.",
+            )
+        result = auditions.queue_generation(
+            project_id=project_id,
+            request=body,
+            jobs=jobs,
+        )
+        worker.wake()
+        return {
+            "correlationId": _correlation_id(request),
+            **result,
+        }
+
+    @app.get("/api/v1/projects/{project_id}/audition-clips")
+    def list_audition_clips(
+        request: Request,
+        project_id: str,
+        audition_session_id: Annotated[
+            str | None,
+            Query(alias="auditionSessionId", min_length=1, max_length=128),
+        ] = None,
+        role_id: Annotated[
+            str | None,
+            Query(alias="roleId", min_length=1, max_length=128),
+        ] = None,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_AUDITION_PAGE_SIZE)] = (
+            DEFAULT_AUDITION_PAGE_SIZE
+        ),
+    ) -> dict[str, Any]:
+        return audition_page_response(
+            request,
+            project_id,
+            auditions.list_clips(
+                project_id=project_id,
+                cursor=cursor,
+                limit=limit,
+                audition_session_id=audition_session_id,
+                role_id=role_id,
+            ),
+        )
+
+    @app.get("/api/v1/projects/{project_id}/audition-clips/{clip_id}/audio")
+    def load_audition_audio(
+        project_id: str,
+        clip_id: str,
+        audition_session_id: Annotated[
+            str,
+            Query(alias="auditionSessionId", min_length=1, max_length=128),
+        ],
+        audio_artifact_id: Annotated[
+            str,
+            Query(alias="audioArtifactId", min_length=1, max_length=128),
+        ],
+        expected_clip_revision: Annotated[
+            int,
+            Query(alias="expectedClipRevision", ge=1),
+        ],
+        expected_clip_fingerprint: Annotated[
+            str,
+            Query(alias="expectedClipFingerprint", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_artifact_sha256: Annotated[
+            str,
+            Query(alias="expectedArtifactSha256", pattern=r"^[a-f0-9]{64}$"),
+        ],
+        expected_byte_size: Annotated[
+            int,
+            Query(alias="byteSize", ge=45, le=MAX_AUDITION_AUDIO_BYTES),
+        ],
+    ) -> Response:
+        payload, _descriptor = auditions.get_audio_bytes(
+            project_id=project_id,
+            clip_id=clip_id,
+            audition_session_id=audition_session_id,
+            audio_artifact_id=audio_artifact_id,
+            expected_clip_revision=expected_clip_revision,
+            expected_clip_fingerprint=expected_clip_fingerprint,
+            expected_artifact_sha256=expected_artifact_sha256,
+            expected_byte_size=expected_byte_size,
+        )
+        return Response(
+            content=payload,
+            media_type="audio/wav",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Length": str(len(payload)),
+            },
+        )
+
+    @app.get("/api/v1/projects/{project_id}/audition-review-decisions")
+    def list_audition_review_decisions(
+        request: Request,
+        project_id: str,
+        gate_id: Annotated[
+            str,
+            Query(alias="gateId", min_length=1, max_length=48),
+        ],
+        role_id: Annotated[
+            str | None,
+            Query(alias="roleId", min_length=1, max_length=128),
+        ] = None,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_AUDITION_PAGE_SIZE)] = (
+            DEFAULT_AUDITION_PAGE_SIZE
+        ),
+    ) -> dict[str, Any]:
+        try:
+            query = ListAuditionReviewDecisionsQuery.model_validate(
+                {
+                    "gateId": gate_id,
+                    "roleId": role_id,
+                    "cursor": cursor,
+                    "limit": limit,
+                }
+            )
+        except PydanticValidationError as exc:
+            raise ServiceError(
+                422,
+                "AUDITION_REVIEW_HISTORY_SCOPE_INVALID",
+                "The audition review history scope is invalid.",
+            ) from exc
+        result = audition_page_response(
+            request,
+            project_id,
+            auditions.list_review_decisions(
+                project_id=project_id,
+                gate_id=query.gate_id,
+                role_id=query.role_id,
+                cursor=query.cursor,
+                limit=query.limit,
+            ),
+        )
+        result["gateId"] = query.gate_id
+        result["roleId"] = query.role_id
+        return result
+
+    @app.post("/api/v1/projects/{project_id}/audition-reviews/{gate_id}/{review_id}/decisions")
+    def decide_audition_review(
+        request: Request,
+        project_id: str,
+        gate_id: str,
+        review_id: str,
+        body: DecideAuditionReviewRequest,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            **auditions.decide_review(
+                project_id=project_id,
+                gate_id=gate_id,
+                review_id=review_id,
+                request=body,
+                actor_id=_LOCAL_ACTOR_ID,
+            ),
+        }
+
+    @app.post("/api/v1/projects/{project_id}/audition-cache/clear")
+    def clear_audition_cache(
+        request: Request,
+        project_id: str,
+        body: ClearAuditionCacheRequest,
+    ) -> dict[str, Any]:
+        return {
+            "correlationId": _correlation_id(request),
+            **auditions.clear_cache(
+                project_id=project_id,
+                request=body,
+                actor_id=_LOCAL_ACTOR_ID,
+            ),
         }
 
     @app.put("/api/v1/projects/{project_id}/dialogue-lines/{line_id}/speaker")

@@ -8,6 +8,7 @@ mastering, and atomic render-publication pipeline remains deferred.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import os
@@ -62,11 +63,17 @@ class WavMeasurements:
     duration_ms: float
     peak_dbfs: float
     rms_dbfs: float
-    clipped: bool
+    clipped_sample_count: int
     leading_silence_ms: float
     trailing_silence_ms: float
     non_silent_frames: int
     content_sha256: str
+
+    @property
+    def clipped(self) -> bool:
+        """Return whether any integer sample reached a PCM clipping boundary."""
+
+        return self.clipped_sample_count > 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,11 +250,11 @@ def _dbfs(amplitude: float) -> float:
 
 
 def inspect_pcm_wav(
-    path: Path,
+    path: Path | bytes,
     *,
     silence_threshold_dbfs: float = -60.0,
 ) -> WavMeasurements:
-    """Inspect integer PCM WAVE content without loading the artifact into memory."""
+    """Inspect integer PCM WAVE content from a path or already-bounded bytes."""
 
     if (
         not math.isfinite(silence_threshold_dbfs)
@@ -255,15 +262,21 @@ def inspect_pcm_wav(
         or silence_threshold_dbfs < -200
     ):
         raise ValueError("The silence threshold must be finite and between -200 and 0 dBFS.")
-    try:
-        resolved = path.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise AudioValidationError("The PCM WAVE artifact is unavailable.") from exc
-    if not resolved.is_file():
-        raise AudioValidationError("The PCM WAVE artifact is unavailable.")
+    if isinstance(path, bytes):
+        wave_source: str | io.BytesIO = io.BytesIO(path)
+        content_sha256 = hashlib.sha256(path).hexdigest()
+    else:
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise AudioValidationError("The PCM WAVE artifact is unavailable.") from exc
+        if not resolved.is_file():
+            raise AudioValidationError("The PCM WAVE artifact is unavailable.")
+        wave_source = str(resolved)
+        content_sha256 = _sha256_file(resolved)
 
     try:
-        with wave.open(str(resolved), "rb") as source:
+        with wave.open(wave_source, "rb") as source:
             if source.getcomptype() != "NONE":
                 raise AudioValidationError("Only uncompressed integer PCM WAVE is supported.")
             channel_count = source.getnchannels()
@@ -283,7 +296,7 @@ def inspect_pcm_wav(
             sample_count = 0
             peak_sample = 0
             sum_squares = 0
-            clipped = False
+            clipped_sample_count = 0
             non_silent_frames = 0
             leading_silent_frames = 0
             trailing_silent_frames = 0
@@ -312,7 +325,7 @@ def inspect_pcm_wav(
                         sum_squares += sample * sample
                         sample_count += 1
                         if sample == minimum_sample or sample == maximum_sample:
-                            clipped = True
+                            clipped_sample_count += 1
                     frame_count += 1
                     if frame_peak <= silence_amplitude:
                         if not found_non_silent:
@@ -328,9 +341,7 @@ def inspect_pcm_wav(
         raise AudioValidationError("The artifact is not a valid PCM WAVE file.") from exc
 
     duration_ms = frame_count * 1000.0 / sample_rate_hz
-    rms_amplitude = (
-        math.sqrt(sum_squares / sample_count) / full_scale if sample_count > 0 else 0.0
-    )
+    rms_amplitude = math.sqrt(sum_squares / sample_count) / full_scale if sample_count > 0 else 0.0
     return WavMeasurements(
         sample_rate_hz=sample_rate_hz,
         channel_count=channel_count,
@@ -339,11 +350,11 @@ def inspect_pcm_wav(
         duration_ms=duration_ms,
         peak_dbfs=_dbfs(peak_sample / full_scale),
         rms_dbfs=_dbfs(rms_amplitude),
-        clipped=clipped,
+        clipped_sample_count=clipped_sample_count,
         leading_silence_ms=leading_silent_frames * 1000.0 / sample_rate_hz,
         trailing_silence_ms=trailing_silent_frames * 1000.0 / sample_rate_hz,
         non_silent_frames=non_silent_frames,
-        content_sha256=_sha256_file(resolved),
+        content_sha256=content_sha256,
     )
 
 
@@ -393,12 +404,9 @@ def evaluate_wav(
         findings.append(
             QcFinding("CLIPPING_DETECTED", "The PCM audio reaches a clipping boundary.", True)
         )
-    if (
-        measurements.leading_silence_ms < expectations.min_leading_silence_ms
-        or (
-            expectations.max_leading_silence_ms is not None
-            and measurements.leading_silence_ms > expectations.max_leading_silence_ms
-        )
+    if measurements.leading_silence_ms < expectations.min_leading_silence_ms or (
+        expectations.max_leading_silence_ms is not None
+        and measurements.leading_silence_ms > expectations.max_leading_silence_ms
     ):
         findings.append(
             QcFinding(
@@ -412,12 +420,9 @@ def evaluate_wav(
                 ),
             )
         )
-    if (
-        measurements.trailing_silence_ms < expectations.min_trailing_silence_ms
-        or (
-            expectations.max_trailing_silence_ms is not None
-            and measurements.trailing_silence_ms > expectations.max_trailing_silence_ms
-        )
+    if measurements.trailing_silence_ms < expectations.min_trailing_silence_ms or (
+        expectations.max_trailing_silence_ms is not None
+        and measurements.trailing_silence_ms > expectations.max_trailing_silence_ms
     ):
         findings.append(
             QcFinding(

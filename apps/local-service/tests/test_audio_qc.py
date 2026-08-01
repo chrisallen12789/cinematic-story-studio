@@ -71,6 +71,7 @@ def test_pcm_inspection_covers_duration_channels_rate_and_silence_boundaries(
     assert measured.leading_silence_ms == pytest.approx(100)
     assert measured.trailing_silence_ms == pytest.approx(50)
     assert measured.non_silent_frames == pytest.approx(12_000, abs=25)
+    assert measured.clipped_sample_count == 0
     assert measured.clipped is False
     assert len(measured.content_sha256) == 64
     assert (
@@ -137,6 +138,7 @@ def test_pcm_qc_detects_integer_clipping(tmp_path: Path) -> None:
         ),
     )
 
+    assert measured.clipped_sample_count == 2
     assert measured.clipped is True
     assert "CLIPPING_DETECTED" in _codes(findings)
 

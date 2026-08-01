@@ -476,11 +476,7 @@ class AppendCastingCorrectionRequest(StrictRequest):
         value = self.corrected_value or {}
 
         def valid_identifier(candidate: JsonValue, *, maximum: int = 128) -> bool:
-            return (
-                isinstance(candidate, str)
-                and bool(candidate)
-                and len(candidate) <= maximum
-            )
+            return isinstance(candidate, str) and bool(candidate) and len(candidate) <= maximum
 
         if self.operation == "select_voice" and value:
             if (
@@ -494,9 +490,7 @@ class AppendCastingCorrectionRequest(StrictRequest):
             ):
                 raise ValueError("The assignment-clear value is invalid.")
         elif self.operation == "lock_assignment":
-            if set(value) != {"assignmentId"} or not valid_identifier(
-                value.get("assignmentId")
-            ):
+            if set(value) != {"assignmentId"} or not valid_identifier(value.get("assignmentId")):
                 raise ValueError("The assignment-lock value is invalid.")
         elif self.operation == "unlock_assignment":
             if set(value) != {"lockedAssignmentId"} or not valid_identifier(
@@ -590,9 +584,7 @@ class AppendCastingCorrectionRequest(StrictRequest):
                 or not isinstance(expressions, list)
                 or len(expressions) > 32
                 or any(
-                    not isinstance(item, str)
-                    or not item.strip()
-                    or len(item) > 80
+                    not isinstance(item, str) or not item.strip() or len(item) > 80
                     for item in expressions
                 )
                 or len(expressions) != len(set(expressions))
@@ -639,8 +631,7 @@ class AppendCastingCorrectionRequest(StrictRequest):
                 or not isinstance(role_ids, list)
                 or not 2 <= len(role_ids) <= 300
                 or any(
-                    not isinstance(item, str) or not item or len(item) > 128
-                    for item in role_ids
+                    not isinstance(item, str) or not item or len(item) > 128 for item in role_ids
                 )
                 or len(role_ids) != len(set(role_ids))
             ):
@@ -657,9 +648,7 @@ class AppendCastingCorrectionRequest(StrictRequest):
             ):
                 raise ValueError("The restricted-rights acknowledgement is invalid.")
         elif self.operation == "reject_candidate":
-            if set(value) != {"candidateId"} or not valid_identifier(
-                value.get("candidateId")
-            ):
+            if set(value) != {"candidateId"} or not valid_identifier(value.get("candidateId")):
                 raise ValueError("The candidate-rejection value is invalid.")
         elif self.operation == "record_custom_rationale":
             rationale = value.get("rationale")
@@ -670,19 +659,23 @@ class AppendCastingCorrectionRequest(StrictRequest):
                 or len(rationale) > 2_000
             ):
                 raise ValueError("The custom casting rationale is invalid.")
-        elif self.operation not in {
-            "select_voice",
-            "clear_assignment",
-            "lock_assignment",
-            "unlock_assignment",
-            "mark_intentionally_uncast",
-            "change_role_label",
-            "change_casting_requirement",
-            "acknowledge_restricted_rights",
-            "approve_voice_reuse",
-            "reject_candidate",
-            "record_custom_rationale",
-        } and value:
+        elif (
+            self.operation
+            not in {
+                "select_voice",
+                "clear_assignment",
+                "lock_assignment",
+                "unlock_assignment",
+                "mark_intentionally_uncast",
+                "change_role_label",
+                "change_casting_requirement",
+                "acknowledge_restricted_rights",
+                "approve_voice_reuse",
+                "reject_candidate",
+                "record_custom_rationale",
+            }
+            and value
+        ):
             raise ValueError("This casting correction does not accept correctedValue.")
         return self
 
@@ -715,4 +708,427 @@ class DecideCastingReviewRequest(StrictRequest):
     @field_validator("idempotency_key")
     @classmethod
     def validate_casting_review_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+
+PronunciationScopeRequest = Literal[
+    "project",
+    "narrator",
+    "character_role",
+    "chapter",
+    "scene",
+    "custom",
+]
+PronunciationRepresentationRequest = Literal[
+    "provider_neutral",
+    "ipa",
+    "provider_specific",
+]
+AuditionScriptKindRequest = Literal[
+    "standardized_synthetic",
+    "approved_manuscript_excerpt",
+    "role_dialogue_excerpt",
+    "narrator_excerpt",
+    "pronunciation_test",
+    "synthetic_fallback",
+]
+
+
+def _bounded_plain_text(value: str, *, label: str) -> str:
+    cleaned = value.strip()
+    if not cleaned or any(ord(character) < 32 and character != "\t" for character in cleaned):
+        raise ValueError(f"{label} contains invalid control characters.")
+    if "<" in cleaned or ">" in cleaned:
+        raise ValueError(f"{label} cannot contain provider markup.")
+    return cleaned
+
+
+class CreatePronunciationEntryRequest(StrictRequest):
+    expected_dictionary_revision: int = Field(ge=0)
+    expected_dictionary_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    written_form: str = Field(min_length=1, max_length=120)
+    language: str = Field(pattern=r"^[a-z]{2,3}$")
+    locale: str | None = Field(
+        default=None,
+        pattern=r"^[a-z]{2,3}(?:-[A-Z]{2})?$",
+    )
+    scope: PronunciationScopeRequest
+    scope_id: str | None = Field(default=None, min_length=1, max_length=128)
+    representation: PronunciationRepresentationRequest
+    pronunciation: str = Field(min_length=1, max_length=256)
+    ipa: str | None = Field(default=None, min_length=1, max_length=256)
+    provider_id: str | None = Field(default=None, min_length=1, max_length=80)
+    provider_compiled_value: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1000,
+    )
+    case_sensitive: bool = False
+    match_rule: Literal["whole_word", "phrase"] = "whole_word"
+    priority: int = Field(default=0, ge=-1000, le=1000)
+    reason: str = Field(min_length=1, max_length=1000)
+    supersedes_entry_id: str | None = Field(default=None, min_length=1, max_length=128)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator(
+        "written_form",
+        "pronunciation",
+        "ipa",
+        "provider_compiled_value",
+        "reason",
+    )
+    @classmethod
+    def validate_pronunciation_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _bounded_plain_text(value, label="Pronunciation text")
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_pronunciation_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+    @model_validator(mode="after")
+    def validate_pronunciation_contract(self) -> CreatePronunciationEntryRequest:
+        if self.scope == "project" and self.scope_id is not None:
+            raise ValueError("Project pronunciation entries cannot have scopeId.")
+        if self.scope != "project" and self.scope_id is None:
+            raise ValueError("Scoped pronunciation entries require scopeId.")
+        if self.representation == "ipa" and self.ipa is None:
+            raise ValueError("IPA pronunciation entries require ipa.")
+        if self.representation == "provider_specific" and (
+            self.provider_id is None or self.provider_compiled_value is None
+        ):
+            raise ValueError(
+                "Provider-specific pronunciation entries require providerId and "
+                "providerCompiledValue."
+            )
+        if self.representation != "provider_specific" and (
+            self.provider_id is not None or self.provider_compiled_value is not None
+        ):
+            raise ValueError(
+                "Only provider-specific pronunciation entries accept compiled provider values."
+            )
+        return self
+
+
+class DecidePronunciationEntryRequest(StrictRequest):
+    decision: Literal["approve", "reject", "request_changes"]
+    expected_entry_revision: int = Field(ge=1)
+    expected_entry_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expected_dictionary_revision: int = Field(ge=1)
+    expected_dictionary_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    rationale: str = Field(min_length=1, max_length=4000)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_pronunciation_rationale(cls, value: str) -> str:
+        return DecideAnalysisReviewRequest.validate_analysis_rationale(value)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_pronunciation_decision_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+
+class TextCodePointSpanRequest(StrictRequest):
+    start: int = Field(ge=0)
+    end: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> TextCodePointSpanRequest:
+        if self.start >= self.end or self.end - self.start > 4000:
+            raise ValueError("The audition source span is invalid.")
+        return self
+
+
+class AuditionEvidenceBindingRequest(StrictRequest):
+    project_id: str = Field(min_length=1, max_length=128)
+    source_document_id: str = Field(min_length=1, max_length=128)
+    source_revision: int = Field(ge=1)
+    extraction_id: str = Field(min_length=1, max_length=128)
+    extraction_revision: int = Field(ge=1)
+    extracted_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    phase2_run_id: str = Field(min_length=1, max_length=128)
+    phase2_snapshot_id: str = Field(min_length=1, max_length=128)
+    phase2_snapshot_revision: int = Field(ge=1)
+    phase2_snapshot_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    phase2_correction_set_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    casting_run_id: str = Field(min_length=1, max_length=128)
+    approved_cast_snapshot_id: str = Field(min_length=1, max_length=128)
+    approved_cast_snapshot_revision: int = Field(ge=1)
+    approved_cast_snapshot_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    cast_assignment_id: str = Field(min_length=1, max_length=128)
+    cast_assignment_revision: int = Field(ge=1)
+    voice_profile_id: str = Field(min_length=1, max_length=128)
+    voice_profile_version: str = Field(min_length=1, max_length=40)
+    voice_runtime_binding_id: str = Field(min_length=1, max_length=128)
+    voice_runtime_binding_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    provider_voice_id: str = Field(min_length=1, max_length=120)
+    provider_id: Literal["deterministic-pcm-wav-fixture", "kokoro-local-onnx"]
+    provider_version: str = Field(min_length=1, max_length=40)
+    model_id: str = Field(min_length=1, max_length=128)
+    model_version: str = Field(min_length=1, max_length=40)
+    catalog_revision_id: str = Field(min_length=1, max_length=128)
+    catalog_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    rights_record_id: str = Field(min_length=1, max_length=128)
+    rights_record_revision: int = Field(ge=1)
+    rights_record_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    pronunciation_dictionary_id: str = Field(min_length=1, max_length=128)
+    pronunciation_dictionary_revision: int = Field(ge=1)
+    pronunciation_dictionary_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    runtime_profile_id: str = Field(min_length=1, max_length=128)
+    runtime_profile_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    model_package_id: str = Field(min_length=1, max_length=128)
+    model_package_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    producer_version: str = Field(min_length=1, max_length=40)
+
+
+class CreateAuditionSessionRequest(StrictRequest):
+    role_id: str = Field(min_length=1, max_length=128)
+    evidence: AuditionEvidenceBindingRequest
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_audition_session_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+    @model_validator(mode="after")
+    def validate_role_binding(self) -> CreateAuditionSessionRequest:
+        if self.evidence.project_id == self.role_id:
+            raise ValueError("The audition role and project identities cannot alias.")
+        return self
+
+
+class CreateAuditionScriptRequest(StrictRequest):
+    audition_session_id: str = Field(min_length=1, max_length=128)
+    expected_session_revision: int = Field(ge=1)
+    kind: AuditionScriptKindRequest
+    text: str = Field(min_length=1, max_length=4000)
+    source_document_id: str | None = Field(default=None, min_length=1, max_length=128)
+    source_revision: int | None = Field(default=None, ge=1)
+    source_span: TextCodePointSpanRequest | None = None
+    source_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    accepted_optional_normalization_ids: list[str] = Field(
+        default_factory=list,
+        max_length=2000,
+    )
+    custom_pronunciation_scope_ids: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("text")
+    @classmethod
+    def validate_script_text(cls, value: str) -> str:
+        if not value.strip() or "\x00" in value:
+            raise ValueError("The audition script text is invalid.")
+        return value
+
+    @field_validator("accepted_optional_normalization_ids")
+    @classmethod
+    def validate_normalization_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)) or any(not item or len(item) > 128 for item in value):
+            raise ValueError("Accepted normalization IDs must be bounded and unique.")
+        return value
+
+    @field_validator("custom_pronunciation_scope_ids")
+    @classmethod
+    def validate_custom_pronunciation_scope_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)) or any(not item or len(item) > 128 for item in value):
+            raise ValueError("Custom pronunciation scope IDs must be bounded and unique.")
+        return value
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_audition_script_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+    @model_validator(mode="after")
+    def validate_script_source(self) -> CreateAuditionScriptRequest:
+        source_values = (self.source_document_id, self.source_revision, self.source_span)
+        if self.kind in {
+            "approved_manuscript_excerpt",
+            "role_dialogue_excerpt",
+            "narrator_excerpt",
+        } and any(value is None for value in source_values):
+            raise ValueError("Manuscript audition scripts require an exact source binding.")
+        if self.kind in {
+            "standardized_synthetic",
+            "pronunciation_test",
+            "synthetic_fallback",
+        } and any(value is not None for value in source_values):
+            raise ValueError("Synthetic audition scripts cannot claim a manuscript source span.")
+        return self
+
+
+class PreviewNormalizationRequest(StrictRequest):
+    audition_session_id: str = Field(min_length=1, max_length=128)
+    expected_session_revision: int = Field(ge=1)
+    text: str = Field(min_length=1, max_length=4000)
+    source_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    accepted_optional_normalization_ids: list[str] = Field(
+        default_factory=list,
+        max_length=2000,
+    )
+    custom_pronunciation_scope_ids: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+
+    @field_validator("accepted_optional_normalization_ids")
+    @classmethod
+    def validate_preview_normalization_ids(cls, value: list[str]) -> list[str]:
+        return CreateAuditionScriptRequest.validate_normalization_ids(value)
+
+    @field_validator("custom_pronunciation_scope_ids")
+    @classmethod
+    def validate_preview_custom_pronunciation_scope_ids(
+        cls,
+        value: list[str],
+    ) -> list[str]:
+        return CreateAuditionScriptRequest.validate_custom_pronunciation_scope_ids(value)
+
+
+class SpeechProviderControlsRequest(StrictRequest):
+    speaking_rate: float = Field(ge=0.5, le=2.0)
+    pitch: float | None = Field(default=None, ge=-1.0, le=1.0)
+    style: str | None = Field(default=None, min_length=1, max_length=80)
+    energy: float | None = Field(default=None, ge=0.0, le=1.0)
+    controls_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class SpeechPreviewRequestBody(StrictRequest):
+    contract_version: Literal["1.0.0"] = "1.0.0"
+    request_id: str = Field(min_length=1, max_length=128)
+    audition_session_id: str = Field(min_length=1, max_length=128)
+    audition_session_revision: int = Field(ge=1)
+    audition_script_id: str = Field(min_length=1, max_length=128)
+    audition_script_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    evidence: AuditionEvidenceBindingRequest
+    normalized_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    normalization_plan_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    pronunciation_plan_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    provider_controls: SpeechProviderControlsRequest
+    output_format: Literal["pcm_s16le_wav"] = "pcm_s16le_wav"
+    sample_rate_hz: Literal[24000] = 24000
+    channels: Literal[1] = 1
+    idempotency_key: str = Field(min_length=1, max_length=160)
+    request_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_preview_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+
+class GenerateAuditionRequest(StrictRequest):
+    preview: SpeechPreviewRequestBody
+
+
+AuditionReviewGateId = Literal[
+    "per_role_audition_review",
+    "narrator_audition_review",
+    "character_audition_review",
+    "pronunciation_review",
+    "voice_readiness_review",
+]
+
+
+class ListAuditionReviewDecisionsQuery(StrictRequest):
+    gate_id: AuditionReviewGateId
+    role_id: str | None = Field(default=None, min_length=1, max_length=128)
+    cursor: str | None = Field(default=None, min_length=1, max_length=512)
+    limit: int = Field(default=50, ge=1, le=200)
+
+    @field_validator("role_id")
+    @classmethod
+    def validate_review_history_role_id(cls, value: str | None) -> str | None:
+        if value is not None and (
+            not value.strip() or any(ord(character) < 33 for character in value)
+        ):
+            raise ValueError("The audition review history role is invalid.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_review_history_scope(self) -> ListAuditionReviewDecisionsQuery:
+        if (self.gate_id == "per_role_audition_review") != (self.role_id is not None):
+            raise ValueError(
+                "Per-role history requires roleId and aggregate history forbids roleId."
+            )
+        return self
+
+
+class DecideAuditionReviewRequest(StrictRequest):
+    expected_review_revision: int = Field(ge=1)
+    expected_evidence_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    decision: Literal["approve", "request_changes", "reject"]
+    rationale: str = Field(min_length=1, max_length=4000)
+    supersedes_decision_id: str | None = Field(default=None, min_length=1, max_length=128)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_audition_rationale(cls, value: str) -> str:
+        return DecideAnalysisReviewRequest.validate_analysis_rationale(value)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_audition_review_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+
+class ModelInstallationOperationRequest(StrictRequest):
+    model_package_id: str = Field(min_length=1, max_length=128)
+    expected_manifest_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expected_installation_revision: int | None = Field(default=None, ge=1)
+    action: Literal["verify", "activate", "deactivate", "repair", "remove"]
+    reason: str = Field(min_length=1, max_length=1000)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_model_operation_reason(cls, value: str) -> str:
+        return AppendAnalysisCorrectionRequest.validate_correction_reason(value)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_model_operation_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+
+class InstallModelPackageRequest(StrictRequest):
+    expected_manifest_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expected_installation_revision: int | None = Field(default=None, ge=1)
+    acknowledge_restricted_local_use: bool
+    reason: str = Field(min_length=1, max_length=1000)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_model_install_reason(cls, value: str) -> str:
+        return AppendAnalysisCorrectionRequest.validate_correction_reason(value)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_model_install_idempotency_key(cls, value: str) -> str:
+        return CreateJobRequest.validate_idempotency_key(value)
+
+
+class ClearAuditionCacheRequest(StrictRequest):
+    expected_project_revision: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=1000)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_cache_clear_reason(cls, value: str) -> str:
+        return AppendAnalysisCorrectionRequest.validate_correction_reason(value)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_cache_clear_idempotency_key(cls, value: str) -> str:
         return CreateJobRequest.validate_idempotency_key(value)

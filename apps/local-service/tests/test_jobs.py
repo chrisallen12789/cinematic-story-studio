@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -1639,6 +1640,14 @@ def test_worker_retries_transient_sqlite_claim_contention(tmp_path: Path) -> Non
     class TransientContentionJobs:
         def __init__(self) -> None:
             self.claim_attempts = 0
+
+        def set_audition_publication_boundaries(
+            self,
+            *,
+            before_publication: Callable[[str], bool],
+            after_write_claim: Callable[[], bool],
+        ) -> None:
+            del before_publication, after_write_claim
 
         def settle_pending_cancellation(self) -> bool:
             return False

@@ -2243,3 +2243,1824 @@ class CastingGateDecisionRow(Base):
             "id",
         ),
     )
+
+
+class SpeechRuntimeProfileRow(Base):
+    """Immutable managed-runtime policy and compatibility identity."""
+
+    __tablename__ = "speech_runtime_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(String(80))
+    profile_version: Mapped[str] = mapped_column(String(40))
+    provider_id: Mapped[str] = mapped_column(String(80))
+    provider_version: Mapped[str] = mapped_column(String(40))
+    runtime_id: Mapped[str] = mapped_column(String(80))
+    runtime_version: Mapped[str] = mapped_column(String(40))
+    protocol_version: Mapped[str] = mapped_column(String(40))
+    platform: Mapped[str] = mapped_column(String(24))
+    architecture: Mapped[str] = mapped_column(String(24))
+    network_policy: Mapped[str] = mapped_column(String(24))
+    startup_timeout_ms: Mapped[int] = mapped_column(Integer)
+    request_timeout_ms: Mapped[int] = mapped_column(Integer)
+    idle_shutdown_ms: Mapped[int] = mapped_column(Integer)
+    maximum_concurrency: Mapped[int] = mapped_column(Integer)
+    output_format_json: Mapped[str] = mapped_column(Text)
+    limits_json: Mapped[str] = mapped_column(Text)
+    profile_fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_id",
+            "profile_version",
+            name="uq_speech_runtime_profile_version",
+        ),
+        CheckConstraint(
+            "network_policy = 'deny_during_synthesis'",
+            name="ck_speech_runtime_profile_network",
+        ),
+        CheckConstraint(
+            "platform = 'windows' AND architecture IN ('x64', 'arm64')",
+            name="ck_speech_runtime_profile_platform",
+        ),
+        CheckConstraint(
+            "startup_timeout_ms >= 1 AND startup_timeout_ms <= 300000 "
+            "AND request_timeout_ms >= 1 AND request_timeout_ms <= 300000 "
+            "AND idle_shutdown_ms >= 0 AND idle_shutdown_ms <= 3600000",
+            name="ck_speech_runtime_profile_deadlines",
+        ),
+        CheckConstraint(
+            "maximum_concurrency >= 1 AND maximum_concurrency <= 16",
+            name="ck_speech_runtime_profile_concurrency",
+        ),
+        Index(
+            "ix_speech_runtime_profile_provider_active",
+            "provider_id",
+            "active",
+            "profile_version",
+            "id",
+        ),
+    )
+
+
+class ModelPackageManifestRow(Base):
+    """Allow-listed model-package inventory and immutable trust evidence."""
+
+    __tablename__ = "model_package_manifests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    package_id: Mapped[str] = mapped_column(String(120))
+    manifest_version: Mapped[str] = mapped_column(String(40))
+    provider_id: Mapped[str] = mapped_column(String(80))
+    provider_version: Mapped[str] = mapped_column(String(40))
+    model_id: Mapped[str] = mapped_column(String(80))
+    model_version: Mapped[str] = mapped_column(String(40))
+    runtime_id: Mapped[str] = mapped_column(String(80))
+    runtime_version: Mapped[str] = mapped_column(String(40))
+    platform: Mapped[str] = mapped_column(String(24))
+    architecture: Mapped[str] = mapped_column(String(24))
+    source_classification: Mapped[str] = mapped_column(String(32))
+    official_source_reference: Mapped[str] = mapped_column(String(1000))
+    license_identifier: Mapped[str] = mapped_column(String(160))
+    commercial_use_classification: Mapped[str] = mapped_column(String(32))
+    attribution_requirements_json: Mapped[str] = mapped_column(Text)
+    file_inventory_json: Mapped[str] = mapped_column(Text)
+    file_count: Mapped[int] = mapped_column(Integer)
+    total_expanded_size: Mapped[int] = mapped_column(Integer)
+    package_archive_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    required_runtime_dependencies_json: Mapped[str] = mapped_column(Text)
+    compatibility_constraints_json: Mapped[str] = mapped_column(Text)
+    revocation_state: Mapped[str] = mapped_column(String(24))
+    manifest_fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "package_id",
+            "manifest_version",
+            name="uq_model_package_manifest_version",
+        ),
+        CheckConstraint(
+            "source_classification IN "
+            "('official_release', 'official_model_repository', "
+            "'maintainer_referenced_conversion', 'repository_fixture')",
+            name="ck_model_package_source",
+        ),
+        CheckConstraint(
+            "commercial_use_classification IN "
+            "('allowed', 'restricted', 'fixture_only', 'unknown')",
+            name="ck_model_package_commercial_use",
+        ),
+        CheckConstraint(
+            "revocation_state IN ('active', 'deprecated', 'revoked')",
+            name="ck_model_package_revocation",
+        ),
+        CheckConstraint(
+            "file_count >= 1 AND file_count <= 4096 "
+            "AND total_expanded_size >= 1",
+            name="ck_model_package_inventory_size",
+        ),
+        Index(
+            "ix_model_package_provider_model_version",
+            "provider_id",
+            "model_id",
+            "model_version",
+            "revocation_state",
+            "id",
+        ),
+    )
+
+
+class ModelInstallationRow(Base):
+    """Append-only state transition for one stable managed installation."""
+
+    __tablename__ = "model_installations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    installation_id: Mapped[str] = mapped_column(String(36))
+    manifest_id: Mapped[str] = mapped_column(
+        ForeignKey("model_package_manifests.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    operation: Mapped[str] = mapped_column(String(24))
+    state: Mapped[str] = mapped_column(String(24))
+    storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    installed_byte_count: Mapped[int] = mapped_column(Integer)
+    package_fingerprint: Mapped[str] = mapped_column(String(64))
+    job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    supersedes_installation_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("model_installations.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    actor_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    reason: Mapped[str] = mapped_column(String(1000))
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+    completed_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "installation_id",
+            "revision",
+            name="uq_model_installation_revision",
+        ),
+        UniqueConstraint(
+            "installation_id",
+            "idempotency_key",
+            name="uq_model_installation_idempotency",
+        ),
+        CheckConstraint("revision >= 1", name="ck_model_installation_revision"),
+        CheckConstraint(
+            "operation IN ('install', 'verify', 'activate', 'deactivate', 'repair', 'remove')",
+            name="ck_model_installation_operation",
+        ),
+        CheckConstraint(
+            "state IN "
+            "('pending', 'installed', 'active', 'inactive', "
+            "'repair_required', 'removed', 'failed')",
+            name="ck_model_installation_state",
+        ),
+        CheckConstraint(
+            "installed_byte_count >= 0",
+            name="ck_model_installation_byte_count",
+        ),
+        CheckConstraint(
+            "length(trim(reason)) >= 1 AND length(reason) <= 1000",
+            name="ck_model_installation_reason",
+        ),
+        Index(
+            "ix_model_installation_identity_revision",
+            "installation_id",
+            "revision",
+            "id",
+        ),
+        Index(
+            "ix_model_installation_manifest_state",
+            "manifest_id",
+            "state",
+            "created_at",
+            "id",
+        ),
+    )
+
+
+class ModelVerificationRow(Base):
+    """Immutable exact-file verification evidence for an installation revision."""
+
+    __tablename__ = "model_verifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    installation_record_id: Mapped[str] = mapped_column(
+        ForeignKey("model_installations.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    installation_id: Mapped[str] = mapped_column(String(36))
+    manifest_id: Mapped[str] = mapped_column(
+        ForeignKey("model_package_manifests.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    outcome: Mapped[str] = mapped_column(String(24))
+    manifest_fingerprint: Mapped[str] = mapped_column(String(64))
+    package_fingerprint: Mapped[str] = mapped_column(String(64))
+    verified_file_count: Mapped[int] = mapped_column(Integer)
+    verified_byte_count: Mapped[int] = mapped_column(Integer)
+    verifier_id: Mapped[str] = mapped_column(String(80))
+    verifier_version: Mapped[str] = mapped_column(String(40))
+    findings_json: Mapped[str] = mapped_column(Text)
+    verification_fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    supersedes_verification_id: Mapped[str | None] = mapped_column(
+        ForeignKey("model_verifications.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    provenance_json: Mapped[str] = mapped_column(Text)
+    started_at: Mapped[str] = mapped_column(String(32))
+    finished_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "installation_id",
+            "revision",
+            name="uq_model_verification_revision",
+        ),
+        CheckConstraint("revision >= 1", name="ck_model_verification_revision"),
+        CheckConstraint(
+            "outcome IN ('verified', 'mismatch', 'missing', 'unsafe')",
+            name="ck_model_verification_outcome",
+        ),
+        CheckConstraint(
+            "verified_file_count >= 0 AND verified_byte_count >= 0",
+            name="ck_model_verification_counts",
+        ),
+        Index(
+            "ix_model_verification_installation_revision",
+            "installation_id",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class SpeechRuntimeInstanceRow(Base):
+    """One managed worker process identity and bounded lifecycle record."""
+
+    __tablename__ = "speech_runtime_instances"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    runtime_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("speech_runtime_profiles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    model_installation_record_id: Mapped[str] = mapped_column(
+        ForeignKey("model_installations.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    model_verification_id: Mapped[str] = mapped_column(
+        ForeignKey("model_verifications.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    provider_id: Mapped[str] = mapped_column(String(80))
+    provider_version: Mapped[str] = mapped_column(String(40))
+    runtime_id: Mapped[str] = mapped_column(String(80))
+    runtime_version: Mapped[str] = mapped_column(String(40))
+    model_id: Mapped[str] = mapped_column(String(80))
+    model_version: Mapped[str] = mapped_column(String(40))
+    model_package_fingerprint: Mapped[str] = mapped_column(String(64))
+    runtime_profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    protocol_version: Mapped[str] = mapped_column(String(40))
+    handshake_fingerprint: Mapped[str] = mapped_column(String(64))
+    worker_pid: Mapped[int] = mapped_column(Integer)
+    parent_pid: Mapped[int] = mapped_column(Integer)
+    executable_identity: Mapped[str] = mapped_column(String(200))
+    executable_sha256: Mapped[str] = mapped_column(String(64))
+    creation_identity: Mapped[str] = mapped_column(String(160))
+    state: Mapped[str] = mapped_column(String(24))
+    health_status: Mapped[str] = mapped_column(String(24))
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    started_at: Mapped[str] = mapped_column(String(32))
+    ready_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_health_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_used_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    stopped_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("worker_pid >= 1 AND parent_pid >= 1", name="ck_speech_runtime_pids"),
+        CheckConstraint(
+            "state IN "
+            "('starting', 'ready', 'busy', 'idle', 'stopping', 'stopped', 'failed')",
+            name="ck_speech_runtime_state",
+        ),
+        CheckConstraint(
+            "health_status IN "
+            "('available', 'degraded', 'unavailable', 'unauthorized', 'disabled', 'restricted')",
+            name="ck_speech_runtime_health",
+        ),
+        Index(
+            "ix_speech_runtime_profile_state_started",
+            "runtime_profile_id",
+            "state",
+            "started_at",
+            "id",
+        ),
+        Index(
+            "ix_speech_runtime_process_identity",
+            "parent_pid",
+            "worker_pid",
+            "creation_identity",
+            "id",
+        ),
+    )
+
+
+class VoiceRuntimeBindingRow(Base):
+    """Exact governed catalog voice to local runtime/model/voice binding."""
+
+    __tablename__ = "voice_runtime_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    binding_kind: Mapped[str] = mapped_column(String(32))
+    voice_profile_record_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_profiles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    voice_profile_id: Mapped[str] = mapped_column(String(80))
+    voice_profile_version: Mapped[str] = mapped_column(String(40))
+    voice_profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    source_provider_descriptor_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_provider_descriptors.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    source_provider_id: Mapped[str] = mapped_column(String(80))
+    source_provider_version: Mapped[str] = mapped_column(String(40))
+    source_provider_fingerprint: Mapped[str] = mapped_column(String(64))
+    source_model_descriptor_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_model_descriptors.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    source_model_id: Mapped[str] = mapped_column(String(80))
+    source_model_version: Mapped[str] = mapped_column(String(40))
+    source_model_fingerprint: Mapped[str] = mapped_column(String(64))
+    provider_id: Mapped[str] = mapped_column(String(80))
+    provider_version: Mapped[str] = mapped_column(String(40))
+    provider_voice_id: Mapped[str] = mapped_column(String(120))
+    model_id: Mapped[str] = mapped_column(String(80))
+    model_version: Mapped[str] = mapped_column(String(40))
+    model_manifest_id: Mapped[str] = mapped_column(
+        ForeignKey("model_package_manifests.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    model_package_id: Mapped[str] = mapped_column(String(120))
+    model_package_fingerprint: Mapped[str] = mapped_column(String(64))
+    runtime_profile_record_id: Mapped[str] = mapped_column(
+        ForeignKey("speech_runtime_profiles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    runtime_profile_id: Mapped[str] = mapped_column(String(120))
+    runtime_profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    binding_fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        CheckConstraint(
+            "binding_kind IN ('exact_provider_match', 'declared_fixture_adapter')",
+            name="ck_voice_runtime_binding_kind",
+        ),
+        UniqueConstraint(
+            "voice_profile_record_id",
+            "provider_id",
+            "model_package_fingerprint",
+            "runtime_profile_fingerprint",
+            "provider_voice_id",
+            name="uq_voice_runtime_binding_exact_target",
+        ),
+        CheckConstraint(
+            "length(voice_profile_fingerprint) = 64 "
+            "AND length(source_provider_fingerprint) = 64 "
+            "AND length(source_model_fingerprint) = 64 "
+            "AND length(model_package_fingerprint) = 64 "
+            "AND length(runtime_profile_fingerprint) = 64 "
+            "AND length(binding_fingerprint) = 64",
+            name="ck_voice_runtime_binding_fingerprints",
+        ),
+        Index(
+            "ix_voice_runtime_binding_profile_active",
+            "voice_profile_record_id",
+            "active",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_voice_runtime_binding_target",
+            "provider_id",
+            "model_id",
+            "provider_voice_id",
+            "active",
+            "id",
+        ),
+    )
+
+
+class PronunciationDictionaryRow(Base):
+    """Immutable project dictionary revision and active-entry manifest."""
+
+    __tablename__ = "pronunciation_dictionaries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    dictionary_id: Mapped[str] = mapped_column(String(36))
+    revision: Mapped[int] = mapped_column(Integer)
+    default_language: Mapped[str] = mapped_column(String(16))
+    default_locale: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    entry_count: Mapped[int] = mapped_column(Integer)
+    active_entry_ids_json: Mapped[str] = mapped_column(Text)
+    dictionary_fingerprint: Mapped[str] = mapped_column(String(64))
+    producer_id: Mapped[str] = mapped_column(String(80))
+    producer_version: Mapped[str] = mapped_column(String(40))
+    supersedes_dictionary_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("pronunciation_dictionaries.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "dictionary_id",
+            "revision",
+            name="uq_pronunciation_dictionary_revision",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "dictionary_fingerprint",
+            name="uq_pronunciation_dictionary_fingerprint",
+        ),
+        CheckConstraint("revision >= 1", name="ck_pronunciation_dictionary_revision"),
+        CheckConstraint(
+            "entry_count >= 0 AND entry_count <= 1000",
+            name="ck_pronunciation_dictionary_entry_count",
+        ),
+        Index(
+            "ix_pronunciation_dictionary_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_pronunciation_dictionary_identity_revision",
+            "project_id",
+            "dictionary_id",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class PronunciationEntryRow(Base):
+    """Append-only pronunciation entry revision with explicit scope and authority."""
+
+    __tablename__ = "pronunciation_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    dictionary_record_id: Mapped[str] = mapped_column(
+        ForeignKey("pronunciation_dictionaries.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    dictionary_id: Mapped[str] = mapped_column(String(36))
+    dictionary_revision: Mapped[int] = mapped_column(Integer)
+    entry_id: Mapped[str] = mapped_column(String(36))
+    revision: Mapped[int] = mapped_column(Integer)
+    written_form: Mapped[str] = mapped_column(String(1000))
+    normalized_lookup_form: Mapped[str] = mapped_column(String(1000))
+    language: Mapped[str] = mapped_column(String(16))
+    locale: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scope_type: Mapped[str] = mapped_column(String(24))
+    scope_target_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    provider_neutral_value: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    ipa_value: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    provider_specific_json: Mapped[str] = mapped_column(Text, default="{}")
+    case_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    whole_word: Mapped[bool] = mapped_column(Boolean, default=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    verification_state: Mapped[str] = mapped_column(String(24))
+    entry_fingerprint: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[str] = mapped_column(String(80))
+    reason: Mapped[str] = mapped_column(String(1000))
+    supersedes_entry_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("pronunciation_entries.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "entry_id",
+            "revision",
+            name="uq_pronunciation_entry_revision",
+        ),
+        UniqueConstraint(
+            "dictionary_record_id",
+            "entry_fingerprint",
+            name="uq_pronunciation_entry_dictionary_fingerprint",
+        ),
+        CheckConstraint(
+            "dictionary_revision >= 1 AND revision >= 1",
+            name="ck_pronunciation_entry_revisions",
+        ),
+        CheckConstraint(
+            "scope_type IN "
+            "('project', 'narrator', 'character_role', 'chapter', 'scene', 'custom')",
+            name="ck_pronunciation_entry_scope",
+        ),
+        CheckConstraint(
+            "(scope_type = 'project' AND scope_target_id IS NULL) OR "
+            "(scope_type != 'project' AND scope_target_id IS NOT NULL)",
+            name="ck_pronunciation_entry_scope_target",
+        ),
+        CheckConstraint(
+            "priority >= -1000 AND priority <= 1000",
+            name="ck_pronunciation_entry_priority",
+        ),
+        CheckConstraint(
+            "verification_state IN "
+            "('pending', 'approved', 'rejected', 'changes_requested', 'superseded')",
+            name="ck_pronunciation_entry_verification",
+        ),
+        CheckConstraint(
+            "length(written_form) >= 1 AND length(written_form) <= 120 "
+            "AND length(normalized_lookup_form) >= 1 "
+            "AND length(normalized_lookup_form) <= 120",
+            name="ck_pronunciation_entry_forms",
+        ),
+        CheckConstraint(
+            "(provider_neutral_value IS NULL OR "
+            "(length(provider_neutral_value) >= 1 AND length(provider_neutral_value) <= 256)) "
+            "AND (ipa_value IS NULL OR "
+            "(length(ipa_value) >= 1 AND length(ipa_value) <= 256))",
+            name="ck_pronunciation_entry_values",
+        ),
+        CheckConstraint(
+            "length(trim(reason)) >= 1 AND length(reason) <= 2000",
+            name="ck_pronunciation_entry_reason",
+        ),
+        Index(
+            "ix_pronunciation_entry_project_lookup_scope",
+            "project_id",
+            "normalized_lookup_form",
+            "scope_type",
+            "scope_target_id",
+            "priority",
+            "id",
+        ),
+        Index(
+            "ix_pronunciation_entry_dictionary_order",
+            "dictionary_record_id",
+            "normalized_lookup_form",
+            "entry_id",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class AuditionSessionRow(Base):
+    """Immutable governed evidence envelope for one role audition session."""
+
+    __tablename__ = "audition_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    source_document_id: Mapped[str] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    source_revision: Mapped[int] = mapped_column(Integer)
+    extraction_id: Mapped[str] = mapped_column(
+        ForeignKey("document_extractions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    extraction_revision: Mapped[int] = mapped_column(Integer)
+    extracted_text_sha256: Mapped[str] = mapped_column(String(64))
+    analysis_run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    analysis_snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    analysis_snapshot_fingerprint: Mapped[str] = mapped_column(String(64))
+    analysis_correction_set_fingerprint: Mapped[str] = mapped_column(String(64))
+    casting_run_id: Mapped[str] = mapped_column(
+        ForeignKey("casting_runs.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    cast_snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("approved_cast_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    cast_snapshot_revision: Mapped[int] = mapped_column(Integer)
+    cast_snapshot_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase2_gate_decision_ids_json: Mapped[str] = mapped_column(Text)
+    phase3a_gate_decision_ids_json: Mapped[str] = mapped_column(Text)
+    role_id: Mapped[str] = mapped_column(
+        ForeignKey("production_roles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    assignment_id: Mapped[str] = mapped_column(
+        ForeignKey("cast_assignments.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    assignment_revision: Mapped[int] = mapped_column(Integer)
+    voice_profile_record_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_profiles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    voice_profile_id: Mapped[str] = mapped_column(String(80))
+    voice_profile_version: Mapped[str] = mapped_column(String(40))
+    voice_runtime_binding_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_runtime_bindings.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    voice_runtime_binding_fingerprint: Mapped[str] = mapped_column(String(64))
+    provider_voice_id: Mapped[str] = mapped_column(String(120))
+    provider_id: Mapped[str] = mapped_column(String(80))
+    provider_version: Mapped[str] = mapped_column(String(40))
+    model_id: Mapped[str] = mapped_column(String(80))
+    model_version: Mapped[str] = mapped_column(String(40))
+    catalog_revision_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_catalog_revisions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    catalog_fingerprint: Mapped[str] = mapped_column(String(64))
+    rights_record_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_rights_records.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    rights_revision: Mapped[int] = mapped_column(Integer)
+    pronunciation_dictionary_record_id: Mapped[str] = mapped_column(
+        ForeignKey("pronunciation_dictionaries.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    pronunciation_dictionary_revision: Mapped[int] = mapped_column(Integer)
+    pronunciation_dictionary_fingerprint: Mapped[str] = mapped_column(String(64))
+    runtime_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("speech_runtime_profiles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    runtime_profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    model_manifest_id: Mapped[str] = mapped_column(
+        ForeignKey("model_package_manifests.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    model_installation_record_id: Mapped[str] = mapped_column(
+        ForeignKey("model_installations.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    model_verification_id: Mapped[str] = mapped_column(
+        ForeignKey("model_verifications.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    model_package_fingerprint: Mapped[str] = mapped_column(String(64))
+    producer_id: Mapped[str] = mapped_column(String(80))
+    producer_version: Mapped[str] = mapped_column(String(40))
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(24))
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    supersedes_session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("audition_sessions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+    published_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "idempotency_key",
+            name="uq_audition_session_idempotency",
+        ),
+        CheckConstraint(
+            "revision >= 1 AND source_revision >= 1 AND extraction_revision >= 1 "
+            "AND cast_snapshot_revision >= 1 AND assignment_revision >= 1 "
+            "AND rights_revision >= 1 AND pronunciation_dictionary_revision >= 1",
+            name="ck_audition_session_revisions",
+        ),
+        CheckConstraint(
+            "state IN "
+            "('draft', 'queued', 'generating', 'reviewable', 'failed', "
+            "'cancelled', 'invalidated')",
+            name="ck_audition_session_state",
+        ),
+        Index(
+            "ix_audition_session_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audition_session_project_role_created",
+            "project_id",
+            "role_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audition_session_assignment_evidence",
+            "project_id",
+            "assignment_id",
+            "assignment_revision",
+            "created_at",
+            "id",
+        ),
+    )
+
+
+class AuditionScriptRow(Base):
+    """Versioned bounded script metadata; manuscript text remains in private storage."""
+
+    __tablename__ = "audition_scripts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_sessions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    script_id: Mapped[str] = mapped_column(String(36))
+    revision: Mapped[int] = mapped_column(Integer)
+    script_type: Mapped[str] = mapped_column(String(32))
+    role_id: Mapped[str] = mapped_column(
+        ForeignKey("production_roles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    source_document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    extraction_id: Mapped[str | None] = mapped_column(
+        ForeignKey("document_extractions.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    source_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_analysis_entity_id: Mapped[str | None] = mapped_column(
+        ForeignKey("analysis_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    source_analysis_entity_collection: Mapped[str | None] = mapped_column(
+        String(40),
+        nullable=True,
+    )
+    source_analysis_entity_effective_revision: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    source_analysis_entity_fingerprint: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    exact_text_sha256: Mapped[str] = mapped_column(String(64))
+    text_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    synthetic_text_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    text_codepoint_count: Mapped[int] = mapped_column(Integer)
+    script_fingerprint: Mapped[str] = mapped_column(String(64))
+    supersedes_script_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("audition_scripts.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "script_id",
+            "revision",
+            name="uq_audition_script_revision",
+        ),
+        UniqueConstraint(
+            "session_id",
+            "script_fingerprint",
+            name="uq_audition_script_session_fingerprint",
+        ),
+        CheckConstraint("revision >= 1", name="ck_audition_script_revision"),
+        CheckConstraint(
+            "script_type IN "
+            "('standardized_synthetic', 'approved_manuscript_excerpt', "
+            "'role_dialogue_excerpt', "
+            "'narrator_excerpt', 'pronunciation_test', 'synthetic_fallback')",
+            name="ck_audition_script_type",
+        ),
+        CheckConstraint(
+            "(source_document_id IS NULL AND extraction_id IS NULL "
+            "AND source_start_offset IS NULL AND source_end_offset IS NULL) OR "
+            "(source_document_id IS NOT NULL AND extraction_id IS NOT NULL "
+            "AND source_start_offset >= 0 AND source_end_offset > source_start_offset)",
+            name="ck_audition_script_source_span",
+        ),
+        CheckConstraint(
+            "((script_type IN ('role_dialogue_excerpt', 'narrator_excerpt')) "
+            "AND source_analysis_entity_id IS NOT NULL "
+            "AND source_analysis_entity_collection IS NOT NULL "
+            "AND source_analysis_entity_effective_revision >= 1 "
+            "AND length(source_analysis_entity_fingerprint) = 64) OR "
+            "((script_type NOT IN ('role_dialogue_excerpt', 'narrator_excerpt')) "
+            "AND source_analysis_entity_id IS NULL "
+            "AND source_analysis_entity_collection IS NULL "
+            "AND source_analysis_entity_effective_revision IS NULL "
+            "AND source_analysis_entity_fingerprint IS NULL)",
+            name="ck_audition_script_semantic_source",
+        ),
+        CheckConstraint(
+            "text_codepoint_count >= 1 AND text_codepoint_count <= 4000",
+            name="ck_audition_script_text_count",
+        ),
+        CheckConstraint(
+            "text_storage_key IS NOT NULL OR synthetic_text_id IS NOT NULL",
+            name="ck_audition_script_storage_source",
+        ),
+        Index(
+            "ix_audition_script_session_created",
+            "session_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+
+class TextNormalizationPlanRow(Base):
+    """Inspectable normalization and compiled-pronunciation plan."""
+
+    __tablename__ = "text_normalization_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_sessions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    script_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_scripts.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    normalization_profile_id: Mapped[str] = mapped_column(String(80))
+    normalization_profile_version: Mapped[str] = mapped_column(String(40))
+    provider_id: Mapped[str] = mapped_column(String(80))
+    provider_version: Mapped[str] = mapped_column(String(40))
+    original_text_sha256: Mapped[str] = mapped_column(String(64))
+    normalized_text_sha256: Mapped[str] = mapped_column(String(64))
+    transformations_json: Mapped[str] = mapped_column(Text)
+    pronunciation_dictionary_record_id: Mapped[str] = mapped_column(
+        ForeignKey("pronunciation_dictionaries.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    pronunciation_dictionary_revision: Mapped[int] = mapped_column(Integer)
+    pronunciation_dictionary_fingerprint: Mapped[str] = mapped_column(String(64))
+    pronunciation_entry_ids_json: Mapped[str] = mapped_column(Text)
+    compiled_pronunciation_json: Mapped[str] = mapped_column(Text)
+    pronunciation_plan_fingerprint: Mapped[str] = mapped_column(String(64))
+    unsupported_characters_json: Mapped[str] = mapped_column(Text)
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    human_approval_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    plan_fingerprint: Mapped[str] = mapped_column(String(64))
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "script_id",
+            "revision",
+            name="uq_text_normalization_plan_revision",
+        ),
+        UniqueConstraint(
+            "session_id",
+            "plan_fingerprint",
+            name="uq_text_normalization_plan_fingerprint",
+        ),
+        CheckConstraint("revision >= 1", name="ck_text_normalization_plan_revision"),
+        CheckConstraint(
+            "pronunciation_dictionary_revision >= 1",
+            name="ck_text_normalization_dictionary_revision",
+        ),
+        Index(
+            "ix_text_normalization_session_script_revision",
+            "project_id",
+            "session_id",
+            "script_id",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class SpeechProviderRequestRow(Base):
+    """Content-free durable execution record for a cache lookup or synthesis call."""
+
+    __tablename__ = "speech_provider_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    attempt: Mapped[int] = mapped_column(Integer)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_sessions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    script_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_scripts.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    normalization_plan_id: Mapped[str] = mapped_column(
+        ForeignKey("text_normalization_plans.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    runtime_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("speech_runtime_profiles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    runtime_instance_id: Mapped[str | None] = mapped_column(
+        ForeignKey("speech_runtime_instances.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    model_installation_record_id: Mapped[str] = mapped_column(
+        ForeignKey("model_installations.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    model_verification_id: Mapped[str] = mapped_column(
+        ForeignKey("model_verifications.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    voice_profile_record_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_profiles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    assignment_id: Mapped[str] = mapped_column(
+        ForeignKey("cast_assignments.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    assignment_revision: Mapped[int] = mapped_column(Integer)
+    provider_id: Mapped[str] = mapped_column(String(80))
+    provider_version: Mapped[str] = mapped_column(String(40))
+    provider_operation_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    model_id: Mapped[str] = mapped_column(String(80))
+    model_version: Mapped[str] = mapped_column(String(40))
+    model_package_fingerprint: Mapped[str] = mapped_column(String(64))
+    runtime_profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    voice_profile_id: Mapped[str] = mapped_column(String(80))
+    voice_profile_version: Mapped[str] = mapped_column(String(40))
+    voice_runtime_binding_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_runtime_bindings.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    voice_runtime_binding_fingerprint: Mapped[str] = mapped_column(String(64))
+    provider_voice_id: Mapped[str] = mapped_column(String(120))
+    normalized_text_sha256: Mapped[str] = mapped_column(String(64))
+    pronunciation_plan_fingerprint: Mapped[str] = mapped_column(String(64))
+    provider_control_fingerprint: Mapped[str] = mapped_column(String(64))
+    cache_key: Mapped[str] = mapped_column(String(64))
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    outcome: Mapped[str] = mapped_column(String(24))
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False)
+    output_artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    audio_properties_json: Mapped[str] = mapped_column(Text, default="{}")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    started_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    finished_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "attempt",
+            "request_fingerprint",
+            name="uq_speech_provider_request_attempt",
+        ),
+        UniqueConstraint(
+            "job_id",
+            "idempotency_key",
+            name="uq_speech_provider_request_idempotency",
+        ),
+        CheckConstraint(
+            "attempt >= 1 AND assignment_revision >= 1",
+            name="ck_speech_provider_request_revisions",
+        ),
+        CheckConstraint(
+            "outcome IN "
+            "('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_speech_provider_request_outcome",
+        ),
+        Index(
+            "ix_speech_provider_request_project_started",
+            "project_id",
+            "started_at",
+            "id",
+        ),
+        Index(
+            "ix_speech_provider_request_cache_key",
+            "project_id",
+            "cache_key",
+            "started_at",
+            "id",
+        ),
+    )
+
+
+class AudioArtifactRow(Base):
+    """Opaque managed PCM WAV artifact metadata; paths never cross the API boundary."""
+
+    __tablename__ = "audio_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    provider_request_id: Mapped[str] = mapped_column(
+        ForeignKey("speech_provider_requests.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    storage_key: Mapped[str] = mapped_column(String(512))
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    byte_count: Mapped[int] = mapped_column(Integer)
+    container_format: Mapped[str] = mapped_column(String(16))
+    codec: Mapped[str] = mapped_column(String(24))
+    sample_format: Mapped[str] = mapped_column(String(24))
+    sample_rate_hz: Mapped[int] = mapped_column(Integer)
+    channel_count: Mapped[int] = mapped_column(Integer)
+    sample_width_bytes: Mapped[int] = mapped_column(Integer)
+    frame_count: Mapped[int] = mapped_column(Integer)
+    duration_ms: Mapped[int] = mapped_column(Integer)
+    artifact_fingerprint: Mapped[str] = mapped_column(String(64))
+    availability: Mapped[str] = mapped_column(String(24))
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+    purged_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "storage_key",
+            name="uq_audio_artifact_storage_key",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "artifact_fingerprint",
+            name="uq_audio_artifact_fingerprint",
+        ),
+        CheckConstraint(
+            "byte_count >= 1 AND byte_count <= 25165824",
+            name="ck_audio_artifact_byte_count",
+        ),
+        CheckConstraint(
+            "container_format = 'wav' AND codec = 'pcm_s16le'",
+            name="ck_audio_artifact_format",
+        ),
+        CheckConstraint(
+            "sample_rate_hz = 24000 AND channel_count = 1 "
+            "AND sample_width_bytes = 2",
+            name="ck_audio_artifact_sample_properties",
+        ),
+        CheckConstraint(
+            "frame_count >= 1 AND duration_ms >= 1 AND duration_ms <= 30000",
+            name="ck_audio_artifact_duration",
+        ),
+        CheckConstraint(
+            "availability IN ('present', 'purged', 'corrupt', 'quarantined')",
+            name="ck_audio_artifact_availability",
+        ),
+        Index(
+            "ix_audio_artifact_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audio_artifact_project_content",
+            "project_id",
+            "content_sha256",
+            "id",
+        ),
+    )
+
+
+class AuditionCacheRecordRow(Base):
+    """Project-private cache index with verified artifact identity and tombstone state."""
+
+    __tablename__ = "audition_cache_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    cache_key: Mapped[str] = mapped_column(String(64))
+    voice_runtime_binding_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_runtime_bindings.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    voice_runtime_binding_fingerprint: Mapped[str] = mapped_column(String(64))
+    provider_voice_id: Mapped[str] = mapped_column(String(120))
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("audio_artifacts.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    provider_request_id: Mapped[str] = mapped_column(
+        ForeignKey("speech_provider_requests.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_sessions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    script_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_scripts.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    expected_artifact_sha256: Mapped[str] = mapped_column(String(64))
+    expected_byte_count: Mapped[int] = mapped_column(Integer)
+    expected_audio_properties_json: Mapped[str] = mapped_column(Text)
+    verification_fingerprint: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(24))
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[str] = mapped_column(String(32))
+    last_verified_at: Mapped[str] = mapped_column(String(32))
+    last_hit_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    purged_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "cache_key",
+            name="uq_audition_cache_project_key",
+        ),
+        CheckConstraint(
+            "expected_byte_count >= 1 AND hit_count >= 0",
+            name="ck_audition_cache_counts",
+        ),
+        CheckConstraint(
+            "state IN ('verified', 'corrupt', 'missing', 'cleared')",
+            name="ck_audition_cache_state",
+        ),
+        Index(
+            "ix_audition_cache_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audition_cache_project_state_verified",
+            "project_id",
+            "state",
+            "last_verified_at",
+            "id",
+        ),
+    )
+
+
+class AuditionClipRow(Base):
+    """Immutable published clip binding a request to one verified artifact."""
+
+    __tablename__ = "audition_clips"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_sessions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    script_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_scripts.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    provider_request_id: Mapped[str] = mapped_column(
+        ForeignKey("speech_provider_requests.id", ondelete="RESTRICT"),
+        unique=True,
+        index=True,
+    )
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("audio_artifacts.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    cache_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("audition_cache_records.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    role_id: Mapped[str] = mapped_column(
+        ForeignKey("production_roles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    assignment_id: Mapped[str] = mapped_column(
+        ForeignKey("cast_assignments.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    assignment_revision: Mapped[int] = mapped_column(Integer)
+    voice_profile_record_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_profiles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    cache_key: Mapped[str] = mapped_column(String(64))
+    cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+    clip_fingerprint: Mapped[str] = mapped_column(String(64))
+    producer_id: Mapped[str] = mapped_column(String(80))
+    producer_version: Mapped[str] = mapped_column(String(40))
+    supersedes_clip_id: Mapped[str | None] = mapped_column(
+        ForeignKey("audition_clips.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "script_id",
+            "revision",
+            name="uq_audition_clip_revision",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "clip_fingerprint",
+            name="uq_audition_clip_fingerprint",
+        ),
+        CheckConstraint(
+            "revision >= 1 AND assignment_revision >= 1",
+            name="ck_audition_clip_revisions",
+        ),
+        Index(
+            "ix_audition_clip_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audition_clip_project_role_created",
+            "project_id",
+            "role_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audition_clip_session_script_revision",
+            "session_id",
+            "script_id",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class AudioQualityRecordRow(Base):
+    """Immutable machine integrity result; never a subjective quality claim."""
+
+    __tablename__ = "audio_quality_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    clip_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_clips.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("audio_artifacts.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    provider_request_id: Mapped[str] = mapped_column(
+        ForeignKey("speech_provider_requests.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    policy_id: Mapped[str] = mapped_column(String(80))
+    policy_version: Mapped[str] = mapped_column(String(40))
+    policy_fingerprint: Mapped[str] = mapped_column(String(64))
+    outcome: Mapped[str] = mapped_column(String(24))
+    peak_millidbfs: Mapped[int] = mapped_column(Integer)
+    rms_millidbfs: Mapped[int] = mapped_column(Integer)
+    silence_ratio_ppm: Mapped[int] = mapped_column(Integer)
+    clipped_sample_count: Mapped[int] = mapped_column(Integer)
+    warning_count: Mapped[int] = mapped_column(Integer)
+    blocking_finding_count: Mapped[int] = mapped_column(Integer)
+    findings_json: Mapped[str] = mapped_column(Text)
+    quality_fingerprint: Mapped[str] = mapped_column(String(64))
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_id",
+            "revision",
+            name="uq_audio_quality_artifact_revision",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "quality_fingerprint",
+            name="uq_audio_quality_fingerprint",
+        ),
+        CheckConstraint("revision >= 1", name="ck_audio_quality_revision"),
+        CheckConstraint(
+            "outcome IN ('passed', 'warning', 'blocked')",
+            name="ck_audio_quality_outcome",
+        ),
+        CheckConstraint(
+            "peak_millidbfs >= -200000 AND peak_millidbfs <= 0 "
+            "AND rms_millidbfs >= -200000 AND rms_millidbfs <= 0 "
+            "AND silence_ratio_ppm >= 0 AND silence_ratio_ppm <= 1000000",
+            name="ck_audio_quality_measurements",
+        ),
+        CheckConstraint(
+            "clipped_sample_count >= 0 AND warning_count >= 0 "
+            "AND blocking_finding_count >= 0",
+            name="ck_audio_quality_counts",
+        ),
+        Index(
+            "ix_audio_quality_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audio_quality_clip_revision",
+            "clip_id",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class AuditionReviewRecordRow(Base):
+    """Immutable eligibility evaluation for one scoped audition gate revision."""
+
+    __tablename__ = "audition_review_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    gate_id: Mapped[str] = mapped_column(String(48))
+    scope_key: Mapped[str] = mapped_column(String(160))
+    subject_type: Mapped[str] = mapped_column(String(32))
+    revision: Mapped[int] = mapped_column(Integer)
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("audition_sessions.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    clip_id: Mapped[str | None] = mapped_column(
+        ForeignKey("audition_clips.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    role_id: Mapped[str | None] = mapped_column(
+        ForeignKey("production_roles.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    pronunciation_dictionary_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("pronunciation_dictionaries.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    eligible: Mapped[bool] = mapped_column(Boolean)
+    evidence_json: Mapped[str] = mapped_column(Text)
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64))
+    required_decision_ids_json: Mapped[str] = mapped_column(Text)
+    blockers_json: Mapped[str] = mapped_column(Text, default="[]")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "gate_id",
+            "scope_key",
+            "revision",
+            name="uq_audition_review_scope_revision",
+        ),
+        CheckConstraint("revision >= 1", name="ck_audition_review_revision"),
+        CheckConstraint(
+            "gate_id IN "
+            "('per_role_audition_review', 'narrator_audition_review', "
+            "'character_audition_review', 'pronunciation_review')",
+            name="ck_audition_review_gate",
+        ),
+        CheckConstraint(
+            "subject_type IN "
+            "('role', 'narrator_scope', 'character_scope', 'pronunciation_dictionary')",
+            name="ck_audition_review_subject",
+        ),
+        Index(
+            "ix_audition_review_project_gate_scope_revision",
+            "project_id",
+            "gate_id",
+            "scope_key",
+            "revision",
+            "id",
+        ),
+        Index(
+            "ix_audition_review_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+
+class AuditionReviewDecisionRow(Base):
+    """Append-only human decision or machine invalidation for an audition review."""
+
+    __tablename__ = "audition_review_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    review_record_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_review_records.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    gate_id: Mapped[str] = mapped_column(String(48))
+    scope_key: Mapped[str] = mapped_column(String(160))
+    revision: Mapped[int] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(24))
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64))
+    actor_classification: Mapped[str] = mapped_column(String(16))
+    actor_id: Mapped[str] = mapped_column(String(80))
+    warning_acknowledgements_json: Mapped[str] = mapped_column(Text, default="[]")
+    rationale: Mapped[str] = mapped_column(String(4000))
+    supersedes_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("audition_review_decisions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    provenance_json: Mapped[str] = mapped_column(Text)
+    decided_at: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "gate_id",
+            "scope_key",
+            "revision",
+            name="uq_audition_review_decision_revision",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "gate_id",
+            "scope_key",
+            "idempotency_key",
+            name="uq_audition_review_decision_idempotency",
+        ),
+        CheckConstraint("revision >= 1", name="ck_audition_review_decision_revision"),
+        CheckConstraint(
+            "gate_id IN "
+            "('per_role_audition_review', 'narrator_audition_review', "
+            "'character_audition_review', 'pronunciation_review')",
+            name="ck_audition_review_decision_gate",
+        ),
+        CheckConstraint(
+            "decision IN ('approved', 'rejected', 'changes_requested', 'invalidated')",
+            name="ck_audition_review_decision_state",
+        ),
+        CheckConstraint(
+            "(decision = 'invalidated' AND actor_classification = 'system') OR "
+            "(decision != 'invalidated' AND actor_classification = 'human')",
+            name="ck_audition_review_decision_authority",
+        ),
+        CheckConstraint(
+            "length(trim(rationale)) >= 1 AND length(rationale) <= 4000",
+            name="ck_audition_review_decision_rationale",
+        ),
+        Index(
+            "ix_audition_review_decision_project_gate_scope",
+            "project_id",
+            "gate_id",
+            "scope_key",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class VoiceReadinessSnapshotRow(Base):
+    """Immutable aggregate of all evidence required for later voice work."""
+
+    __tablename__ = "voice_readiness_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    cast_snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("approved_cast_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    model_verification_id: Mapped[str] = mapped_column(
+        ForeignKey("model_verifications.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    pronunciation_dictionary_record_id: Mapped[str] = mapped_column(
+        ForeignKey("pronunciation_dictionaries.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    narrator_review_decision_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_review_decisions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    character_review_decision_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_review_decisions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    pronunciation_review_decision_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_review_decisions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    phase3a_gate_decision_ids_json: Mapped[str] = mapped_column(Text)
+    required_role_count: Mapped[int] = mapped_column(Integer)
+    approved_role_count: Mapped[int] = mapped_column(Integer)
+    blocking_finding_count: Mapped[int] = mapped_column(Integer)
+    evidence_json: Mapped[str] = mapped_column(Text)
+    snapshot_fingerprint: Mapped[str] = mapped_column(String(64))
+    blockers_json: Mapped[str] = mapped_column(Text, default="[]")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "revision",
+            name="uq_voice_readiness_snapshot_revision",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "snapshot_fingerprint",
+            name="uq_voice_readiness_snapshot_fingerprint",
+        ),
+        CheckConstraint("revision >= 1", name="ck_voice_readiness_snapshot_revision"),
+        CheckConstraint(
+            "required_role_count >= 0 AND approved_role_count >= 0 "
+            "AND approved_role_count <= required_role_count "
+            "AND blocking_finding_count >= 0",
+            name="ck_voice_readiness_snapshot_counts",
+        ),
+        Index(
+            "ix_voice_readiness_snapshot_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+
+class VoiceReadinessReviewRow(Base):
+    """Immutable eligibility calculation for Voice Readiness Review."""
+
+    __tablename__ = "voice_readiness_reviews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_readiness_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    gate_id: Mapped[str] = mapped_column(String(48))
+    revision: Mapped[int] = mapped_column(Integer)
+    eligible: Mapped[bool] = mapped_column(Boolean)
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64))
+    required_decision_ids_json: Mapped[str] = mapped_column(Text)
+    blockers_json: Mapped[str] = mapped_column(Text, default="[]")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "revision",
+            name="uq_voice_readiness_review_revision",
+        ),
+        CheckConstraint("revision >= 1", name="ck_voice_readiness_review_revision"),
+        CheckConstraint(
+            "gate_id = 'voice_readiness_review'",
+            name="ck_voice_readiness_review_gate",
+        ),
+        Index(
+            "ix_voice_readiness_review_project_revision",
+            "project_id",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class VoiceReadinessDecisionRow(Base):
+    """Append-only human decision or machine invalidation for voice readiness."""
+
+    __tablename__ = "voice_readiness_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_readiness_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    review_id: Mapped[str] = mapped_column(
+        ForeignKey("voice_readiness_reviews.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    gate_id: Mapped[str] = mapped_column(String(48))
+    revision: Mapped[int] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(24))
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64))
+    actor_classification: Mapped[str] = mapped_column(String(16))
+    actor_id: Mapped[str] = mapped_column(String(80))
+    warning_acknowledgements_json: Mapped[str] = mapped_column(Text, default="[]")
+    rationale: Mapped[str] = mapped_column(String(4000))
+    supersedes_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("voice_readiness_decisions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    provenance_json: Mapped[str] = mapped_column(Text)
+    decided_at: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "revision",
+            name="uq_voice_readiness_decision_revision",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "idempotency_key",
+            name="uq_voice_readiness_decision_idempotency",
+        ),
+        CheckConstraint("revision >= 1", name="ck_voice_readiness_decision_revision"),
+        CheckConstraint(
+            "gate_id = 'voice_readiness_review'",
+            name="ck_voice_readiness_decision_gate",
+        ),
+        CheckConstraint(
+            "decision IN ('approved', 'rejected', 'changes_requested', 'invalidated')",
+            name="ck_voice_readiness_decision_state",
+        ),
+        CheckConstraint(
+            "(decision = 'invalidated' AND actor_classification = 'system') OR "
+            "(decision != 'invalidated' AND actor_classification = 'human')",
+            name="ck_voice_readiness_decision_authority",
+        ),
+        CheckConstraint(
+            "length(trim(rationale)) >= 1 AND length(rationale) <= 4000",
+            name="ck_voice_readiness_decision_rationale",
+        ),
+        Index(
+            "ix_voice_readiness_decision_project_revision",
+            "project_id",
+            "revision",
+            "id",
+        ),
+    )
+
+
+class AuditionEvidenceInvalidationRow(Base):
+    """Append-only targeted invalidation of one clip's dependency evidence."""
+
+    __tablename__ = "audition_evidence_invalidations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    clip_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_clips.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("audition_sessions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    role_id: Mapped[str] = mapped_column(
+        ForeignKey("production_roles.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    source_kind: Mapped[str] = mapped_column(String(32))
+    source_record_id: Mapped[str] = mapped_column(String(120))
+    previous_fingerprint: Mapped[str] = mapped_column(String(64))
+    current_fingerprint: Mapped[str] = mapped_column(String(64))
+    reason_code: Mapped[str] = mapped_column(String(80))
+    affected_review_ids_json: Mapped[str] = mapped_column(Text)
+    invalidation_fingerprint: Mapped[str] = mapped_column(String(64))
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "clip_id",
+            "invalidation_fingerprint",
+            name="uq_audition_evidence_invalidation",
+        ),
+        CheckConstraint(
+            "source_kind IN "
+            "('assignment', 'rights', 'model_package', 'provider', 'runtime', "
+            "'pronunciation_entry', 'cast_snapshot', 'audio_integrity', "
+            "'review_clip_binding')",
+            name="ck_audition_evidence_invalidation_source",
+        ),
+        CheckConstraint(
+            "length(trim(reason_code)) >= 1 AND length(reason_code) <= 80",
+            name="ck_audition_evidence_invalidation_reason",
+        ),
+        Index(
+            "ix_audition_evidence_invalidation_project_created",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audition_evidence_invalidation_source",
+            "project_id",
+            "source_kind",
+            "source_record_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_audition_evidence_invalidation_role",
+            "project_id",
+            "role_id",
+            "created_at",
+            "id",
+        ),
+    )

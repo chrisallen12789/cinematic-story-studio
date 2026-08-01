@@ -114,7 +114,11 @@ export async function runPhase3bGovernanceWorkflow(
       projectId: id,
       limit: 50
     });
-    if (!result.ok) throw new Error(`Model package list failed: ${result.error.code}`);
+    if (!result.ok) {
+      throw new Error(
+        `Model package list failed: ${result.error.code}: ${result.error.message}`
+      );
+    }
     return result.value;
   }, { projectId });
   const fixturePackage = packagePage.items.find(

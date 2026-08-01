@@ -1174,7 +1174,7 @@ describe("Phase 3B desktop audition validation", () => {
             manifestVersion: "1.0.0",
             modelPackageId: "kokoro-onnx-package",
             providerId: "kokoro-onnx",
-            modelId: "kokoro-v1",
+            modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
             modelVersion: "1.0.0",
             runtimeVersion: "1.0.0",
             platform: "windows",

@@ -2186,7 +2186,10 @@ function validateModelManifest(raw: unknown): Record<string, unknown> {
   boundedCode(value.manifestVersion, "manifestVersion");
   identifier(value.modelPackageId, "modelPackageId");
   boundedCode(value.providerId, "model providerId");
-  boundedCode(value.modelId, "modelId");
+  const modelId = boundedText(value.modelId, "modelId", 128);
+  if (MARKUP_OR_CONTROL.test(modelId)) {
+    fail("The modelId contained markup or control text.");
+  }
   boundedCode(value.modelVersion, "modelVersion");
   boundedCode(value.runtimeVersion, "runtimeVersion");
   if (

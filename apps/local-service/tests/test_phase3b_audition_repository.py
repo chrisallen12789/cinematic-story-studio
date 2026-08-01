@@ -12,6 +12,7 @@ from cinematic_story_service.audition_repository import (
     DEFAULT_AUDITION_PAGE_SIZE,
     MAX_AUDITION_PAGE_SIZE,
     AuditionRepository,
+    _public_provenance,
 )
 from cinematic_story_service.config import ServiceSettings
 from cinematic_story_service.database import Database
@@ -31,7 +32,7 @@ from cinematic_story_service.schemas import (
     InstallModelPackageRequest,
     ModelInstallationOperationRequest,
 )
-from cinematic_story_service.util import utc_now
+from cinematic_story_service.util import canonical_json, parse_json, utc_now
 
 
 class _FakeModelPackageManager:
@@ -73,6 +74,45 @@ class _FakeModelPackageManager:
 
     def remove(self, _manifest: object) -> bool:
         return True
+
+
+def test_public_provenance_projects_private_fields_and_fails_closed() -> None:
+    valid = {
+        "origin": "application",
+        "producerId": "cinematic-story-service",
+        "producerVersion": "0.1.0",
+        "recordedAt": "2026-08-01T00:00:00.000Z",
+        "inputFingerprint": "ab" * 32,
+        "reasonCode": "MODEL_VERIFIED",
+        "details": {"privateEvidence": True},
+        "conversionRepository": "https://example.invalid/private-source",
+    }
+    assert _public_provenance(canonical_json(valid)) == {
+        key: valid[key]
+        for key in (
+            "origin",
+            "producerId",
+            "producerVersion",
+            "recordedAt",
+            "inputFingerprint",
+            "reasonCode",
+        )
+    }
+
+    invalid_values = (
+        [],
+        {key: value for key, value in valid.items() if key != "recordedAt"},
+        {**valid, "origin": "mutable_provider"},
+        {**valid, "producerId": "not a safe code"},
+        {**valid, "recordedAt": "not-a-timestamp"},
+        {**valid, "inputFingerprint": "latest"},
+        {**valid, "reasonCode": "not a safe code"},
+    )
+    for invalid in invalid_values:
+        with pytest.raises(ServiceError) as raised:
+            _public_provenance(canonical_json(invalid))
+        assert raised.value.status_code == 500
+        assert raised.value.code == "SPEECH_PROVENANCE_INVALID"
 
 
 @pytest.fixture
@@ -334,9 +374,30 @@ def test_managed_model_install_is_persisted_path_free_and_not_reported_live(
         assert kokoro["compatibilityConstraints"] == list(
             KOKORO_LOCAL_ONNX_MANIFEST.compatibility_constraints
         )
-        assert kokoro["provenance"]["officialUpstreamModelSha256"] == (
-            KOKORO_LOCAL_ONNX_MANIFEST.provenance.official_upstream_model_sha256
-        )
+        assert set(kokoro["provenance"]) == {
+            "origin",
+            "producerId",
+            "producerVersion",
+            "recordedAt",
+        }
+        with database.session() as session:
+            stored_manifest = session.scalar(
+                select(ModelPackageManifestRow).where(
+                    ModelPackageManifestRow.package_id == KOKORO_LOCAL_ONNX_MANIFEST.package_id
+                )
+            )
+            assert stored_manifest is not None
+            stored_provenance = parse_json(stored_manifest.provenance_json, {})
+        assert isinstance(stored_provenance, dict)
+        assert set(stored_provenance) == {
+            "origin",
+            "producerId",
+            "producerVersion",
+            "recordedAt",
+            *KOKORO_LOCAL_ONNX_MANIFEST.provenance.to_dict(),
+        }
+        for key, value in KOKORO_LOCAL_ONNX_MANIFEST.provenance.to_dict().items():
+            assert stored_provenance[key] == value
         archive = settings.data_dir / "model-staging" / "opaque-upload.zip"
         archive.write_bytes(b"private-staged-archive")
         installed = auditions.install_model_package(

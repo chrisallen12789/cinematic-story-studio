@@ -18,6 +18,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from time import monotonic
@@ -415,6 +416,63 @@ def _provenance(
     if details:
         value["details"] = dict(details)
     return canonical_json(value)
+
+
+def _public_provenance(provenance_json: str) -> dict[str, Any]:
+    """Project private provenance evidence onto the closed public contract."""
+
+    value = parse_json(provenance_json, None)
+    required_keys = ("origin", "producerId", "producerVersion", "recordedAt")
+    safe_code = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,127}")
+
+    def invalid() -> NoReturn:
+        raise ServiceError(
+            500,
+            "SPEECH_PROVENANCE_INVALID",
+            "Stored speech provenance failed integrity validation.",
+        )
+
+    if not isinstance(value, dict) or any(key not in value for key in required_keys):
+        invalid()
+    origin = value["origin"]
+    producer_id = value["producerId"]
+    producer_version = value["producerVersion"]
+    recorded_at = value["recordedAt"]
+    if (
+        not isinstance(origin, str)
+        or origin
+        not in {"fixture_provider", "real_local_provider", "application", "human", "system"}
+        or not isinstance(producer_id, str)
+        or safe_code.fullmatch(producer_id) is None
+        or not isinstance(producer_version, str)
+        or safe_code.fullmatch(producer_version) is None
+        or not isinstance(recorded_at, str)
+        or len(recorded_at) > 40
+        or re.match(r"\d{4}-\d{2}-\d{2}T", recorded_at) is None
+    ):
+        invalid()
+    try:
+        parsed_recorded_at = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+    except ValueError:
+        invalid()
+    if parsed_recorded_at.tzinfo is None:
+        invalid()
+    input_fingerprint = value.get("inputFingerprint")
+    reason_code = value.get("reasonCode")
+    if input_fingerprint is not None and (
+        not isinstance(input_fingerprint, str)
+        or re.fullmatch(r"[a-f0-9]{64}", input_fingerprint) is None
+    ):
+        invalid()
+    if reason_code is not None and (
+        not isinstance(reason_code, str) or safe_code.fullmatch(reason_code) is None
+    ):
+        invalid()
+    return {
+        key: value[key]
+        for key in (*required_keys, "inputFingerprint", "reasonCode")
+        if key in value
+    }
 
 
 def _require_digest(value: str, *, code: str) -> None:
@@ -3104,7 +3162,7 @@ class AuditionRepository:
             "compatibilityConstraints": parse_json(row.compatibility_constraints_json, []),
             "state": row.revocation_state,
             "manifestFingerprint": row.manifest_fingerprint,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     @staticmethod
@@ -3129,7 +3187,7 @@ class AuditionRepository:
             "lastAction": row.operation,
             "actionReasonCode": row.reason,
             "immutableEventId": row.id,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     @staticmethod
@@ -3157,7 +3215,7 @@ class AuditionRepository:
             ),
             "checkedAt": row.finished_at,
             "blockingReasonCodes": findings,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     def _model_action_wire(
@@ -3796,7 +3854,7 @@ class AuditionRepository:
                 "dictionaryFingerprint": _EMPTY_DICTIONARY_FINGERPRINT,
                 "createdAt": utc_now(),
                 "updatedAt": utc_now(),
-                "provenance": parse_json(_provenance("application"), {}),
+                "provenance": _public_provenance(_provenance("application")),
             }
         historical_count = int(
             session.scalar(
@@ -3824,7 +3882,7 @@ class AuditionRepository:
                 or row.created_at
             ),
             "updatedAt": row.created_at,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     @staticmethod
@@ -3923,14 +3981,11 @@ class AuditionRepository:
         provider_value = parse_json(row.provider_specific_json, {})
         if not isinstance(provider_value, dict):
             provider_value = {}
-        provenance = parse_json(row.provenance_json, {})
-        if not isinstance(provenance, dict):
-            provenance = {}
+        provenance = _public_provenance(row.provenance_json)
         # Mutation replay evidence is persisted privately in provenance details.
         # It is not part of the public pronunciation-entry contract and would
         # otherwise duplicate the bounded clip-ID samples in every entry/list
         # response after the mutation is recorded.
-        provenance.pop("details", None)
         successor = next(
             (
                 value
@@ -4887,7 +4942,7 @@ class AuditionRepository:
             "sessionFingerprint": row.request_fingerprint,
             "createdAt": row.created_at,
             "updatedAt": row.published_at or row.created_at,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     @staticmethod
@@ -4916,7 +4971,7 @@ class AuditionRepository:
             "runtimeProfileFingerprint": row.runtime_profile_fingerprint,
             "bindingFingerprint": row.binding_fingerprint,
             "active": row.active,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
             "createdAt": row.created_at,
         }
 
@@ -5979,7 +6034,7 @@ class AuditionRepository:
             "warnings": list(normalization.warnings),
             "humanReviewRequired": normalization.human_review_required,
             "planFingerprint": plan_fingerprint or normalization.fingerprint,
-            "provenance": parse_json(_provenance("application"), {}),
+            "provenance": _public_provenance(_provenance("application")),
         }
 
     @staticmethod
@@ -6034,7 +6089,7 @@ class AuditionRepository:
             "providerId": session.provider_id,
             "escapedProviderPayloadSha256": escaped_provider_payload_sha256,
             "planFingerprint": pronunciation.effective_fingerprint,
-            "provenance": parse_json(_provenance("application"), {}),
+            "provenance": _public_provenance(_provenance("application")),
         }
 
     def _read_script_text(self, row: AuditionScriptRow) -> str:
@@ -7047,7 +7102,7 @@ class AuditionRepository:
             "clipFingerprint": row.clip_fingerprint,
             "revision": row.revision,
             "createdAt": row.created_at,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     @staticmethod
@@ -7097,7 +7152,7 @@ class AuditionRepository:
             "subjectiveQualityClaimed": False,
             "qualityFingerprint": row.quality_fingerprint,
             "measuredAt": row.created_at,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     # Durable generation orchestration ------------------------------------------
@@ -11103,7 +11158,7 @@ class AuditionRepository:
             "decidedAt": row.decided_at,
             "immutable": True,
             "supersedesDecisionId": row.supersedes_decision_id,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     def _ensure_voice_readiness(
@@ -11136,7 +11191,7 @@ class AuditionRepository:
                 .order_by(ProductionRoleRow.ordinal, ProductionRoleRow.id)
             )
         )
-        rights_fingerprints: list[str] = []
+        rights_evidence: list[dict[str, object]] = []
         audio_integrity_fingerprints: list[str] = []
         role_decision_ids: dict[str, list[str]] = {
             "narrator_audition_review": [],
@@ -11176,7 +11231,14 @@ class AuditionRepository:
             if rights is None:
                 return None
             audio_integrity_fingerprints.append(current_integrity)
-            rights_fingerprints.append(rights.rights_fingerprint)
+            rights_evidence.append(
+                {
+                    "roleId": role.id,
+                    "rightsRecordId": rights.rights_record_id,
+                    "rightsRecordRevision": rights.revision,
+                    "rightsRecordFingerprint": rights.rights_fingerprint,
+                }
+            )
             aggregate_gate_id = (
                 "narrator_audition_review"
                 if role.role_type in {"primary_narrator", "secondary_narrator"}
@@ -11254,7 +11316,9 @@ class AuditionRepository:
             "phase3aGateDecisionIds": phase3a_ids,
             "pronunciationDictionaryFingerprint": dictionary.dictionary_fingerprint,
             "pronunciationReviewDecisionId": decisions["pronunciation_review"].id,
-            "rightsEvidenceFingerprint": request_fingerprint(sorted(rights_fingerprints)),
+            "rightsEvidenceFingerprint": request_fingerprint(
+                sorted(rights_evidence, key=lambda value: str(value["roleId"]))
+            ),
             "runtimeProfileFingerprint": latest_session.runtime_profile_fingerprint,
         }
         snapshot_fingerprint = request_fingerprint(evidence)
@@ -11677,7 +11741,7 @@ class AuditionRepository:
             "decidedAt": row.decided_at,
             "immutable": True,
             "supersedesDecisionId": row.supersedes_decision_id,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     def _invalidate_pronunciation_dependencies(
@@ -13856,7 +13920,7 @@ class AuditionRepository:
                     "supportedSampleRatesHz": [24000],
                     "attributionRequired": value["providerId"] == KOKORO_PROVIDER_ID,
                     "descriptorFingerprint": identity,
-                    "provenance": parse_json(_provenance("application"), {}),
+                    "provenance": _public_provenance(_provenance("application")),
                 }
             )
         return result
@@ -13903,7 +13967,7 @@ class AuditionRepository:
             "networkAccessDuringSynthesis": False,
             "profileFingerprint": row.profile_fingerprint,
             "active": row.active,
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }
 
     def _runtime_health_wire(
@@ -14241,5 +14305,5 @@ class AuditionRepository:
                 and not isinstance(network_request_count, bool)
                 else None
             ),
-            "provenance": parse_json(row.provenance_json, {}),
+            "provenance": _public_provenance(row.provenance_json),
         }

@@ -38,6 +38,13 @@ from tests.test_phase3a_governance import (
 )
 
 
+def _assert_public_provenance(value: object) -> None:
+    assert isinstance(value, dict)
+    required = {"origin", "producerId", "producerVersion", "recordedAt"}
+    assert required <= set(value)
+    assert set(value) <= required | {"inputFingerprint", "reasonCode"}
+
+
 def _establish_approved_cast(
     client: TestClient,
     auth_headers: dict[str, str],
@@ -426,6 +433,8 @@ def _create_session_and_script(
     )
     assert created_session.status_code == 200, created_session.text
     session = created_session.json()["session"]
+    _assert_public_provenance(session["provenance"])
+    _assert_public_provenance(session["voiceRuntimeBinding"]["provenance"])
     text_sha256 = sha256_text(text)
     preview = client.post(
         (
@@ -523,6 +532,8 @@ def _create_contextual_session_and_script(
     )
     assert created_session.status_code == 200, created_session.text
     session = created_session.json()["session"]
+    _assert_public_provenance(session["provenance"])
+    _assert_public_provenance(session["voiceRuntimeBinding"]["provenance"])
     text_sha256 = sha256_text(text)
     preview = client.post(
         (
@@ -619,7 +630,11 @@ def _clips(
         params=params,
     )
     assert response.status_code == 200, response.text
-    return response.json()["items"]
+    items = response.json()["items"]
+    for item in items:
+        _assert_public_provenance(item["provenance"])
+        _assert_public_provenance(item["audioQuality"]["provenance"])
+    return items
 
 
 def _approve_audition_review(
@@ -1150,6 +1165,12 @@ def test_fixture_workflow_cache_jobs_reviews_restart_and_targeted_invalidation(
                 key=f"phase3b-approve-{gate_id}",
             )
             persisted_decision_ids[(gate_id, None)] = approved_aggregate["decision"]["decisionId"]
+            if gate_id == "pronunciation_review":
+                pronunciation_snapshot = approved_aggregate["voiceReadinessSnapshot"]
+                assert pronunciation_snapshot is not None
+                assert pronunciation_snapshot["rightsEvidenceFingerprint"] == (
+                    approved_aggregate["review"]["evidence"]["rightsRecordFingerprint"]
+                )
         readiness = _approve_audition_review(
             client,
             auth_headers,

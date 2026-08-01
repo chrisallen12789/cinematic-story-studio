@@ -26,6 +26,7 @@ from cinematic_story_service.model_packages import (
     ModelPackageManager,
     ModelPackageVerification,
 )
+from cinematic_story_service.models import ModelInstallationRow
 from cinematic_story_service.schemas import (
     InstallModelPackageRequest,
     ModelInstallationOperationRequest,
@@ -39,6 +40,7 @@ from cinematic_story_service.speech_runtime import (
     SpeechWorkerIdentity,
 )
 from cinematic_story_service.util import (
+    parse_json,
     request_fingerprint,
     sha256_bytes,
     utc_now,
@@ -330,7 +332,24 @@ def test_real_provider_reports_incompatible_synthetic_cast_without_silent_fallba
     )
     acknowledgement_event_id = installed["installation"]["immutableEventId"]
     assert installed["verification"]["status"] == "verified"
-    assert installed["installation"]["provenance"]["details"] == {
+    assert set(installed["installation"]["provenance"]) == {
+        "origin",
+        "producerId",
+        "producerVersion",
+        "recordedAt",
+        "inputFingerprint",
+    }
+    with auditions.database.session() as database_session:
+        installation_row = database_session.get(
+            ModelInstallationRow,
+            acknowledgement_event_id,
+        )
+        assert installation_row is not None
+        stored_installation_provenance = parse_json(
+            installation_row.provenance_json,
+            {},
+        )
+    assert stored_installation_provenance["details"] == {
         "acknowledgementScope": "managed_model_installation",
         "projectId": project_id,
         "restrictedLocalUseAcknowledged": True,

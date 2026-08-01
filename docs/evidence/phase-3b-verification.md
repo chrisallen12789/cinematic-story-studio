@@ -67,9 +67,9 @@ automatic update work are outside this evidence boundary.
 | Pronunciation / normalization profiles | `1.0.0` / `1.0.0` |
 | Fixture provider | `deterministic-pcm-wav-fixture@1.0.0`; adapter `1.0.0`; deterministic, local, fixture-only, export-ineligible |
 | Fixture model/package | `deterministic-square-wave@1.0.0` / `deterministic-pcm-wav-fixture-package`; manifest fingerprint `e0352282af67ff3675fe6067a63feca5d9d4fcaeef5a3f12b80a5e4d2c9635d6` |
-| Fixture runtime profile | `deterministic-pcm-wav-fixture-windows`; fingerprint `2d52bca32766fac6d2744cf877cb4f5d927f59af369706a3eb2741e330d00cc4` |
+| Fixture runtime profile | Current `deterministic-pcm-wav-fixture-windows-v1-0-1@1.0.1`; record `793f36e7-e118-52c4-b605-6f60f23e1656`; fingerprint `f3e5801f836ab4061eb76e52f4a3e1b4c7ba162238e0c70857e74fff705f75d6`; 30,000 ms startup deadline |
 | Real local provider component | `kokoro-local-onnx@1.0.0`; adapter `1.0.0`; local, non-deterministic, restricted, export-ineligible; only the unbound component command can verify it, and the fresh closure run is pending |
-| Real component runtime | `onnxruntime-cpu@1.28.0`; profile `kokoro-local-onnx-windows`; fingerprint `007101c57a95e7d6cde66747cd96e3413d672a84d3acca49b28c5e4f36593ef4` |
+| Real component runtime | `onnxruntime-cpu@1.28.0`; current profile `kokoro-local-onnx-windows-v1-0-1@1.0.1`; record `190de0bf-aa0d-5620-97c6-584d2997c3dc`; fingerprint `1736106e267f8e4ed695e71bb28b39477f658bf4cdfe4b4da716c471f82c80ce`; 30,000 ms startup deadline |
 | Real G2P | `kokorog2p==0.6.7`, dictionary-only English path; remote, eSpeak, spaCy, Goruut, and implicit fallbacks disabled |
 | Real model package | `kokoro-82m-v1.0-onnx-q8-af-heart@1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231`; 92,887,010 expanded bytes; manifest fingerprint `03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0` |
 | Governed Kokoro product binding | None. No governed Phase 3A voice-profile ID/version, cast-assignment ID/revision, or rights-record ID/revision maps to provider voice `af_heart`; the product path must reject this incompatibility rather than substitute silently. |
@@ -79,6 +79,13 @@ automatic update work are outside this evidence boundary.
 | Page and scale bounds | 50 default / 200 maximum page; 300 roles; 1,000 pronunciation entries; 2,000 audition metadata records; 10,000 cache records |
 | Build manifest / Phase 3B result | Schema `6.0.0` / schema `7.0.0` |
 | Hosted Phase 3B evidence classification | `deterministic_fixture_lifecycle_only` |
+
+Runtime-profile evolution is append-only. If an upgraded schema-v5 database already contains
+the issued fixture or Kokoro `1.0.0` row, startup validates that exact row with its original
+10,000 ms deadline and fingerprint (`2d52bca32766fac6d2744cf877cb4f5d927f59af369706a3eb2741e330d00cc4`
+for the fixture and `007101c57a95e7d6cde66747cd96e3413d672a84d3acca49b28c5e4f36593ef4`
+for Kokoro) and never rewrites it. New requests and runtime health bind only to the exact current
+`1.0.1` record; legacy rows remain exposed solely so historical evidence stays resolvable.
 
 The fixture product provider and the real-provider component share the same
 bounded, typed adapter request boundary. Neither accepts a URL, shell command,
@@ -295,17 +302,28 @@ executable identity, creation identity, runtime/profile/package fingerprints,
 and Job Object membership must agree.
 
 Endpoint observation is restricted to an already-owned exact PID list. Each
-PID's executable and creation identity is revalidated immediately before an
-exact-PID TCP query. The proof accepts zero observed non-loopback endpoints; it
-does not claim a packet capture or OS outbound firewall. It never performs a
-name-wildcard endpoint query and never reads unrelated process content.
+PID's executable and creation identity is revalidated immediately before and
+after its exact-PID TCP query. Endpoint enumeration treats only the exact
+`CmdletizationQuery_NotFound_OwningProcess,Get-NetTCPConnection` no-match as
+zero; every other provider, CIM, or access failure fails the gate. After the
+background sampler stops, a bounded refresh-bind-observe-refresh loop requires
+the append-only ledger to remain stable. A newly adopted Python PID is mandatory
+on the next observation, every live owned Python identity is observed again,
+and a non-loopback finding from an invalidated attempt is retained. Three
+unstable attempts fail closed. The proof accepts zero observed non-loopback
+endpoints; it does not claim a packet capture or OS outbound firewall. It never
+performs a name-wildcard endpoint query and never reads unrelated process
+content.
 
 After each close, the gate must prove every exact owned Electron, service, and
 provider-worker PID is gone, with `forcedPids=[]`, `remainingPids=[]`,
 `unrelatedProcessesInspected=false`, and
 `unrelatedProcessesTerminated=false`. Ambiguous ownership, PID reuse, missing
 identity, or unavailable observation fails safely; it never authorizes killing
-by process name. The exact CI PIDs and per-launch exit evidence are pending.
+by process name. The `unrelatedProcessesInspected` field excludes the required
+prelaunch relevant-name inventory, which records only bounded identity metadata;
+it means that no non-owned PID is adopted or queried for endpoints or process
+content. The exact CI PIDs and per-launch exit evidence are pending.
 
 ## Build-evidence and artifact semantics
 
@@ -593,6 +611,13 @@ not described as a dependency audit.
   Activation does not create the missing Phase 3A binding.
 - Python-level socket denial is defense in depth, not an OS firewall or packet
   capture. The exact-CI owned-PID endpoint observation remains pending.
+- Packaged ownership uses a 100 ms bounded process-table sampler plus stable
+  pre/post-observation and shutdown reconciliation, not a kernel process-event
+  ledger. It fails on observed churn or ambiguity and proves exit for every
+  adopted exact identity, but a relevant child created and exited wholly
+  between inventory samples is not individually recorded. The provider's
+  authenticated Windows Job Object proof separately covers its owned worker
+  tree; neither mechanism is continuous packet or process telemetry.
 - ZIP and source-tree reparse/special entries are rejected, but a regular source
   file is not proven to have a single hard link, and the package manager is not
   a generic Windows device-name or ONNX static-analysis sandbox.

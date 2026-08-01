@@ -412,7 +412,8 @@ def test_v5_constraints_match_canonical_local_speech_contract_values(
                 "{}",
                 "f" * 64,
                 1,
-                '{"origin":"fixture_provider"}',
+                '{"origin":"fixture_provider","producerId":"phase3b-v5-migration-test",'
+                '"producerVersion":"1.0.0","recordedAt":"2026-03-09T00:00:00Z"}',
                 "2026-03-09T00:00:00Z",
             ),
         )

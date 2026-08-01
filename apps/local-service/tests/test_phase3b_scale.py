@@ -691,9 +691,10 @@ def _seed_roles_and_pronunciations(
                     "supersedes_entry_record_id": None,
                     "provenance_json": canonical_json(
                         {
-                            "origin": "fixture",
+                            "origin": "human",
                             "producerId": "phase3b-scale-test",
                             "producerVersion": "1.0.0",
+                            "recordedAt": _scale_timestamp(ordinal, year=2098),
                         }
                     ),
                     "created_at": _scale_timestamp(ordinal, year=2098),
@@ -722,9 +723,10 @@ def _seed_roles_and_pronunciations(
                 supersedes_dictionary_record_id=current_dictionary.id,
                 provenance_json=canonical_json(
                     {
-                        "origin": "fixture",
+                        "origin": "application",
                         "producerId": "phase3b-scale-test",
                         "producerVersion": "1.0.0",
+                        "recordedAt": _scale_timestamp(0, year=2098),
                     }
                 ),
                 created_at=_scale_timestamp(0, year=2098),

@@ -421,16 +421,19 @@ def _provenance(
 def _public_provenance(provenance_json: str) -> dict[str, Any]:
     """Project private provenance evidence onto the closed public contract."""
 
-    value = parse_json(provenance_json, None)
-    required_keys = ("origin", "producerId", "producerVersion", "recordedAt")
-    safe_code = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,127}")
-
     def invalid() -> NoReturn:
         raise ServiceError(
             500,
             "SPEECH_PROVENANCE_INVALID",
             "Stored speech provenance failed integrity validation.",
         )
+
+    try:
+        value = parse_json(provenance_json, None)
+    except (TypeError, ValueError):
+        invalid()
+    required_keys = ("origin", "producerId", "producerVersion", "recordedAt")
+    safe_code = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,127}")
 
     if not isinstance(value, dict) or any(key not in value for key in required_keys):
         invalid()
@@ -457,17 +460,17 @@ def _public_provenance(provenance_json: str) -> dict[str, Any]:
         invalid()
     if parsed_recorded_at.tzinfo is None:
         invalid()
-    input_fingerprint = value.get("inputFingerprint")
-    reason_code = value.get("reasonCode")
-    if input_fingerprint is not None and (
-        not isinstance(input_fingerprint, str)
-        or re.fullmatch(r"[a-f0-9]{64}", input_fingerprint) is None
-    ):
-        invalid()
-    if reason_code is not None and (
-        not isinstance(reason_code, str) or safe_code.fullmatch(reason_code) is None
-    ):
-        invalid()
+    if "inputFingerprint" in value:
+        input_fingerprint = value["inputFingerprint"]
+        if (
+            not isinstance(input_fingerprint, str)
+            or re.fullmatch(r"[a-f0-9]{64}", input_fingerprint) is None
+        ):
+            invalid()
+    if "reasonCode" in value:
+        reason_code = value["reasonCode"]
+        if not isinstance(reason_code, str) or safe_code.fullmatch(reason_code) is None:
+            invalid()
     return {
         key: value[key]
         for key in (*required_keys, "inputFingerprint", "reasonCode")

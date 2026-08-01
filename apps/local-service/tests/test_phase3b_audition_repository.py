@@ -106,13 +106,19 @@ def test_public_provenance_projects_private_fields_and_fails_closed() -> None:
         {**valid, "producerId": "not a safe code"},
         {**valid, "recordedAt": "not-a-timestamp"},
         {**valid, "inputFingerprint": "latest"},
+        {**valid, "inputFingerprint": None},
         {**valid, "reasonCode": "not a safe code"},
+        {**valid, "reasonCode": None},
     )
     for invalid in invalid_values:
         with pytest.raises(ServiceError) as raised:
             _public_provenance(canonical_json(invalid))
         assert raised.value.status_code == 500
         assert raised.value.code == "SPEECH_PROVENANCE_INVALID"
+    with pytest.raises(ServiceError) as malformed:
+        _public_provenance("{")
+    assert malformed.value.status_code == 500
+    assert malformed.value.code == "SPEECH_PROVENANCE_INVALID"
 
 
 @pytest.fixture

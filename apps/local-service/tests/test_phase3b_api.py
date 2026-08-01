@@ -61,7 +61,14 @@ def _append_aggregate_review_decision(
             required_decision_ids_json="[]",
             blockers_json="[]",
             warnings_json="[]",
-            provenance_json=canonical_json({"origin": "test_fixture"}),
+            provenance_json=canonical_json(
+                {
+                    "origin": "application",
+                    "producerId": "phase3b-api-test",
+                    "producerVersion": "1.0.0",
+                    "recordedAt": decided_at,
+                }
+            ),
             created_at=decided_at,
         )
     )
@@ -82,7 +89,14 @@ def _append_aggregate_review_decision(
             rationale=f"Repository-owned historical decision {revision}.",
             supersedes_decision_id=supersedes_decision_id,
             idempotency_key=f"{project_id}-history-{revision}",
-            provenance_json=canonical_json({"origin": "human", "producerId": "test-fixture"}),
+            provenance_json=canonical_json(
+                {
+                    "origin": "human",
+                    "producerId": "phase3b-api-test",
+                    "producerVersion": "1.0.0",
+                    "recordedAt": decided_at,
+                }
+            ),
             decided_at=decided_at,
             created_at=decided_at,
         )

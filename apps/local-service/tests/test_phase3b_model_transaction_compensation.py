@@ -444,7 +444,14 @@ def test_startup_reconciles_both_staged_model_removal_commit_windows(
             reason="Establish the pre-commit removal state.",
             idempotency_key="startup-removal-inactive",
             warnings_json="[]",
-            provenance_json=canonical_json({"origin": "test"}),
+            provenance_json=canonical_json(
+                {
+                    "origin": "human",
+                    "producerId": "phase3b-model-transaction-test",
+                    "producerVersion": "1.0.0",
+                    "recordedAt": now,
+                }
+            ),
             created_at=now,
             completed_at=now,
         )
@@ -478,6 +485,7 @@ def test_startup_reconciles_both_staged_model_removal_commit_windows(
         )
         assert manifest is not None
         assert prior is not None
+        removed_at = utc_now()
         session.add(
             ModelInstallationRow(
                 id=new_id(),
@@ -495,9 +503,16 @@ def test_startup_reconciles_both_staged_model_removal_commit_windows(
                 reason="Establish the post-commit removal state.",
                 idempotency_key="startup-removal-removed",
                 warnings_json="[]",
-                provenance_json=canonical_json({"origin": "test"}),
-                created_at=utc_now(),
-                completed_at=utc_now(),
+                provenance_json=canonical_json(
+                    {
+                        "origin": "human",
+                        "producerId": "phase3b-model-transaction-test",
+                        "producerVersion": "1.0.0",
+                        "recordedAt": removed_at,
+                    }
+                ),
+                created_at=removed_at,
+                completed_at=removed_at,
             )
         )
     restored.shutdown_runtimes()

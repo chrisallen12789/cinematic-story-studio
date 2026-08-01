@@ -590,10 +590,15 @@ function phase3VoiceCastingEvidence(packagedResult) {
 
 function phase3bPackagedResult(launches) {
   const hash = (label) => fingerprint(`phase3b-${label}`);
+  const assignmentIdByRoleId = Object.freeze({
+    "role-primary-narrator": "assignment-narrator-1",
+    "role-character-1": "assignment-character-1",
+    "role-character-2": "assignment-character-2",
+  });
   const audition = (roleType, roleId, clipId, artifactId, artifactHash) => ({
     roleId,
     roleType,
-    assignmentId: `assignment-${roleId}`,
+    assignmentId: assignmentIdByRoleId[roleId],
     assignmentRevision: 3,
     voiceRuntimeBindingId: `binding-${roleId}`,
     voiceRuntimeBindingFingerprint: hash(`binding-${roleId}`),
@@ -2076,6 +2081,111 @@ test("rejects Phase 3B fixture quality overclaims and stale process proof", asyn
     `${JSON.stringify(mismatchedPersistedExit)}\n`,
     "utf8",
   );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  const mismatchedAssignmentRevision = structuredClone(original);
+  mismatchedAssignmentRevision.auditions[0].assignmentRevision += 1;
+  await writeFile(
+    fixture.phase3bResultPath,
+    `${JSON.stringify(mismatchedAssignmentRevision)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+});
+
+test("rejects incomplete, duplicate, and wrongly scoped Phase 3B gate topology", async (t) => {
+  const fixture = await createFixture(t);
+  const original = JSON.parse(
+    await readFile(fixture.phase3bResultPath, "utf8"),
+  );
+  const mutations = [
+    (value) => {
+      value.gateDecisions = value.gateDecisions.filter(
+        (decision) => decision.roleId !== "role-character-2",
+      );
+    },
+    (value) => {
+      value.gateDecisions.push({
+        ...value.gateDecisions[0],
+        reviewId: "audition-review-extra-per-role",
+        decisionId: "audition-decision-extra-per-role",
+      });
+    },
+    (value) => {
+      value.gateDecisions[0].roleId = "role-not-auditioned";
+    },
+    (value) => {
+      value.gateDecisions[3].roleId = "role-primary-narrator";
+    },
+    (value) => {
+      value.gateDecisions[1].reviewId =
+        value.gateDecisions[0].reviewId;
+    },
+    (value) => {
+      value.gateDecisions[1].decisionId =
+        value.gateDecisions[0].decisionId;
+    },
+  ];
+
+  for (const mutate of mutations) {
+    const invalid = structuredClone(original);
+    mutate(invalid);
+    await writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(invalid)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      generateBuildEvidence(generationOptions(fixture, "success")),
+      /complete, valid machine evidence/u,
+    );
+  }
+});
+
+test("rejects Phase 3B evidence that omits an additional Phase 3A cast role", async (t) => {
+  const fixture = await createFixture(t);
+  const phase3Result = JSON.parse(
+    await readFile(fixture.phase3ResultPath, "utf8"),
+  );
+  const additionalAssignment = {
+    ...structuredClone(
+      phase3Result.casting.characterAssignments.at(-1),
+    ),
+    assignmentId: "assignment-character-3",
+    roleId: "role-character-3",
+    ...syntheticCatalogAssignmentEvidence("synthetic-character-03"),
+    effectiveCorrectionSetFingerprint: fingerprint(
+      "casting-corrections-character-3",
+    ),
+    supersedesAssignmentId: "assignment-character-3-selection",
+  };
+  phase3Result.casting.characterAssignmentIds.push(
+    additionalAssignment.assignmentId,
+  );
+  phase3Result.casting.characterAssignments.push(additionalAssignment);
+  const castingEvidence = phase3VoiceCastingEvidence(phase3Result);
+  castingEvidence.counts.productionRoles = 4;
+  castingEvidence.counts.characterRoles = 3;
+  castingEvidence.counts.assignments = 4;
+  await Promise.all([
+    writeFile(
+      fixture.phase3ResultPath,
+      `${JSON.stringify(phase3Result)}\n`,
+      "utf8",
+    ),
+    writeFile(
+      fixture.phase3VoiceCastingEvidencePath,
+      `${JSON.stringify(castingEvidence)}\n`,
+      "utf8",
+    ),
+  ]);
+
   await assert.rejects(
     generateBuildEvidence(generationOptions(fixture, "success")),
     /complete, valid machine evidence/u,

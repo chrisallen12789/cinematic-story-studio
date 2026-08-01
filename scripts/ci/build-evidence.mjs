@@ -466,6 +466,7 @@ export async function generateBuildEvidence({
     screenshotEvidence,
     harnessResult,
     phase3HarnessResult,
+    voiceCastingContract,
   );
   const harnessResultMatchesStepOutcome =
     harnessResult.contractValid &&
@@ -1100,6 +1101,7 @@ export async function validateBuildEvidenceManifest({
     screenshot,
     harnessResult,
     phase3HarnessResult,
+    voiceCastingContract,
   );
   if (
     !phase3HarnessResult.contractValid ||
@@ -2207,6 +2209,7 @@ async function inspectPhase3bEvidence(
   screenshotEvidence,
   harnessResult,
   phase3HarnessResult,
+  voiceCastingContract,
 ) {
   if (
     !resultEvidence.exists ||
@@ -2273,13 +2276,17 @@ async function inspectPhase3bEvidence(
     const auditions = sanitizePhase3bAuditions(value.auditions);
     if (
       auditions === null ||
+      !phase3bAuditionsMatchCastingProof(
+        auditions,
+        voiceCastingContract?.assignments,
+      ) ||
       !validPhase3bCacheHit(value.cacheHit, auditions) ||
       !validPhase3bTargetedInvalidation(
         value.targetedInvalidation,
         auditions,
         value.pronunciation,
       ) ||
-      !validPhase3bGateDecisions(value.gateDecisions) ||
+      !validPhase3bGateDecisions(value.gateDecisions, auditions) ||
       !validPhase3bProcessProof(
         value.process,
         harnessResult.launches,
@@ -2514,6 +2521,60 @@ function sanitizePhase3bAuditions(value) {
     : null;
 }
 
+function phase3bAuditionsMatchCastingProof(auditions, assignments) {
+  const narratorAssignment = assignments?.narratorAssignment;
+  const characterAssignments = assignments?.characterAssignments;
+  if (
+    !Array.isArray(auditions) ||
+    !isPlainObject(narratorAssignment) ||
+    !Array.isArray(characterAssignments)
+  ) {
+    return false;
+  }
+  const expectedAssignments = [
+    {
+      roleId: narratorAssignment.roleId,
+      assignmentId: narratorAssignment.assignmentId,
+      assignmentRevision: narratorAssignment.revision,
+      auditionRoleType: "narrator",
+    },
+    ...characterAssignments.map((assignment) => ({
+      roleId: assignment.roleId,
+      assignmentId: assignment.assignmentId,
+      assignmentRevision: assignment.revision,
+      auditionRoleType: "character",
+    })),
+  ];
+  const expectedByRoleId = new Map(
+    expectedAssignments.map((assignment) => [
+      assignment.roleId,
+      assignment,
+    ]),
+  );
+  if (expectedByRoleId.size !== expectedAssignments.length) {
+    return false;
+  }
+  const observedRoleIds = new Set();
+  for (const audition of auditions) {
+    const expected = expectedByRoleId.get(audition.roleId);
+    if (
+      expected === undefined ||
+      audition.assignmentId !== expected.assignmentId ||
+      audition.assignmentRevision !== expected.assignmentRevision ||
+      audition.roleType !== expected.auditionRoleType
+    ) {
+      return false;
+    }
+    observedRoleIds.add(audition.roleId);
+  }
+  return (
+    observedRoleIds.size === expectedByRoleId.size &&
+    [...expectedByRoleId.keys()].every((roleId) =>
+      observedRoleIds.has(roleId),
+    )
+  );
+}
+
 function validPhase3bAudio(value) {
   return (
     isPlainObject(value) &&
@@ -2746,11 +2807,23 @@ function validPersistedInvalidatedGateStates(value) {
   );
 }
 
-function validPhase3bGateDecisions(value) {
-  if (!Array.isArray(value) || value.length < 5 || value.length > 304) {
+function validPhase3bGateDecisions(value, auditions) {
+  if (!Array.isArray(auditions)) {
     return false;
   }
-  const gateIds = new Set();
+  const auditionRoleIds = new Set(
+    auditions.map((audition) => audition.roleId),
+  );
+  const aggregateGateIds = new Set(PHASE_3B_GATE_IDS.slice(1));
+  if (
+    !Array.isArray(value) ||
+    value.length !== auditionRoleIds.size + aggregateGateIds.size
+  ) {
+    return false;
+  }
+  const observedRoleIds = new Set();
+  const observedAggregateGateIds = new Set();
+  const reviewIds = new Set();
   const decisionIds = new Set();
   for (const item of value) {
     if (
@@ -2766,19 +2839,41 @@ function validPhase3bGateDecisions(value) {
       ]) ||
       !PHASE_3B_GATE_IDS.includes(item.gateId) ||
       !isPhase3Id(item.reviewId) ||
+      reviewIds.has(item.reviewId) ||
       !isPhase3Id(item.decisionId) ||
       decisionIds.has(item.decisionId) ||
-      (item.roleId !== null && !isPhase3Id(item.roleId)) ||
       !isSha256(item.evidenceFingerprint) ||
       item.decision !== "approved" ||
       item.immutable !== true
     ) {
       return false;
     }
-    gateIds.add(item.gateId);
+    if (item.gateId === "per_role_audition_review") {
+      if (
+        !isPhase3Id(item.roleId) ||
+        !auditionRoleIds.has(item.roleId) ||
+        observedRoleIds.has(item.roleId)
+      ) {
+        return false;
+      }
+      observedRoleIds.add(item.roleId);
+    } else {
+      if (
+        item.roleId !== null ||
+        !aggregateGateIds.has(item.gateId) ||
+        observedAggregateGateIds.has(item.gateId)
+      ) {
+        return false;
+      }
+      observedAggregateGateIds.add(item.gateId);
+    }
+    reviewIds.add(item.reviewId);
     decisionIds.add(item.decisionId);
   }
-  return PHASE_3B_GATE_IDS.every((gateId) => gateIds.has(gateId));
+  return (
+    observedRoleIds.size === auditionRoleIds.size &&
+    observedAggregateGateIds.size === aggregateGateIds.size
+  );
 }
 
 function validPhase3bRestart(value) {

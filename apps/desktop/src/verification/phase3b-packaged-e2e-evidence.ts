@@ -298,6 +298,32 @@ export function validatePhase3bPackagedE2eResult(
   const auditions = array(value.auditions, "auditions", 3, 20);
   auditions.forEach(validateAudition);
   const roleIds = auditions.map((item) => record(item, "audition").roleId);
+  const roleAssignmentIdentities = new Map<
+    string,
+    {
+      readonly roleType: unknown;
+      readonly assignmentId: unknown;
+      readonly assignmentRevision: unknown;
+    }
+  >();
+  for (const rawAudition of auditions) {
+    const audition = record(rawAudition, "audition");
+    const roleId = id(audition.roleId, "audition role ID");
+    const prior = roleAssignmentIdentities.get(roleId);
+    if (
+      prior !== undefined &&
+      (prior.roleType !== audition.roleType ||
+        prior.assignmentId !== audition.assignmentId ||
+        prior.assignmentRevision !== audition.assignmentRevision)
+    ) {
+      fail("An audition role changed assignment identity across clips.");
+    }
+    roleAssignmentIdentities.set(roleId, {
+      roleType: audition.roleType,
+      assignmentId: audition.assignmentId,
+      assignmentRevision: audition.assignmentRevision
+    });
+  }
   const clipIds = auditions.map(
     (item) => record(item, "audition").auditionClipId
   );
@@ -313,7 +339,7 @@ export function validatePhase3bPackagedE2eResult(
     auditions,
     value.pronunciation
   );
-  validateGateDecisions(value.gateDecisions);
+  validateGateDecisions(value.gateDecisions, roleIds);
   const priorLaunchRuntimeExit = validateRestart(value.restart);
   validateProcess(
     value.process,
@@ -686,25 +712,65 @@ function validateTargetedInvalidation(
   ) fail("The targeted invalidation proof was invalid.");
 }
 
-function validateGateDecisions(raw: unknown): void {
+function validateGateDecisions(
+  raw: unknown,
+  auditionRoleIds: readonly unknown[]
+): void {
   const values = array(raw, "gate decisions", 5, 304);
-  const gateIds = new Set<string>();
+  const expectedRoleIds = new Set(
+    auditionRoleIds.map((roleId) => id(roleId, "audition role ID"))
+  );
+  const observedRoleIds = new Set<string>();
+  const aggregateGateIds = new Set<string>();
+  const reviewIds = new Set<string>();
+  const decisionIds = new Set<string>();
+  const aggregateGates = new Set([
+    "narrator_audition_review",
+    "character_audition_review",
+    "pronunciation_review",
+    "voice_readiness_review"
+  ]);
   for (const rawDecision of values) {
     const value = record(rawDecision, "gate decision");
     exactKeys(value, ["gateId", "reviewId", "decisionId", "roleId", "evidenceFingerprint", "decision", "immutable"]);
-    id(value.gateId, "gate ID");
-    id(value.reviewId, "review ID");
-    id(value.decisionId, "decision ID");
-    if (value.roleId !== null) id(value.roleId, "gate role ID");
+    const gateId = id(value.gateId, "gate ID");
+    const reviewId = id(value.reviewId, "review ID");
+    const decisionId = id(value.decisionId, "decision ID");
     hash(value.evidenceFingerprint, "gate evidence fingerprint");
     if (value.decision !== "approved" || value.immutable !== true) fail("A gate decision was not an immutable approval.");
-    gateIds.add(value.gateId as string);
+    if (reviewIds.has(reviewId) || decisionIds.has(decisionId)) {
+      fail("Phase 3B gate review and decision IDs must be unique.");
+    }
+    reviewIds.add(reviewId);
+    decisionIds.add(decisionId);
+
+    if (gateId === "per_role_audition_review") {
+      if (value.roleId === null) {
+        fail("The Phase 3B gate decision topology was invalid.");
+      }
+      const roleId = id(value.roleId, "gate role ID");
+      if (!expectedRoleIds.has(roleId) || observedRoleIds.has(roleId)) {
+        fail("The Phase 3B gate decision topology was invalid.");
+      }
+      observedRoleIds.add(roleId);
+    } else {
+      if (
+        !aggregateGates.has(gateId) ||
+        value.roleId !== null ||
+        aggregateGateIds.has(gateId)
+      ) {
+        fail("The Phase 3B gate decision topology was invalid.");
+      }
+      aggregateGateIds.add(gateId);
+    }
   }
-  const expected = [
-    "per_role_audition_review", "narrator_audition_review",
-    "character_audition_review", "pronunciation_review", "voice_readiness_review"
-  ];
-  if (expected.some((gateId) => !gateIds.has(gateId))) fail("All five Phase 3B gate types were not approved.");
+  if (
+    values.length !== expectedRoleIds.size + aggregateGates.size ||
+    observedRoleIds.size !== expectedRoleIds.size ||
+    aggregateGateIds.size !== aggregateGates.size
+  ) {
+    fail("The Phase 3B gate decision topology was invalid.");
+  }
 }
 
 function validateRuntimeExit(

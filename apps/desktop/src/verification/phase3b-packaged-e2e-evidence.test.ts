@@ -217,6 +217,97 @@ describe("Phase 3B packaged E2E evidence", () => {
     ).toThrow("cache-hit proof");
   });
 
+  it("requires one uniquely identified per-role approval and four unscoped aggregate approvals", () => {
+    const result = fixtureResult();
+    const firstPerRole = result.gateDecisions[0];
+    const secondPerRole = result.gateDecisions[1];
+    const narratorAggregate = result.gateDecisions[3];
+
+    expect(() =>
+      validatePhase3bPackagedE2eResult({
+        ...result,
+        gateDecisions: result.gateDecisions.filter(
+          (decision) => decision.roleId !== "role-character-2"
+        )
+      })
+    ).toThrow("gate decision topology");
+
+    expect(() =>
+      validatePhase3bPackagedE2eResult({
+        ...result,
+        gateDecisions: [
+          ...result.gateDecisions,
+          {
+            ...firstPerRole,
+            reviewId: "review-extra-per-role",
+            decisionId: "decision-extra-per-role"
+          }
+        ]
+      })
+    ).toThrow("gate decision topology");
+
+    for (const invalidRoleId of [null, "role-not-auditioned"] as const) {
+      expect(() =>
+        validatePhase3bPackagedE2eResult({
+          ...result,
+          gateDecisions: result.gateDecisions.map((decision) =>
+            decision === firstPerRole
+              ? { ...decision, roleId: invalidRoleId }
+              : decision
+          )
+        })
+      ).toThrow("gate decision topology");
+    }
+
+    expect(() =>
+      validatePhase3bPackagedE2eResult({
+        ...result,
+        gateDecisions: result.gateDecisions.map((decision) =>
+          decision === narratorAggregate
+            ? { ...decision, roleId: "role-narrator" }
+            : decision
+        )
+      })
+    ).toThrow("gate decision topology");
+
+    for (const duplicatedIdentity of [
+      { reviewId: firstPerRole.reviewId },
+      { decisionId: firstPerRole.decisionId }
+    ]) {
+      expect(() =>
+        validatePhase3bPackagedE2eResult({
+          ...result,
+          gateDecisions: result.gateDecisions.map((decision) =>
+            decision === secondPerRole
+              ? { ...decision, ...duplicatedIdentity }
+              : decision
+          )
+        })
+      ).toThrow("must be unique");
+    }
+  });
+
+  it("rejects role assignment type, ID, or revision drift across clips", () => {
+    const result = fixtureResult();
+    const driftCases: readonly Partial<Phase3bAuditionEvidence>[] = [
+      { roleType: "character" },
+      { assignmentId: "assignment-role-narrator-drift" },
+      { assignmentRevision: 2 }
+    ];
+    for (const drift of driftCases) {
+      expect(() =>
+        validatePhase3bPackagedE2eResult({
+          ...result,
+          auditions: result.auditions.map((audition) =>
+            audition.auditionClipId === "clip-narrator-cache-hit"
+              ? { ...audition, ...drift }
+              : audition
+          )
+        })
+      ).toThrow("changed assignment identity across clips");
+    }
+  });
+
   it("records only lowercase SHA-256 cache identities and rejects raw cache material", () => {
     const result = fixtureResult();
     const serialized = JSON.stringify(

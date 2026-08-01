@@ -1693,7 +1693,7 @@ function assertGovernedCasting(snapshot: Phase3RuntimeSnapshot): void {
   expect(snapshot.run.profile.fingerprint).toBe(
     governedVoiceCastingProfileFingerprint
   );
-  expect(snapshot.run.approvedCastSnapshot?.reviewEligible).toBe(false);
+  expect(snapshot.run.approvedCastSnapshot?.reviewEligible).toBe(true);
   expect(
     snapshot.conflicts.some(
       (conflict) =>

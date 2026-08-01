@@ -868,6 +868,7 @@ test.describe("packaged desktop verification", () => {
               phase3bResultPath,
               buildPhase3bMachineResult({
                 completedAt,
+                casting: phase3PersistenceEvidence.casting,
                 workflow: phase3bWorkflow,
                 restart: phase3bRestartEvidence,
                 launchEvidence,
@@ -2049,6 +2050,7 @@ async function buildPhase3MachineResult({
 
 function buildPhase3bMachineResult({
   completedAt,
+  casting,
   workflow,
   restart,
   launchEvidence,
@@ -2056,6 +2058,7 @@ function buildPhase3bMachineResult({
   runtimeExits
 }: {
   readonly completedAt: string;
+  readonly casting: Phase3PersistenceEvidence["casting"];
   readonly workflow: Phase3bWorkflowEvidence;
   readonly restart: Phase3bRestartEvidence;
   readonly launchEvidence: readonly MachineLaunchEvidence[];
@@ -2075,6 +2078,56 @@ function buildPhase3bMachineResult({
   ) {
     throw new Error(
       "The two-launch owned-PID network observation proof was incomplete."
+    );
+  }
+  const expectedAssignments = [
+    {
+      ...casting.narratorAssignment,
+      auditionRoleType: "narrator" as const
+    },
+    ...casting.characterAssignments.map((assignment) => ({
+      ...assignment,
+      auditionRoleType: "character" as const
+    }))
+  ];
+  const expectedAssignmentsByRole = new Map(
+    expectedAssignments.map((assignment) => [assignment.roleId, assignment])
+  );
+  if (expectedAssignmentsByRole.size !== expectedAssignments.length) {
+    throw new Error("The Phase 3A casting proof repeated a governed role.");
+  }
+  const observedRoleIds = new Set<string>();
+  for (const audition of workflow.auditions) {
+    const expected = expectedAssignmentsByRole.get(audition.roleId);
+    if (
+      expected === undefined ||
+      audition.roleType !== expected.auditionRoleType ||
+      audition.assignmentId !== expected.assignmentId ||
+      audition.assignmentRevision !== expected.revision
+    ) {
+      throw new Error(
+        "The Phase 3B audition evidence did not match the complete Phase 3A cast."
+      );
+    }
+    observedRoleIds.add(audition.roleId);
+  }
+  const approvedRoleIds = workflow.gateDecisions
+    .filter((decision) => decision.gateId === "per_role_audition_review")
+    .map((decision) => decision.roleId);
+  if (
+    observedRoleIds.size !== expectedAssignmentsByRole.size ||
+    expectedAssignments.some(
+      (assignment) => !observedRoleIds.has(assignment.roleId)
+    ) ||
+    approvedRoleIds.some((roleId) => roleId === null) ||
+    new Set(approvedRoleIds).size !== expectedAssignmentsByRole.size ||
+    approvedRoleIds.some(
+      (roleId) =>
+        roleId === null || !expectedAssignmentsByRole.has(roleId)
+    )
+  ) {
+    throw new Error(
+      "The Phase 3B evidence did not cover every governed role and approval."
     );
   }
   const runtimeIdentities = [

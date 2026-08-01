@@ -169,7 +169,7 @@ export async function runPhase3bGovernanceWorkflow(
   }
 
   workspace = await readWorkspace(page, projectId);
-  const selectedRoles = selectThreeRoles(workspace.roles.items);
+  const selectedRoles = selectAuditionRoles(workspace.roles.items);
   const roleScripts = new Map<string, string>([
     [selectedRoles[0].roleId, scripts.narrator],
     [selectedRoles[1].roleId, scripts.character1],
@@ -183,18 +183,20 @@ export async function runPhase3bGovernanceWorkflow(
     const session = await createSession(page, projectId, role);
     sessionIds.push(session.auditionSessionId);
     if (role.roleType === "narrator") {
-      const reviewRequiredPlan = await previewUnsupportedNormalization(
+      const fixturePlan = await previewFixtureNormalization(
         page,
         projectId,
         session.auditionSessionId,
         session.revision
       );
       if (
-        !reviewRequiredPlan.unsupportedCharacterCodePoints.includes("U+2603") ||
-        !reviewRequiredPlan.warnings.includes("NORMALIZATION_REVIEW_REQUIRED")
+        fixturePlan.providerId !== fixtureProviderId ||
+        fixturePlan.unsupportedCharacterCodePoints.length !== 0 ||
+        fixturePlan.warnings.length !== 0 ||
+        fixturePlan.humanReviewRequired
       ) {
         throw new Error(
-          "The real service did not surface the provider-aware U+2603 normalization review warning."
+          "The deterministic fixture normalization policy unexpectedly rejected valid Unicode."
         );
       }
       const previewOnlyRole = (await readWorkspace(page, projectId)).roles.items.find(
@@ -202,7 +204,7 @@ export async function runPhase3bGovernanceWorkflow(
       );
       if (previewOnlyRole?.generationRequest !== null) {
         throw new Error(
-          "A review-required normalization preview was silently made eligible for synthesis."
+          "A preview-only normalization plan was persisted as synthesis authority."
         );
       }
     }
@@ -379,7 +381,9 @@ export async function runPhase3bGovernanceWorkflow(
       `missingExpectedCount=${missingNarratorInvalidations.length}).`
     );
   }
-  const characterClipIds = initialAuditions.slice(1).map((item) => item.auditionClipId);
+  const characterClipIds = initialAuditions
+    .filter((item) => item.roleType === "character")
+    .map((item) => item.auditionClipId);
   if (
     characterClipIds.some((id) => !supersedingApproved.preservedClipIds.includes(id)) ||
     supersedingApproved.preservedClipIdsTruncated ||
@@ -412,28 +416,51 @@ export async function runPhase3bGovernanceWorkflow(
       }, latestDecision=${pronunciationReview?.latestDecision?.decision ?? "none"}).`
     );
   }
-  const invalidatedReadinessReview = workspace.reviews.find(
-    (item) => item.gateId === "voice_readiness_review"
-  );
+  const readinessHistory = await page.evaluate(async (input) => {
+    const result = await window.cinematicStory.auditions.listReviewDecisions(
+      input
+    );
+    if (!result.ok) {
+      throw new Error(
+        `Voice-readiness history failed: ${result.error.code}: ${result.error.message}`
+      );
+    }
+    return result.value;
+  }, {
+    projectId,
+    gateId: "voice_readiness_review" as const,
+    roleId: null,
+    limit: 10
+  });
+  const invalidatedReadinessDecision = readinessHistory.items[0];
   if (
-    invalidatedReadinessReview === undefined ||
-    invalidatedReadinessReview.state !== "invalidated" ||
-    invalidatedReadinessReview.latestDecision?.decision !== "invalidated" ||
-    invalidatedReadinessReview.latestDecision.supersedesDecisionId !==
+    workspace.voiceReadinessSnapshot !== null ||
+    workspace.reviews.some(
+      (item) => item.gateId === "voice_readiness_review"
+    ) ||
+    readinessHistory.total < 2 ||
+    invalidatedReadinessDecision === undefined ||
+    invalidatedReadinessDecision.decision !== "invalidated" ||
+    invalidatedReadinessDecision.immutable !== true ||
+    invalidatedReadinessDecision.actor.classification !== "system" ||
+    invalidatedReadinessDecision.provenance.origin !== "system" ||
+    invalidatedReadinessDecision.rationale !==
+      "Applicable pronunciation evidence changed." ||
+    invalidatedReadinessDecision.supersedesDecisionId !==
       initialReadinessDecision.decisionId ||
-    invalidatedReadinessReview.evidence.pronunciationDictionaryFingerprint !==
-      beforeSupersession.dictionaryFingerprint ||
-    invalidatedReadinessReview.evidence.pronunciationDictionaryFingerprint ===
-      supersedingApproved.dictionary.dictionaryFingerprint
+    invalidatedReadinessDecision.reviewId !== initialReadinessReview.reviewId ||
+    invalidatedReadinessDecision.evidenceFingerprint !==
+      initialReadinessReview.evidence.evidenceFingerprint ||
+    !readinessHistory.items.some(
+      (item) => item.decisionId === initialReadinessDecision.decisionId
+    )
   ) {
     throw new Error(
-      "The prior voice-readiness review did not retain and invalidate its exact old evidence " +
-      `(present=${invalidatedReadinessReview !== undefined}, ` +
-      `state=${invalidatedReadinessReview?.state ?? "missing"}, ` +
-      `dictionaryWasPrior=${
-        invalidatedReadinessReview?.evidence.pronunciationDictionaryFingerprint ===
-        beforeSupersession.dictionaryFingerprint
-      }, latestDecision=${invalidatedReadinessReview?.latestDecision?.decision ?? "none"}).`
+      "The stale voice-readiness authority was not suppressed and retained as exact " +
+      `immutable invalidation history (currentReviewPresent=${workspace.reviews.some(
+        (item) => item.gateId === "voice_readiness_review"
+      )}, historyCount=${readinessHistory.total}, ` +
+      `latestDecision=${invalidatedReadinessDecision?.decision ?? "none"}).`
     );
   }
   const persistedInvalidatedGateStates = [
@@ -445,9 +472,9 @@ export async function runPhase3bGovernanceWorkflow(
     },
     {
       gateId: "voice_readiness_review" as const,
-      reviewId: invalidatedReadinessReview.reviewId,
-      state: invalidatedReadinessReview.state,
-      evidenceFingerprint: invalidatedReadinessReview.evidence.evidenceFingerprint
+      reviewId: invalidatedReadinessDecision.reviewId,
+      state: invalidatedReadinessDecision.decision,
+      evidenceFingerprint: invalidatedReadinessDecision.evidenceFingerprint
     }
   ];
   const refreshedNarrator = workspace.roles.items.find(
@@ -614,7 +641,9 @@ export async function runPhase3bGovernanceWorkflow(
     persistedReviewDecisionIds,
     persistedSessionIds: unique(sessionIds),
     persistedClipIds: unique(clipIds),
-    restoredAudioClipId: initialAuditions[1]?.auditionClipId ?? narratorOriginal.auditionClipId,
+    restoredAudioClipId:
+      initialAuditions.find((item) => item.roleType === "character")
+        ?.auditionClipId ?? narratorOriginal.auditionClipId,
     persistedScript
   };
 }
@@ -627,6 +656,11 @@ export async function provePhase3bRestartPersistence(
   await expect(
     page.getByRole("heading", { name: "Auditions & Pronunciation" })
   ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.locator(".review-card .status-badge", {
+      hasText: "Approved"
+    })
+  ).toHaveCount(expected.gateDecisions.length);
   const workspace = await readWorkspace(page, expected.projectId);
   const priorLaunchRuntime = workspace.runtimeInstances.find(
     (item) =>
@@ -726,6 +760,36 @@ export async function provePhase3bRestartPersistence(
   ) {
     throw new Error(
       "The exact persisted audition script and private cache did not verify on reuse."
+    );
+  }
+  const runtimeProofText =
+    `Restart-owned provider execution ${expected.persistedScript.artifactSha256.slice(0, 16)}.`;
+  const runtimeProofScript = await createScript(
+    page,
+    expected.projectId,
+    role.generationRequest.auditionSessionId,
+    role.generationRequest.auditionSessionRevision,
+    runtimeProofText,
+    `phase3b-e2e-restart-runtime-${expected.persistedScript.artifactSha256.slice(0, 16)}`
+  );
+  const runtimeProof = await generateCurrentRole(
+    page,
+    expected.projectId,
+    role.roleId
+  );
+  if (
+    runtimeProof.clip.auditionScriptId !==
+      runtimeProofScript.script.auditionScriptId ||
+    runtimeProof.auditionScriptId !==
+      runtimeProofScript.script.auditionScriptId ||
+    runtimeProof.clip.cacheStatus !== "miss" ||
+    runtimeProof.providerRequest.runtimeInstanceId === null ||
+    runtimeProof.providerRequest.provenance.details.executionClassification !==
+      "provider_execution" ||
+    runtimeProof.providerRequest.provenance.details.providerDispatchCount !== 1
+  ) {
+    throw new Error(
+      "The restart launch did not produce an exact owned provider execution for shutdown proof."
     );
   }
   const refreshed = await readWorkspace(page, expected.projectId);
@@ -901,18 +965,27 @@ async function decidePronunciation(
   });
 }
 
-function selectThreeRoles(roles: readonly AuditionRoleStatus[]): readonly [AuditionRoleStatus, AuditionRoleStatus, AuditionRoleStatus] {
+function selectAuditionRoles(
+  roles: readonly AuditionRoleStatus[]
+): readonly [
+  AuditionRoleStatus,
+  AuditionRoleStatus,
+  AuditionRoleStatus,
+  ...AuditionRoleStatus[]
+] {
   const narrator = roles.find((role) => role.roleType === "narrator");
-  const characters = roles.filter((role) => role.roleType === "character").slice(0, 2);
+  const characters = roles.filter((role) => role.roleType === "character");
   if (
     narrator?.sessionEvidence === null ||
     narrator === undefined ||
-    characters.length !== 2 ||
+    characters.length < 2 ||
     characters.some((role) => role.sessionEvidence === null)
   ) {
-    throw new Error("One narrator and two character session bindings were not available.");
+    throw new Error(
+      "The governed narrator and character session bindings were not all available."
+    );
   }
-  return [narrator, characters[0], characters[1]];
+  return [narrator, characters[0], characters[1], ...characters.slice(2)];
 }
 
 async function createSession(page: Page, projectId: string, role: AuditionRoleStatus) {
@@ -941,7 +1014,11 @@ async function createScript(
   const sourceTextSha256 = sha256(text);
   return page.evaluate(async (input) => {
     const result = await window.cinematicStory.auditions.createScript(input);
-    if (!result.ok) throw new Error(`Audition script creation failed: ${result.error.code}`);
+    if (!result.ok) {
+      throw new Error(
+        `Audition script creation failed: ${result.error.code}: ${result.error.message}`
+      );
+    }
     return result.value;
   }, {
     projectId,
@@ -958,7 +1035,7 @@ async function createScript(
   });
 }
 
-async function previewUnsupportedNormalization(
+async function previewFixtureNormalization(
   page: Page,
   projectId: string,
   auditionSessionId: string,
@@ -1251,9 +1328,9 @@ async function approveAllGates(
     );
   }
   for (const gateId of [
+    "pronunciation_review",
     "narrator_audition_review",
     "character_audition_review",
-    "pronunciation_review",
     "voice_readiness_review"
   ] as const) {
     const workspace = await readWorkspace(page, projectId);
@@ -1296,7 +1373,12 @@ async function approveReview(
   }
   const response = await page.evaluate(async (input) => {
     const result = await window.cinematicStory.auditions.decideReview(input);
-    if (!result.ok) throw new Error(`Audition review failed: ${result.error.code}`);
+    if (!result.ok) {
+      throw new Error(
+        `Audition review ${input.gateId}/${input.roleId ?? "global"} failed: ` +
+        `${result.error.code}: ${result.error.message}`
+      );
+    }
     return result.value;
   }, {
     projectId,
@@ -1447,6 +1529,17 @@ function withFreshIdempotencyKey(
   idempotencyKey: string
 ): SpeechPreviewRequest {
   const priorMaterial = omitObjectKeys(value, ["requestFingerprint"] as const);
+  if (
+    priorMaterial.providerControls.speakingRate !== 1 ||
+    priorMaterial.providerControls.pitch !== null ||
+    priorMaterial.providerControls.style !== null ||
+    priorMaterial.providerControls.energy !== null ||
+    sha256(canonicalJson(priorMaterial)) !== value.requestFingerprint
+  ) {
+    throw new Error(
+      "The deterministic fixture request could not reproduce its server-issued fingerprint."
+    );
+  }
   const material = { ...priorMaterial, idempotencyKey };
   return {
     ...material,
@@ -1464,7 +1557,10 @@ function omitObjectKeys<
   ) as Omit<T, K[number]>;
 }
 
-function canonicalJson(value: unknown): string {
+function canonicalJson(
+  value: unknown,
+  path: readonly string[] = []
+): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return JSON.stringify(value);
   }
@@ -1472,10 +1568,25 @@ function canonicalJson(value: unknown): string {
     if (!Number.isFinite(value)) {
       throw new Error("Canonical JSON cannot encode a non-finite number.");
     }
+    const field = path.at(-1);
+    const parent = path.at(-2);
+    if (
+      parent === "providerControls" &&
+      ["speakingRate", "pitch", "energy"].includes(field ?? "")
+    ) {
+      if (!Number.isInteger(value)) {
+        throw new Error(
+          "The fixture fingerprint helper only accepts integral provider-control floats."
+        );
+      }
+      return Object.is(value, -0) ? "-0.0" : `${String(value)}.0`;
+    }
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+    return `[${value
+      .map((item, index) => canonicalJson(item, [...path, String(index)]))
+      .join(",")}]`;
   }
   if (typeof value !== "object") {
     throw new Error("Canonical JSON received an unsupported value.");
@@ -1483,7 +1594,10 @@ function canonicalJson(value: unknown): string {
   const item = value as Record<string, unknown>;
   return `{${Object.keys(item)
     .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(item[key])}`)
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${canonicalJson(item[key], [...path, key])}`
+    )
     .join(",")}}`;
 }
 

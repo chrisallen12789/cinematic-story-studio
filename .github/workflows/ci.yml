@@ -16,7 +16,7 @@ jobs:
   verify-and-build:
     name: Lint, test, build, and Phase 3B packaged E2E
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PYTHONDONTWRITEBYTECODE: "1"

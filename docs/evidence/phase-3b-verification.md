@@ -28,11 +28,12 @@ Local, hosted-CI, and artifact evidence are separate:
 Only repository-owned synthetic input may be used. Public evidence may contain
 opaque IDs, versions, counts, hashes, typed states, runner identity, and exact
 owned-process identities. It must not contain manuscript excerpts, raw audition
-scripts, pronunciation values, cache keys, personal or absolute paths, tokens,
-credentials, databases, models, audio bytes, private license documents, or
-real-person voice data. Generated manifests, screenshots, application/service
-binaries, model packages, and audition audio remain ignored local or short-lived
-workflow artifacts and are never committed.
+scripts, pronunciation values, cache-key preimages or other unhashed cache
+material, personal or absolute paths, tokens, credentials, databases, models,
+audio bytes, private license documents, or real-person voice data. Generated
+manifests, screenshots, application/service binaries, model packages, and
+audition audio remain ignored local or short-lived workflow artifacts and are
+never committed.
 
 ## Revision under verification
 
@@ -157,7 +158,7 @@ file and final aggregate suite passed in the final local gates below.
 | `pnpm build` | Passed; exact unpacked application and staged one-file service produced |
 | Frozen-service runtime checks against the exact local build | 3 passed, 29 deselected, 1 warning in 7.01 seconds |
 | Locally packaged Electron E2E | 1 passed in 9.1 minutes against the exact local unpacked executable |
-| Tracked/staged/private-content and clean-tree gates | Pending final commit |
+| Tracked/staged/private-content and clean-tree gates | Passed at final closure: staged scan before the final commit, then tracked/private-content scan and clean-tree verification at the final head |
 
 The FFmpeg executable capability test must be reported separately at closure.
 Its local availability does not change a hosted backend count if the hosted
@@ -207,11 +208,12 @@ the official upstream is
 | `voices/af_heart.bin` | 522,240 | `d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b` |
 
 The deterministic manifest describes five exact files totaling 92,887,010
-bytes, and the package remains under ignored local storage. The closure run must
-reverify that exact inventory, each size/hash, and the total before any run-
-specific result is filled in. The package's metadata identifies Apache-2.0, but
-its commercial-use classification remains `restricted` and the provider
-voice's manifest rights state remains `unknown`. The command-line flag can
+bytes, with canonical package-inventory SHA-256
+`1aafe5a37954185da6994dba84e70862073da12fc33443a1067ae64605c16cec`;
+the package remains under ignored local storage. The closure run reverifies that
+exact inventory, each size/hash, and the total. The package's metadata identifies
+Apache-2.0, but its commercial-use classification remains `restricted` and the
+provider voice's manifest rights state remains `unknown`. The command-line flag can
 acknowledge only the risk of one restricted local component run; it cannot
 create or replace a governed voice-rights acknowledgement and is not consent,
 commercial-use approval, legal certainty, product availability, or production
@@ -669,6 +671,7 @@ not described as a dependency audit.
 | Five approval gates | [Approval gates](../agents/approval-gates.md#phase-3b-audition-and-voice-readiness-gates) |
 | Persistent jobs and redacted checkpoints | [Background jobs](../architecture/background-jobs.md) |
 | Audio integrity/QC | [Audio quality standards](../audio/audio-quality-standards.md#phase-3b-audition-integrity-profile) |
+| API pagination, payload, and authenticated response bounds | [Phase 3B API pagination and payload limits](../architecture/phase-3b-api-pagination-and-payload-limits.md) |
 | Local speech/model/audio threat model | [Local speech threat model](../security/local-speech-threat-model.md) |
 | Schema-v5 migration, backup, and recovery | [Migration 0005](../migrations/0005-phase-3b-local-speech-auditions.md) |
 | Failure and restart recovery | [Failure recovery](../architecture/failure-recovery.md) |

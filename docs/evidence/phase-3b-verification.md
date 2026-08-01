@@ -2,13 +2,12 @@
 
 ## Evidence policy and current status
 
-This is the in-progress Phase 3B evidence record. It records completed focused
-local checks and deterministic source/fixture facts. A fresh private ignored
-real-provider run, final aggregate local gates, the draft pull-request head,
-GitHub Actions runs, and the exact hosted artifact have not yet completed and
-are explicitly marked pending. A pending field is not an implicit pass. Prior
-private-provider run values are not carried forward when the retained JSON no
-longer matches the recorded size/hash/process tuple.
+This is the in-progress Phase 3B evidence record. It records completed local
+closure checks and deterministic source/fixture facts against implementation
+commit `8e6ff7c8837c322ff2f62dacf0d97eb25eaaf71c`. The draft pull-request head,
+GitHub Actions runs, and exact hosted artifact remain pending and are not
+implicit passes. Prior private-provider values are never carried forward when
+the retained JSON does not match its recorded size/hash/process tuple.
 
 Local, hosted-CI, and artifact evidence are separate:
 
@@ -16,8 +15,8 @@ Local, hosted-CI, and artifact evidence are separate:
 - the deterministic fixture provider proves lifecycle, cache, governance, and
   process behavior, not natural speech;
 - the private real-provider command is classified
-  `component_only_unbound_real_provider_verification`: a fresh closure run is
-  pending, and even a pass can prove only one bounded local component synthesis
+  `component_only_unbound_real_provider_verification`: the fresh closure run
+  passed, but it proves only one bounded local component synthesis
   and signal-integrity result, not a governed Phase 3A voice profile, cast
   assignment, rights-record binding, exact CI artifact, or production-cleared
   voice;
@@ -42,11 +41,11 @@ workflow artifacts and are never committed.
 | Branch | `codex/phase-3b-local-speech-auditions` |
 | Verified base | `main` at merge commit `e32f315adf2f612d4ac967a732e74947f96b8238` |
 | Starting branch point | `e32f315adf2f612d4ac967a732e74947f96b8238`; this is the verified base, not a Phase 3B implementation commit |
-| Phase 3B code/artifact source commit | Pending focused commits and push |
+| Phase 3B implementation and local artifact source commit | `8e6ff7c8837c322ff2f62dacf0d97eb25eaaf71c` |
 | Draft pull request | Pending; required title is `Phase 3B: add managed local speech auditions and pronunciation` |
 | Application version | `0.1.0` |
 | Database schema | Version 5, direct upgrade from the exact issued version 4 |
-| Verification date | 2026-07-31 UTC |
+| Verification date | 2026-08-01 UTC |
 | Canonical Windows CI run/job | Pending |
 | Pull-request Security safeguards run/job | Pending |
 | Pull-request Dependency review run/job | Pending |
@@ -68,7 +67,7 @@ automatic update work are outside this evidence boundary.
 | Fixture provider | `deterministic-pcm-wav-fixture@1.0.0`; adapter `1.0.0`; deterministic, local, fixture-only, export-ineligible |
 | Fixture model/package | `deterministic-square-wave@1.0.0` / `deterministic-pcm-wav-fixture-package`; manifest fingerprint `e0352282af67ff3675fe6067a63feca5d9d4fcaeef5a3f12b80a5e4d2c9635d6` |
 | Fixture runtime profile | Current `deterministic-pcm-wav-fixture-windows-v1-0-1@1.0.1`; record `793f36e7-e118-52c4-b605-6f60f23e1656`; fingerprint `f3e5801f836ab4061eb76e52f4a3e1b4c7ba162238e0c70857e74fff705f75d6`; 30,000 ms startup deadline |
-| Real local provider component | `kokoro-local-onnx@1.0.0`; adapter `1.0.0`; local, non-deterministic, restricted, export-ineligible; only the unbound component command can verify it, and the fresh closure run is pending |
+| Real local provider component | `kokoro-local-onnx@1.0.0`; adapter `1.0.0`; local, non-deterministic, restricted, export-ineligible; the fresh unbound component command passed |
 | Real component runtime | `onnxruntime-cpu@1.28.0`; current profile `kokoro-local-onnx-windows-v1-0-1@1.0.1`; record `190de0bf-aa0d-5620-97c6-584d2997c3dc`; fingerprint `1736106e267f8e4ed695e71bb28b39477f658bf4cdfe4b4da716c471f82c80ce`; 30,000 ms startup deadline |
 | Real G2P | `kokorog2p==0.6.7`, dictionary-only English path; remote, eSpeak, spaCy, Goruut, and implicit fallbacks disabled |
 | Real model package | `kokoro-82m-v1.0-onnx-q8-af-heart@1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231`; 92,887,010 expanded bytes; manifest fingerprint `03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0` |
@@ -97,18 +96,13 @@ model, voice, runtime, or package.
 ## Locally executed checks
 
 The current workstation tools are Node.js `24.14.0`, pnpm `11.9.0`, and the
-service environment's CPython `3.14.6`. CPython `3.12.10` is separately
-installed and completed the supported lock-reproduction/install check. The current
+service environment's supported CPython `3.12.10`. The current
 `apps/local-service/requirements.lock` is 61,104 bytes with SHA-256
 `8e4a886fa63e86e4a1f8512a9b448a01fbaa16efa8f7f2eddd471893c4ddccc0`.
-The CI-equivalent compile over the existing committed lock reproduced those
-exact bytes at `2026-08-01T10:23:04.717Z`; a fresh `--require-hashes` install,
-editable `--no-build-isolation --no-deps` service install, and `pip check`
-completed at `2026-08-01T10:26:35.009Z`. A blank-output live-index compile is
-not byte-identical because the index now exposes 128 additional hashes for the
-same pinned `lxml==6.1.1`; the workflow's intentional `pip-tools` hash-reuse
-check verifies the committed dependency resolution and hash set, not an
-immutable package-index snapshot.
+The CI-equivalent pinned-compiler regeneration on 2026-08-01 reproduced those
+exact bytes. A fresh `--require-hashes` install, editable
+`--no-build-isolation --no-deps` service install, and `pip check` completed with
+`No broken requirements found`.
 
 These are completed focused checks, not an additive full-suite total. Some
 tests are repeated across focused files.
@@ -125,7 +119,7 @@ tests are repeated across focused files.
 | Atomic cancellation/publication-boundary case | 1 passed, 0 skipped, 1 warning in 59.03 seconds |
 | Phase 3B scale file | 1 passed, 0 skipped, 1 warning in 356.97 seconds of Pytest-reported elapsed time; 367.645 seconds outer command wall time |
 | Python lint/type focus | Ruff formatting/lint passed on the exercised Phase 3B modules; configured strict mypy passed all 32 service source files |
-| Current documentation policy/link checks | Pending rerun after evidence closure edits |
+| Current documentation policy/link checks | Passed through the repository lint gate after the evidence closure edit |
 
 The warning in these Pytest invocations is the same upstream
 `StarletteDeprecationWarning` for the Starlette TestClient/current `httpx`
@@ -144,22 +138,25 @@ verified cache reuse, two distinct provider-request attempt records across
 retry, cancellation, restart, append-only review decisions, targeted
 invalidation, cache clearing, and stale-review rejection. The atomic checks
 exercise owned staging cleanup and publication boundaries; the complete atomic
-file and final aggregate suite remain required.
+file and final aggregate suite passed in the final local gates below.
 
-### Final local gates still pending
+### Final local gates
 
 | Gate | Status |
 | --- | --- |
 | CPython 3.12.10 lock reproduction and frozen/hash-locked install | Passed: exact 61,104-byte/SHA-256 reproduction, fresh hash-enforced install, editable no-dependency install, and `pip check` (`No broken requirements found`) |
-| `pnpm install --frozen-lockfile` | Pending final-tree record |
-| `pnpm lint` | Pending final-tree record |
-| `pnpm typecheck` | Pending final-tree record |
-| `pnpm test` with exact repository/tooling/backend/desktop totals | Pending |
-| Complete focused Phase 2, Phase 3A, and Phase 3B CI-equivalent subsets | Pending final-tree aggregate record |
-| Development Electron E2E | Pending |
-| `pnpm build` | Pending |
-| Frozen-service runtime checks against the exact local build | Pending |
-| Locally packaged Electron E2E | Pending |
+| `pnpm install --frozen-lockfile` | Passed; the exact locked editable service install and `pip check` also passed |
+| Locked parser/schema/fixture/build-evidence checks | 54 passed, 0 skipped, 0 failed |
+| `pnpm lint` | Passed, including tracked repository scan and diff safeguards |
+| `pnpm typecheck` | Passed; strict mypy covered 32 service source files and both TypeScript projects passed |
+| `pnpm test` | Passed: 61 Node tests; 485 backend passed, 4 skipped, 1 warning; 19 desktop files with 292 tests passed |
+| Focused Phase 2 | 90 passed, 0 skipped, 1 warning in 457.17 seconds |
+| Focused Phase 3A | 64 passed, 0 skipped, 1 warning in 444.57 seconds |
+| Focused Phase 3B | 195 passed, 4 skipped, 1 warning in 1,718.53 seconds |
+| Development Electron E2E | 1 passed in 6.8 minutes |
+| `pnpm build` | Passed; exact unpacked application and staged one-file service produced |
+| Frozen-service runtime checks against the exact local build | 3 passed, 29 deselected, 1 warning in 7.01 seconds |
+| Locally packaged Electron E2E | 1 passed in 9.1 minutes against the exact local unpacked executable |
 | Tracked/staged/private-content and clean-tree gates | Pending final commit |
 
 The FFmpeg executable capability test must be reported separately at closure.
@@ -172,11 +169,9 @@ The real-provider evidence is private local, component-only evidence, not a
 committed fixture, hosted-CI evidence, or product-path audition. Its exact
 classification is `component_only_unbound_real_provider_verification`. Both
 the exact model package and generated WAV remain under ignored local storage;
-only placeholder files in those roots may be tracked. The currently retained
-command JSON does not match the previously recorded JSON size/hash and process
-tuple, so no retained run is designated as the closure run. A fresh invocation
-and exact capture are pending; the stale run-specific numbers have deliberately
-been removed rather than presented as current evidence.
+only placeholder files in those roots may be tracked. The closure command
+completed at `2026-08-01T23:06:08.512Z`; its exact ignored run directory is
+`local-renders/phase3b-real-provider/run-20260801T230608512Z-e0515ec59c6940a0a87c26afad488163`.
 
 The fresh rerun must use the committed bounded component-verification command:
 
@@ -230,21 +225,21 @@ clearance.
 | Provider / adapter | `kokoro-local-onnx@1.0.0` / `1.0.0` |
 | Runtime / model / provider-internal voice | `onnxruntime-cpu@1.28.0`; `onnx-community/Kokoro-82M-v1.0-ONNX@1.0`; `af_heart` |
 | Governed Phase 3A binding | `componentOnlyVerification=true`; `governedPhase3aVoiceProfileBound=false`; `governedRightsRecordBound=false`; no governed voice-profile, cast-assignment, or rights-record IDs exist in this evidence |
-| Restricted-use acknowledgement scope | Pending fresh command; command-only acknowledgement is not a voice-rights, consent, or commercial-use approval |
-| Synthetic input/request/dictionary/plan/configuration fingerprints | Pending fresh command |
-| Private evidence JSON bytes / SHA-256 | Pending fresh command |
-| WAV bytes / SHA-256 / format / duration | Pending fresh command |
-| Signal, silence edges, and QC findings/fingerprint | Pending fresh command |
+| Restricted-use acknowledgement scope | `restrictedLocalUseAcknowledged=true`; command-only acknowledgement is not a voice-rights, consent, or commercial-use approval |
+| Synthetic input/request/dictionary/plan/configuration fingerprints | Input text SHA-256 `1ed323899698425fd1c3f3010a7ab35cb0be06137592371a7400b6399891ffff`; request `b7aac434310ec21d16a980ecc606ecbfe9953b62221529d77542e809a86687e7`; dictionary `2f6a343c97f1a2097377b30f86ee2e24d9f6cb6fa24a99680aa8e4a02320c670`; plan `1fc1a4595ad0a28f6b2a91d9b4317a20fc8828e85044a2a7e59c9e3ffffef883`; provider configuration `44f334dd52bf1b19006baccb85e65d019f0ecd4ef7cf5a53d9a77161cc545ec8` |
+| Private evidence JSON bytes / SHA-256 | 5,098 / `d5764adb87324edea0b5351575b95e002afac65eb1489236071159339474ffcf` |
+| WAV bytes / SHA-256 / format / duration | 109,244 / `66fb2b9f137e237c805506bed32221db55ab96477db72cbd2acc54180baf6153`; 24 kHz, mono, PCM16, 54,600 frames, 2.275 seconds |
+| Signal, silence edges, and QC findings/fingerprint | Peak -3.386244 dBFS; RMS -24.385807 dBFS; 34,453 non-silent frames; 326.166667 ms leading and 397.541667 ms trailing silence; no blocking/warning codes; QC `4b742fb0ba45947fd0e7268ab2650fe2058175953a7909ff171714dd5ed38c96` |
 
 ### Managed worker ownership and shutdown
 
 | Field | Closure value |
 | --- | --- |
-| Worker / launcher / owner / parent PIDs | Pending fresh command |
-| Executable identity and service-computed SHA-256 | Pending fresh command |
-| Runtime protocol / Job Object / authenticated ownership | Pending fresh command |
-| Python socket-denial count | Pending fresh command |
-| Shutdown reason / exit / owned-process exit / force behavior | Pending fresh command |
+| Worker / launcher / owner / parent PIDs | Worker `19296`; launcher/parent `16040`; owner `7692` |
+| Executable identity and service-computed SHA-256 | `python.exe`; 274,424 bytes; `0b471133e110cfb53a061cad528ce8e517d7b9ac41a0a396c39ad795a487fc14` |
+| Runtime protocol / Job Object / authenticated ownership | `1.0.0`; Job Object assigned; authenticated ownership true |
+| Python socket-denial count | 0; network classification `offline-python-socket-denied`; network access was not permitted |
+| Shutdown reason / exit / owned-process exit / force behavior | `clean`; exit 0; shutdown acknowledged and graceful; ownership and all owned exits confirmed; not terminated by parent; all three exact PIDs independently absent afterward |
 
 The fresh result must still be interpreted narrowly. A zero Python socket
 counter is not packet-level proof: native code, a pre-patch reference, or an
@@ -285,8 +280,8 @@ content only:
 
 | E2E layer | Current result |
 | --- | --- |
-| Development Electron E2E | Pending |
-| Locally packaged E2E against the local unpacked build | Pending |
+| Development Electron E2E | Passed, 1 test in 6.8 minutes |
+| Locally packaged E2E against the local unpacked build | Passed, 1 test in 9.1 minutes; schema-7 result completed `2026-08-01T23:16:30.850Z` |
 | Exact-CI-artifact packaged E2E | Pending GitHub run |
 
 No E2E layer is marked passed until its exact invocation completes.
@@ -323,7 +318,15 @@ identity, or unavailable observation fails safely; it never authorizes killing
 by process name. The `unrelatedProcessesInspected` field excludes the required
 prelaunch relevant-name inventory, which records only bounded identity metadata;
 it means that no non-owned PID is adopted or queried for endpoints or process
-content. The exact CI PIDs and per-launch exit evidence are pending.
+content. The local packaged run began from empty relevant-name baselines on both
+launches. Launch 1 owned PIDs `6400,6488,7068,9036,10212,12852,12928,15408,18520`;
+launch 2 owned PIDs `3984,6156,9168,12508,15560,17984,18068,18932`. Both launch
+proofs have `graceful=true`, `forcedPids=[]`, and `remainingPids=[]`; every one
+of the 17 exact PIDs was independently absent after the test. Provider runtime
+exits were clean with exact worker/parent pairs `12928/6488` and `17984/15560`,
+authenticated shutdown acknowledgement, Job Object assignment, zero denied
+Python network attempts, and confirmed owned-tree exit. Exact CI PIDs remain
+pending GitHub execution.
 
 ## Build-evidence and artifact semantics
 
@@ -357,6 +360,19 @@ secrets, model or audio bytes, incomplete process evidence, and disagreement
 between the packaged step outcome and machine result. It revalidates exact
 artifact bytes after the tracked-content scan and clean-tree check, before
 short-lived upload.
+
+The exact local build produced these ignored artifacts; they are local evidence,
+not claims about future GitHub-produced bytes:
+
+| Local artifact field | Exact value |
+| --- | --- |
+| Application | 225,613,824 bytes; SHA-256 `5035d639bdf1a3d33f7e346c64ee87a24f1c18c8acf5ded035df576779883146` |
+| Staged service | 51,905,646 bytes; SHA-256 `a16f5401e9f0fe873225984965f9c3d7f7db9f44082b4f68e9536ee70a09be62` |
+| Embedded service | 51,905,646 bytes; SHA-256 `a16f5401e9f0fe873225984965f9c3d7f7db9f44082b4f68e9536ee70a09be62` |
+| Staged/embedded equality | Exact size and SHA-256 match |
+| Phase 3B result | 27,868 bytes; SHA-256 `2299751a9ba2daa27b7f4c8b495a5e364a1c5f879c6e3173b7c801c3aa7cbc2b` |
+| Packaged result | 23,728 bytes; SHA-256 `b53c6f975ccbee52cd78cc10ebbe32c2beec67cac40a282ad956779ce0da7331` |
+| Screenshot | 149,360 bytes; SHA-256 `9ba01928491fefdc4817540f17fe2c71a08a3e2c38e91589743f828e116c17a7` |
 
 | Hosted artifact field | Current value |
 | --- | --- |
@@ -568,11 +584,11 @@ revalidation; no renderer path or
 
 Fresh local live-registry checks completed for the current Node lock and the
 61,104-byte Python requirements lock. pnpm `11.9.0` ran
-`pnpm audit --audit-level high` at `2026-08-01T10:10:39.5019524Z` and reported
+`pnpm audit --audit-level high` at `2026-08-01T23:19:26.3321064Z` and reported
 `No known vulnerabilities found`. A temporary Python 3.12.10 environment with
 top-level `pip==26.1.2` and `pip-audit==2.10.1` ran
 `pip-audit --require-hashes --disable-pip -r apps/local-service/requirements.lock`
-at `2026-08-01T10:11:54.6220803Z` and
+at `2026-08-01T23:19:43.2678697Z` and
 reported `No known vulnerabilities found`. The exact lock install separately
 completed `pip check` with `No broken requirements found`. An earlier Python
 advisory result for different lock bytes is superseded and is not carried
@@ -592,8 +608,7 @@ not described as a dependency audit.
 
 ## Known limitations and unverified behavior
 
-- The Kokoro adapter has prior component-only short-preview evidence; the fresh
-  closure rerun is pending. No governed
+- The Kokoro adapter has a fresh component-only short-preview closure pass. No governed
   Phase 3A voice profile, cast assignment, or rights record binds its
   provider-internal `af_heart` voice, so the product path rejects it rather
   than silently substituting it. Performer consent, identity/likeness, and the
@@ -636,9 +651,9 @@ not described as a dependency audit.
   update, Phase 3C, or Phase 4 claim.
 - Existing decisions remain immutable history after invalidation; regeneration
   never restores approval automatically.
-- Final aggregate local tests, both Electron E2E layers, hosted Windows tests,
-  exact hosted process proof, artifact hashes, Security safeguards, and
-  Dependency review remain pending and must be recorded before evidence closure.
+- Hosted Windows tests, exact hosted process proof, artifact hashes, Security
+  safeguards, and Dependency review remain pending and must be recorded before
+  hosted evidence closure.
 
 ## Documentation coverage
 

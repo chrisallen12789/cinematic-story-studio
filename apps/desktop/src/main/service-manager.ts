@@ -23,6 +23,8 @@ const SHUTDOWN_TIMEOUT_MS = 20_000;
 const FORCED_TERMINATION_TIMEOUT_MS = 2_000;
 const MAX_AUTOMATIC_RESTARTS = 2;
 const RESTART_WINDOW_MS = 60_000;
+const PHASE3B_RUNTIME_SHUTDOWN_EVIDENCE_ENVIRONMENT =
+  "CSS_PHASE3B_RUNTIME_SHUTDOWN_EVIDENCE";
 
 export interface ServiceManagerOptions {
   readonly isPackaged: boolean;
@@ -886,7 +888,9 @@ function createSnapshot(
   };
 }
 
-function buildChildEnvironment(includePath: boolean): NodeJS.ProcessEnv {
+export function buildChildEnvironment(
+  includePath: boolean
+): NodeJS.ProcessEnv {
   const keys = [
     "SystemRoot",
     "WINDIR",
@@ -908,6 +912,11 @@ function buildChildEnvironment(includePath: boolean): NodeJS.ProcessEnv {
   }
   if (includePath && process.env.PATH !== undefined) {
     environment.PATH = process.env.PATH;
+  }
+  if (
+    process.env[PHASE3B_RUNTIME_SHUTDOWN_EVIDENCE_ENVIRONMENT] === "1"
+  ) {
+    environment[PHASE3B_RUNTIME_SHUTDOWN_EVIDENCE_ENVIRONMENT] = "1";
   }
   return environment;
 }

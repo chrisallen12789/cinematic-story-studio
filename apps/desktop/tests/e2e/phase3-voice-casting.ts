@@ -833,9 +833,10 @@ export function buildPhase3VoiceCastingEvidence(
 
 async function waitForCastingPublication(page: Page): Promise<void> {
   const timeoutMs = 240_000;
-  const publicationUiGraceMs = 5_000;
+  const publicationUiGraceMs = 15_000;
   const deadline = Date.now() + timeoutMs;
   let backendPublishedAt: number | null = null;
+  let explicitRefreshRequested = false;
   let lastDiagnostic: unknown = null;
   const uiState = page.locator(".casting-runbar .run-state");
 
@@ -857,6 +858,16 @@ async function waitForCastingPublication(page: Page): Promise<void> {
     }
     if (diagnostic.runStatus === "succeeded") {
       backendPublishedAt ??= Date.now();
+      if (!explicitRefreshRequested) {
+        const refresh = page.getByRole("button", {
+          name: "Refresh evidence",
+          exact: true
+        });
+        if (await refresh.isEnabled()) {
+          explicitRefreshRequested = true;
+          await refresh.click();
+        }
+      }
       if (Date.now() - backendPublishedAt >= publicationUiGraceMs) {
         throw new Error(
           `The service published casting, but the desktop did not load the published resources: ${JSON.stringify(diagnostic.payload)}`

@@ -52,7 +52,7 @@ export interface ProcessIdentity {
 }
 
 export interface OwnedProcess extends ProcessIdentity {
-  readonly kind: "app" | "service";
+  readonly kind: "app" | "service" | "provider_worker";
 }
 
 export interface PackagedProcessPaths {
@@ -101,6 +101,13 @@ export interface AdoptProcessTreeInput {
   readonly owned: readonly OwnedProcess[];
   readonly rootPid: number;
   readonly packaged: PackagedProcessPaths;
+}
+
+export interface BindProviderWorkerProcessTreeInput {
+  readonly owned: readonly OwnedProcess[];
+  readonly rootPid: number;
+  readonly workerPid: number;
+  readonly reportedParentPid: number;
 }
 
 const processInventoryScript = [
@@ -330,6 +337,7 @@ export function adoptVerifiedProcessTree({
       if (
         item.name === serviceExecutableName &&
         verifiedParent.kind !== "service" &&
+        verifiedParent.kind !== "provider_worker" &&
         result.some((candidate) => candidate.kind === "service")
       ) {
         /*
@@ -345,7 +353,11 @@ export function adoptVerifiedProcessTree({
       result.push({
         ...item,
         kind:
-          item.name === serviceExecutableName ? "service" : "app"
+          item.name === serviceExecutableName
+            ? verifiedParent.kind === "provider_worker"
+              ? "provider_worker"
+              : "service"
+            : "app"
       });
       adoptedInPass = true;
     }
@@ -381,6 +393,102 @@ export function adoptVerifiedProcessTree({
     );
   }
   return result.sort((left, right) => left.pid - right.pid);
+}
+
+/**
+ * Reclassify only the already-owned service-image lineage that terminates at
+ * the runtime-reported worker PID. The runtime identity is not trusted to add
+ * ownership: every PID must first have been adopted by exact executable path,
+ * creation identity, and ancestry from the Electron root.
+ */
+export function bindProviderWorkerProcessTree({
+  owned,
+  rootPid,
+  workerPid,
+  reportedParentPid
+}: BindProviderWorkerProcessTreeInput): readonly OwnedProcess[] {
+  if (
+    !Number.isSafeInteger(rootPid) ||
+    rootPid <= 0 ||
+    !Number.isSafeInteger(workerPid) ||
+    workerPid <= 0 ||
+    !Number.isSafeInteger(reportedParentPid) ||
+    reportedParentPid <= 0 ||
+    workerPid === reportedParentPid
+  ) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_INVALID_IDENTITY",
+      false
+    );
+  }
+  const byPid = new Map(owned.map((item) => [item.pid, item]));
+  if (byPid.size !== owned.length) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
+  }
+  const root = byPid.get(rootPid);
+  const parent = byPid.get(reportedParentPid);
+  const worker = byPid.get(workerPid);
+  if (
+    root?.kind !== "app" ||
+    parent?.kind !== "service" ||
+    parent.name !== serviceExecutableName ||
+    worker === undefined ||
+    worker.name !== serviceExecutableName ||
+    worker.executablePath === null ||
+    parent.executablePath === null ||
+    !samePath(worker.executablePath, parent.executablePath)
+  ) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
+  }
+
+  const workerLineage = new Set<number>();
+  const visited = new Set<number>();
+  let current = worker;
+  while (current.pid !== reportedParentPid) {
+    if (
+      visited.has(current.pid) ||
+      current.pid === rootPid ||
+      current.name !== serviceExecutableName ||
+      current.executablePath === null ||
+      !samePath(current.executablePath, parent.executablePath) ||
+      current.creationDate < parent.creationDate
+    ) {
+      throw new ProcessInventoryError(
+        "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        false
+      );
+    }
+    visited.add(current.pid);
+    workerLineage.add(current.pid);
+    const next = byPid.get(current.parentPid);
+    if (next === undefined || next.creationDate > current.creationDate) {
+      throw new ProcessInventoryError(
+        "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        false
+      );
+    }
+    current = next;
+  }
+
+  if (!isOwnedDescendant(parent, rootPid, byPid)) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
+  }
+  return owned
+    .map((item) =>
+      workerLineage.has(item.pid)
+        ? { ...item, kind: "provider_worker" as const }
+        : item
+    )
+    .sort((left, right) => left.pid - right.pid);
 }
 
 export function containsProcessIdentity(
@@ -438,6 +546,21 @@ function sameStableProcessIdentity(
     return left.executablePath !== right.executablePath;
   }
   return samePath(left.executablePath, right.executablePath);
+}
+
+function isOwnedDescendant(
+  value: OwnedProcess,
+  rootPid: number,
+  byPid: ReadonlyMap<number, OwnedProcess>
+): boolean {
+  const visited = new Set<number>();
+  let current: OwnedProcess | undefined = value;
+  while (current !== undefined && current.pid !== rootPid) {
+    if (visited.has(current.pid)) return false;
+    visited.add(current.pid);
+    current = byPid.get(current.parentPid);
+  }
+  return current?.pid === rootPid;
 }
 
 export function matchesPackagedProcessPath(

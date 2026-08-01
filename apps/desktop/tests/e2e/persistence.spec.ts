@@ -12,6 +12,7 @@ import {
   type Locator,
   type Page
 } from "@playwright/test";
+import type { SpeechRuntimeInstance } from "@cinematic-story-studio/contracts";
 
 import { materializeStrictBase64Docx } from "../../src/verification/packaged-e2e-evidence";
 import {
@@ -25,6 +26,18 @@ import {
   readPhase3RuntimeSnapshot,
   runPhase3GovernanceWorkflow
 } from "./phase3-voice-casting";
+import {
+  provePhase3bRestartPersistence,
+  runPhase3bGovernanceWorkflow
+} from "./phase3b-local-speech-auditions";
+import {
+  observeOwnedProcessNetworkEndpoints,
+  queryExactProcessIdentities
+} from "../../src/verification/owned-process-network-observation";
+import type {
+  OwnedProcess,
+  ProcessIdentity
+} from "../../src/verification/packaged-process-inventory";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -43,7 +56,7 @@ test.describe("desktop persistence", () => {
   );
 
   test("restores the most recent project after a real service restart", async () => {
-    test.setTimeout(600_000);
+    test.setTimeout(900_000);
     const isolationRoot = await mkdtemp(
       path.join(tmpdir(), "css-desktop-e2e-")
     );
@@ -253,9 +266,15 @@ test.describe("desktop persistence", () => {
         firstPage,
         phase2Workflow.governed
       );
-      const firstExit = await closeElectron(first);
+      const phase3bWorkflow = await runPhase3bGovernanceWorkflow(firstPage);
+      const firstOwnership = await establishDevelopmentOwnership(
+        first,
+        phase3bWorkflow.liveRuntimeInstance
+      );
+      const firstExit = await closeElectron(first, firstOwnership);
       expect(firstExit.graceful).toBe(true);
       expect(firstExit.forced).toBe(false);
+      expect(firstExit.exactOwnedPidsGone).toBe(true);
       first = null;
 
       second = await launch(dataDirectory);
@@ -334,14 +353,25 @@ test.describe("desktop persistence", () => {
       const restoredPhase3 =
         await readPhase3RuntimeSnapshot(secondPage);
       expectPhase3RestartPersistence(phase3Workflow, restoredPhase3);
+      const restoredPhase3b = await provePhase3bRestartPersistence(
+        secondPage,
+        phase3bWorkflow
+      );
+      expect(restoredPhase3b.cacheRecordsPersisted).toBe(true);
+      expect(restoredPhase3b.authenticatedRestoredAudioLoaded).toBe(true);
       await expect(
         secondPage.locator(".review-card .review-state", {
           hasText: "Approved"
         })
       ).toHaveCount(3);
-      const secondExit = await closeElectron(second);
+      const secondOwnership = await establishDevelopmentOwnership(
+        second,
+        restoredPhase3b.liveRuntimeInstance
+      );
+      const secondExit = await closeElectron(second, secondOwnership);
       expect(secondExit.graceful).toBe(true);
       expect(secondExit.forced).toBe(false);
+      expect(secondExit.exactOwnedPidsGone).toBe(true);
       second = null;
     } finally {
       await closeElectron(second);
@@ -563,14 +593,98 @@ function reviewEvidence(card: Locator, label: string): Locator {
     .locator("dd");
 }
 
+interface DevelopmentProcessOwnership {
+  readonly electron: ProcessIdentity;
+  readonly service: ProcessIdentity;
+  readonly providerWorker: ProcessIdentity;
+}
+
+async function establishDevelopmentOwnership(
+  application: ElectronApplication,
+  runtime: SpeechRuntimeInstance
+): Promise<DevelopmentProcessOwnership> {
+  const electronRuntime = await application.evaluate(() => ({
+    pid: process.pid,
+    executablePath: process.execPath
+  }));
+  const pids = [
+    electronRuntime.pid,
+    runtime.parentPid,
+    runtime.workerPid
+  ];
+  if (
+    pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0) ||
+    new Set(pids).size !== pids.length
+  ) {
+    throw new Error(
+      "The development Electron, service, and provider-worker PIDs were invalid or ambiguous."
+    );
+  }
+  const identities = await queryExactProcessIdentities(pids);
+  const electronIdentity = identities.find(
+    (item) => item.pid === electronRuntime.pid
+  );
+  const serviceIdentity = identities.find(
+    (item) => item.pid === runtime.parentPid
+  );
+  const providerWorkerIdentity = identities.find(
+    (item) => item.pid === runtime.workerPid
+  );
+  if (
+    identities.length !== 3 ||
+    electronIdentity === undefined ||
+    serviceIdentity === undefined ||
+    providerWorkerIdentity === undefined ||
+    electronIdentity.executablePath === null ||
+    serviceIdentity.executablePath === null ||
+    providerWorkerIdentity.executablePath === null ||
+    !sameWindowsPath(
+      electronIdentity.executablePath,
+      electronRuntime.executablePath
+    ) ||
+    serviceIdentity.parentPid !== electronIdentity.pid ||
+    providerWorkerIdentity.parentPid !== serviceIdentity.pid ||
+    !sameWindowsPath(
+      serviceIdentity.executablePath,
+      providerWorkerIdentity.executablePath
+    ) ||
+    path.win32.basename(providerWorkerIdentity.executablePath).toLowerCase() !==
+      runtime.executableIdentity.toLowerCase() ||
+    serviceIdentity.creationDate < electronIdentity.creationDate ||
+    providerWorkerIdentity.creationDate < serviceIdentity.creationDate
+  ) {
+    throw new Error(
+      "Exact development Electron, service, and provider-worker ownership could not be established."
+    );
+  }
+  const ownedPython: readonly OwnedProcess[] = [
+    { ...serviceIdentity, kind: "service" },
+    { ...providerWorkerIdentity, kind: "provider_worker" }
+  ];
+  const networkObservation =
+    await observeOwnedProcessNetworkEndpoints(ownedPython);
+  if (networkObservation.observedNonLoopbackEndpointCount !== 0) {
+    throw new Error(
+      "An exact owned development Python process exposed or used a non-loopback TCP endpoint."
+    );
+  }
+  return {
+    electron: electronIdentity,
+    service: serviceIdentity,
+    providerWorker: providerWorkerIdentity
+  };
+}
+
 async function closeElectron(
-  application: ElectronApplication | null
+  application: ElectronApplication | null,
+  ownership: DevelopmentProcessOwnership | null = null
 ): Promise<{
   readonly graceful: boolean;
   readonly forced: boolean;
+  readonly exactOwnedPidsGone: boolean;
 }> {
   if (application === null) {
-    return { graceful: true, forced: false };
+    return { graceful: true, forced: false, exactOwnedPidsGone: true };
   }
   const child = application.process();
   const outcome = await Promise.race([
@@ -590,13 +704,74 @@ async function closeElectron(
     forced = true;
     await Promise.race([once(child, "exit"), delay(3_000)]);
   }
+  const exactOwnedPidsGone =
+    ownership === null
+      ? true
+      : await waitForExactDevelopmentProcessesGone(ownership);
   return {
     graceful:
       outcome === "closed" &&
       child.exitCode !== null &&
       child.signalCode === null,
-    forced
+    forced,
+    exactOwnedPidsGone
   };
+}
+
+async function waitForExactDevelopmentProcessesGone(
+  ownership: DevelopmentProcessOwnership
+): Promise<true> {
+  const expected = [
+    ownership.electron,
+    ownership.service,
+    ownership.providerWorker
+  ];
+  const pids = expected.map((item) => item.pid);
+  const deadline = Date.now() + 15_000;
+  let consecutiveAbsenceObservations = 0;
+  while (Date.now() < deadline) {
+    const current = await queryExactProcessIdentities(pids);
+    const remaining = expected.filter((item) =>
+      current.some((candidate) => sameStableDevelopmentIdentity(item, candidate))
+    );
+    if (remaining.length === 0) {
+      consecutiveAbsenceObservations += 1;
+      if (consecutiveAbsenceObservations >= 2) return true;
+    } else {
+      consecutiveAbsenceObservations = 0;
+    }
+    await delay(200);
+  }
+  throw new Error(
+    "The exact owned development Electron, service, and provider-worker PIDs did not all exit."
+  );
+}
+
+function sameStableDevelopmentIdentity(
+  expected: ProcessIdentity,
+  current: ProcessIdentity
+): boolean {
+  if (
+    expected.pid !== current.pid ||
+    expected.name.toLowerCase() !== current.name.toLowerCase() ||
+    expected.creationDate !== current.creationDate
+  ) {
+    return false;
+  }
+  if (
+    expected.executablePath === null ||
+    current.executablePath === null
+  ) {
+    return true;
+  }
+  return sameWindowsPath(expected.executablePath, current.executablePath);
+}
+
+function sameWindowsPath(left: string, right: string): boolean {
+  return (
+    path.win32.resolve(left).toLowerCase() ===
+    path.win32.resolve(right).toLowerCase()
+  );
 }
 
 function delay(milliseconds: number): Promise<void> {

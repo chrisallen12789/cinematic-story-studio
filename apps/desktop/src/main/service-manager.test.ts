@@ -10,6 +10,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildChildEnvironment,
   createServiceBootstrapRecord,
   ServiceManager,
   type ServiceManagerDependencies,
@@ -33,6 +34,27 @@ describe("service bootstrap", () => {
     expect(() =>
       createServiceBootstrapRecord("x".repeat(512), "nonce-value")
     ).toThrow("bootstrap record was invalid");
+  });
+
+  it("passes only the exact test-owned runtime shutdown evidence flag", () => {
+    const key = "CSS_PHASE3B_RUNTIME_SHUTDOWN_EVIDENCE";
+    const prior = process.env[key];
+    try {
+      delete process.env[key];
+      expect(buildChildEnvironment(false)).not.toHaveProperty(key);
+
+      process.env[key] = "true";
+      expect(buildChildEnvironment(false)).not.toHaveProperty(key);
+
+      process.env[key] = "1";
+      expect(buildChildEnvironment(false)).toMatchObject({ [key]: "1" });
+    } finally {
+      if (prior === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = prior;
+      }
+    }
   });
 });
 

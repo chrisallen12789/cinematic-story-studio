@@ -4,6 +4,7 @@ import {
   ProcessInventoryError,
   adoptVerifiedProcessTree,
   appExecutableName,
+  bindProviderWorkerProcessTree,
   createPackagedProcessInventory,
   defaultProcessInventoryPolicy,
   parseProcessInventory,
@@ -504,6 +505,93 @@ describe("packaged process inventory", () => {
       service,
       { ...parserChild, kind: "service" }
     ]);
+  });
+
+  it("binds only an already-owned service descendant to the reported provider worker", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const service = ownedProcess({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:21.0000000Z",
+      kind: "service"
+    });
+    const workerLauncher = ownedProcess({
+      pid: 4102,
+      parentPid: service.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:22.0000000Z",
+      kind: "service"
+    });
+    const worker = ownedProcess({
+      pid: 4103,
+      parentPid: workerLauncher.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:23.0000000Z",
+      kind: "service"
+    });
+
+    expect(
+      bindProviderWorkerProcessTree({
+        owned: [root, service, workerLauncher, worker],
+        rootPid: root.pid,
+        workerPid: worker.pid,
+        reportedParentPid: service.pid
+      })
+    ).toEqual([
+      root,
+      service,
+      { ...workerLauncher, kind: "provider_worker" },
+      { ...worker, kind: "provider_worker" }
+    ]);
+  });
+
+  it("refuses to manufacture provider-worker ownership from an unrelated PID", () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const service = ownedProcess({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:21.0000000Z",
+      kind: "service"
+    });
+    const unrelated = ownedProcess({
+      pid: 4102,
+      parentPid: 9999,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:22.0000000Z",
+      kind: "service"
+    });
+
+    expect(() =>
+      bindProviderWorkerProcessTree({
+        owned: [root, service, unrelated],
+        rootPid: root.pid,
+        workerPid: unrelated.pid,
+        reportedParentPid: service.pid
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
+      })
+    );
   });
 
   it("rejects a later service-image child spawned outside the service tree", () => {

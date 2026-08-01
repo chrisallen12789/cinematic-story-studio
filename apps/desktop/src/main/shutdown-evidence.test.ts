@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createPackagedServiceShutdownEvidence,
   packagedShutdownEvidenceSchemaVersion,
+  phase3bRuntimeShutdownEvidenceFileName,
+  readPhase3bRuntimeShutdownEvidence,
   readPackagedServiceShutdownEvidence,
   resolvePackagedShutdownEvidencePath,
   writePackagedServiceShutdownEvidence
@@ -105,6 +107,81 @@ describe("packaged service shutdown evidence", () => {
     await expect(
       readPackagedServiceShutdownEvidence(target)
     ).rejects.toThrow("summary is invalid");
+  });
+
+  it("reads only bounded authenticated Phase 3B runtime shutdown proof", async () => {
+    const root = await createTemporaryRoot();
+    const target = path.join(root, phase3bRuntimeShutdownEvidenceFileName);
+    const runtimeExit = {
+      runtimeInstanceId: "runtime-instance-1",
+      workerPid: 42_426,
+      state: "stopped",
+      stoppedAt: "2026-07-31T12:00:00.000Z",
+      stopReasonCode: "clean",
+      exitCode: 0,
+      shutdownAcknowledged: true,
+      gracefulShutdownConfirmed: true,
+      terminatedByParent: false,
+      ownershipConfirmed: true,
+      ownedProcessesConfirmedExited: true,
+      jobObjectAssigned: true,
+      deniedNetworkAttemptCount: 0
+    };
+    await writeFile(
+      target,
+      `${JSON.stringify({
+        contractVersion: "1.0.0",
+        serviceInstanceId: "service-instance-1",
+        ownedRuntimeCount: 1,
+        runtimeExits: [runtimeExit],
+        allGracefulShutdownsConfirmed: true,
+        writtenAt: "2026-07-31T12:00:01.000Z"
+      })}\n`,
+      "utf8"
+    );
+
+    await expect(readPhase3bRuntimeShutdownEvidence(root)).resolves.toEqual({
+      contractVersion: "1.0.0",
+      serviceInstanceId: "service-instance-1",
+      ownedRuntimeCount: 1,
+      runtimeExits: [runtimeExit],
+      allGracefulShutdownsConfirmed: true,
+      writtenAt: "2026-07-31T12:00:01.000Z"
+    });
+
+    await writeFile(
+      target,
+      `${JSON.stringify({
+        contractVersion: "1.0.0",
+        serviceInstanceId: "service-instance-1",
+        ownedRuntimeCount: 1,
+        runtimeExits: [
+          { ...runtimeExit, shutdownAcknowledged: false }
+        ],
+        allGracefulShutdownsConfirmed: true,
+        writtenAt: "2026-07-31T12:00:01.000Z"
+      })}\n`,
+      "utf8"
+    );
+    await expect(
+      readPhase3bRuntimeShutdownEvidence(root)
+    ).rejects.toThrow("summary was contradictory");
+
+    await writeFile(
+      target,
+      `${JSON.stringify({
+        contractVersion: "1.0.0",
+        serviceInstanceId: "service-instance-1",
+        ownedRuntimeCount: 1,
+        runtimeExits: [{ ...runtimeExit, jobObjectAssigned: false }],
+        allGracefulShutdownsConfirmed: true,
+        writtenAt: "2026-07-31T12:00:01.000Z"
+      })}\n`,
+      "utf8"
+    );
+    await expect(
+      readPhase3bRuntimeShutdownEvidence(root)
+    ).rejects.toThrow("summary was contradictory");
   });
 });
 

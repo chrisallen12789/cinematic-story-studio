@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.cinematic-story-studio.dev/v3/definitions.schema.json",
-  "title": "Cinematic Story Studio Phase 3A definitions",
+  "title": "Cinematic Story Studio Phase 3 definitions",
   "$defs": {
     "Id": {
       "type": "string",
@@ -4234,6 +4234,1498 @@
         }
       }
     },
+    "Phase3bFixtureClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lifecycleEvidenceOnly",
+        "naturalSpeechQualityProven",
+        "productionExportEligible",
+        "humanListeningClaimed"
+      ],
+      "properties": {
+        "lifecycleEvidenceOnly": {
+          "const": true
+        },
+        "naturalSpeechQualityProven": {
+          "const": false
+        },
+        "productionExportEligible": {
+          "const": false
+        },
+        "humanListeningClaimed": {
+          "const": false
+        }
+      }
+    },
+    "Phase3bProviderEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerId",
+        "providerVersion"
+      ],
+      "properties": {
+        "providerId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerVersion": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "Phase3bRuntimeEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profileId",
+        "profileFingerprint",
+        "protocolVersion",
+        "runtimeInstanceIds",
+        "networkPolicy",
+        "observedNetworkRequestCount",
+        "externalNetworkObservation"
+      ],
+      "properties": {
+        "profileId": {
+          "$ref": "#/$defs/Id"
+        },
+        "profileFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "protocolVersion": {
+          "const": "1.0.0"
+        },
+        "runtimeInstanceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "networkPolicy": {
+          "const": "python_socket_api_denied"
+        },
+        "observedNetworkRequestCount": {
+          "type": "null"
+        },
+        "externalNetworkObservation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "ownedPidsOnly",
+            "observedNonLoopbackEndpointCount"
+          ],
+          "properties": {
+            "method": {
+              "const": "owned_pid_tcp_endpoint_inventory"
+            },
+            "ownedPidsOnly": {
+              "const": true
+            },
+            "observedNonLoopbackEndpointCount": {
+              "const": 0
+            }
+          }
+        }
+      }
+    },
+    "Phase3bModelEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modelPackageId",
+        "manifestVersion",
+        "modelPackageFingerprint",
+        "installationRevision",
+        "verificationId",
+        "verificationFingerprint",
+        "verified",
+        "active"
+      ],
+      "properties": {
+        "modelPackageId": {
+          "$ref": "#/$defs/Id"
+        },
+        "manifestVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "modelPackageFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "installationRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "verificationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "verificationFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "verified": {
+          "const": true
+        },
+        "active": {
+          "const": true
+        }
+      }
+    },
+    "Phase3bPronunciationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dictionaryId",
+        "initialRevision",
+        "initialFingerprint",
+        "initialEntryId",
+        "initialEntryFingerprint",
+        "initialDecision",
+        "supersedingEntryId",
+        "supersedingEntryFingerprint",
+        "supersedesEntryId",
+        "supersedingDecision",
+        "finalRevision",
+        "finalFingerprint"
+      ],
+      "properties": {
+        "dictionaryId": {
+          "$ref": "#/$defs/Id"
+        },
+        "initialRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "initialFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "initialEntryId": {
+          "$ref": "#/$defs/Id"
+        },
+        "initialEntryFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "initialDecision": {
+          "const": "approved"
+        },
+        "supersedingEntryId": {
+          "$ref": "#/$defs/Id"
+        },
+        "supersedingEntryFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "supersedesEntryId": {
+          "$ref": "#/$defs/Id"
+        },
+        "supersedingDecision": {
+          "const": "approved"
+        },
+        "finalRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "finalFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "Phase3bAudioEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mediaType",
+        "codec",
+        "sampleRateHz",
+        "channels",
+        "sampleWidthBytes",
+        "durationMilliseconds",
+        "byteSize",
+        "sha256",
+        "nonSilencePassed",
+        "clippingPassed",
+        "blockingFindingCount"
+      ],
+      "properties": {
+        "mediaType": {
+          "const": "audio/wav"
+        },
+        "codec": {
+          "const": "pcm_s16le"
+        },
+        "sampleRateHz": {
+          "const": 24000
+        },
+        "channels": {
+          "const": 1
+        },
+        "sampleWidthBytes": {
+          "const": 2
+        },
+        "durationMilliseconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25165824
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "nonSilencePassed": {
+          "const": true
+        },
+        "clippingPassed": {
+          "const": true
+        },
+        "blockingFindingCount": {
+          "const": 0
+        }
+      }
+    },
+    "Phase3bAuditionEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roleId",
+        "roleType",
+        "assignmentId",
+        "assignmentRevision",
+        "voiceRuntimeBindingId",
+        "voiceRuntimeBindingFingerprint",
+        "providerVoiceId",
+        "auditionSessionId",
+        "providerRequestId",
+        "requestFingerprint",
+        "executionClassification",
+        "providerDispatchCount",
+        "sourceProviderRequestId",
+        "runtimeInstanceId",
+        "normalizedTextSha256",
+        "pronunciationPlanFingerprint",
+        "cacheKey",
+        "cacheStatus",
+        "auditionClipId",
+        "clipFingerprint",
+        "audioArtifactId",
+        "audio",
+        "authenticatedAudioLoaded",
+        "fixtureEvidenceOnly"
+      ],
+      "properties": {
+        "roleId": {
+          "$ref": "#/$defs/Id"
+        },
+        "roleType": {
+          "enum": [
+            "narrator",
+            "character"
+          ]
+        },
+        "assignmentId": {
+          "$ref": "#/$defs/Id"
+        },
+        "assignmentRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "voiceRuntimeBindingId": {
+          "$ref": "#/$defs/Id"
+        },
+        "voiceRuntimeBindingFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "providerVoiceId": {
+          "$ref": "#/$defs/Id"
+        },
+        "auditionSessionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerRequestId": {
+          "$ref": "#/$defs/Id"
+        },
+        "requestFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "executionClassification": {
+          "enum": [
+            "provider_execution",
+            "verified_cache_lookup"
+          ]
+        },
+        "providerDispatchCount": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "sourceProviderRequestId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtimeInstanceId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "normalizedTextSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "pronunciationPlanFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "cacheKey": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "cacheStatus": {
+          "enum": [
+            "miss",
+            "verified_hit"
+          ]
+        },
+        "auditionClipId": {
+          "$ref": "#/$defs/Id"
+        },
+        "clipFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "audioArtifactId": {
+          "$ref": "#/$defs/Id"
+        },
+        "audio": {
+          "$ref": "#/$defs/Phase3bAudioEvidence"
+        },
+        "authenticatedAudioLoaded": {
+          "const": true
+        },
+        "fixtureEvidenceOnly": {
+          "const": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "cacheStatus": {
+                "const": "verified_hit"
+              }
+            },
+            "required": [
+              "cacheStatus"
+            ]
+          },
+          "then": {
+            "properties": {
+              "executionClassification": {
+                "const": "verified_cache_lookup"
+              },
+              "providerDispatchCount": {
+                "const": 0
+              },
+              "sourceProviderRequestId": {
+                "$ref": "#/$defs/Id"
+              },
+              "runtimeInstanceId": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "executionClassification": {
+                "const": "provider_execution"
+              },
+              "providerDispatchCount": {
+                "const": 1
+              },
+              "sourceProviderRequestId": {
+                "type": "null"
+              },
+              "runtimeInstanceId": {
+                "$ref": "#/$defs/Id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Phase3bCacheHitEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originalClipId",
+        "repeatedClipId",
+        "originalRequestFingerprint",
+        "repeatedRequestFingerprint",
+        "originalCacheKey",
+        "repeatedCacheKey",
+        "artifactSha256",
+        "repeatedArtifactSha256",
+        "repeatedCacheStatus",
+        "identicalCacheKeyInputsProven",
+        "lookupOnlyNoProviderExecutionProven"
+      ],
+      "properties": {
+        "originalClipId": {
+          "$ref": "#/$defs/Id"
+        },
+        "repeatedClipId": {
+          "$ref": "#/$defs/Id"
+        },
+        "originalRequestFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "repeatedRequestFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "originalCacheKey": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "repeatedCacheKey": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "artifactSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "repeatedArtifactSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "repeatedCacheStatus": {
+          "const": "verified_hit"
+        },
+        "identicalCacheKeyInputsProven": {
+          "const": true
+        },
+        "lookupOnlyNoProviderExecutionProven": {
+          "const": true
+        }
+      }
+    },
+    "Phase3bInvalidatedGateStateEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gateId",
+        "reviewId",
+        "state",
+        "evidenceFingerprint"
+      ],
+      "properties": {
+        "gateId": {
+          "enum": [
+            "pronunciation_review",
+            "voice_readiness_review"
+          ]
+        },
+        "reviewId": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "enum": [
+            "blocked",
+            "pending",
+            "invalidated"
+          ]
+        },
+        "evidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "Phase3bTargetedInvalidationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supersededEntryId",
+        "supersedingEntryId",
+        "beforeDictionaryFingerprint",
+        "afterDictionaryFingerprint",
+        "impactedRoleId",
+        "priorRequestFingerprint",
+        "regeneratedRequestFingerprint",
+        "priorCacheKey",
+        "regeneratedCacheKey",
+        "priorArtifactSha256",
+        "regeneratedArtifactSha256",
+        "invalidatedClipIds",
+        "preservedClipIds",
+        "persistedInvalidatedGateStates",
+        "targetedOnly"
+      ],
+      "properties": {
+        "supersededEntryId": {
+          "$ref": "#/$defs/Id"
+        },
+        "supersedingEntryId": {
+          "$ref": "#/$defs/Id"
+        },
+        "beforeDictionaryFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "afterDictionaryFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "impactedRoleId": {
+          "$ref": "#/$defs/Id"
+        },
+        "priorRequestFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "regeneratedRequestFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "priorCacheKey": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "regeneratedCacheKey": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "priorArtifactSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "regeneratedArtifactSha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "invalidatedClipIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "preservedClipIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "persistedInvalidatedGateStates": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Phase3bInvalidatedGateStateEvidence"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "gateId": {
+                    "const": "pronunciation_review"
+                  }
+                },
+                "required": [
+                  "gateId"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "gateId": {
+                    "const": "voice_readiness_review"
+                  }
+                },
+                "required": [
+                  "gateId"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
+        },
+        "targetedOnly": {
+          "const": true
+        }
+      }
+    },
+    "Phase3bGateDecisionEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gateId",
+        "reviewId",
+        "decisionId",
+        "roleId",
+        "evidenceFingerprint",
+        "decision",
+        "immutable"
+      ],
+      "properties": {
+        "gateId": {
+          "enum": [
+            "per_role_audition_review",
+            "narrator_audition_review",
+            "character_audition_review",
+            "pronunciation_review",
+            "voice_readiness_review"
+          ]
+        },
+        "reviewId": {
+          "$ref": "#/$defs/Id"
+        },
+        "decisionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "roleId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidenceFingerprint": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "decision": {
+          "const": "approved"
+        },
+        "immutable": {
+          "const": true
+        }
+      }
+    },
+    "Phase3bRestartEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtimeProfilePersisted",
+        "modelVerificationPersisted",
+        "pronunciationDictionaryPersisted",
+        "pronunciationDecisionsPersisted",
+        "auditionSessionsPersisted",
+        "auditionScriptsPersisted",
+        "auditionClipsPersisted",
+        "cacheRecordsPersisted",
+        "audioQualityRecordsPersisted",
+        "auditionDecisionsPersisted",
+        "voiceReadinessDecisionPersisted",
+        "authenticatedRestoredAudioLoaded",
+        "priorLaunchRuntimeExit"
+      ],
+      "properties": {
+        "runtimeProfilePersisted": {
+          "const": true
+        },
+        "modelVerificationPersisted": {
+          "const": true
+        },
+        "pronunciationDictionaryPersisted": {
+          "const": true
+        },
+        "pronunciationDecisionsPersisted": {
+          "const": true
+        },
+        "auditionSessionsPersisted": {
+          "const": true
+        },
+        "auditionScriptsPersisted": {
+          "const": true
+        },
+        "auditionClipsPersisted": {
+          "const": true
+        },
+        "cacheRecordsPersisted": {
+          "const": true
+        },
+        "audioQualityRecordsPersisted": {
+          "const": true
+        },
+        "auditionDecisionsPersisted": {
+          "const": true
+        },
+        "voiceReadinessDecisionPersisted": {
+          "const": true
+        },
+        "authenticatedRestoredAudioLoaded": {
+          "const": true
+        },
+        "priorLaunchRuntimeExit": {
+          "$ref": "#/$defs/Phase3bRuntimeExitEvidence"
+        }
+      }
+    },
+    "Phase3bOwnedProcessEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pid",
+        "parentPid",
+        "kind",
+        "executableName",
+        "creationIdentity",
+        "goneAfterShutdown"
+      ],
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "parentPid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "kind": {
+          "enum": [
+            "electron",
+            "service",
+            "provider_worker"
+          ]
+        },
+        "executableName": {
+          "enum": [
+            "Cinematic Story Studio.exe",
+            "cinematic-story-service.exe"
+          ]
+        },
+        "creationIdentity": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "goneAfterShutdown": {
+          "const": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "electron"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "executableName": {
+                "const": "Cinematic Story Studio.exe"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "executableName": {
+                "const": "cinematic-story-service.exe"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Phase3bRuntimeExitEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtimeInstanceId",
+        "workerPid",
+        "parentPid",
+        "state",
+        "stoppedAt",
+        "stopReasonCode",
+        "handshakeAuthenticated",
+        "shutdownAcknowledged",
+        "gracefulShutdownConfirmed",
+        "exitCode",
+        "terminatedByParent",
+        "ownershipConfirmed",
+        "confirmedExited",
+        "ownedProcessesConfirmedExited",
+        "jobObjectAssigned",
+        "deniedNetworkAttemptCount"
+      ],
+      "properties": {
+        "runtimeInstanceId": {
+          "$ref": "#/$defs/Id"
+        },
+        "workerPid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "parentPid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "state": {
+          "const": "stopped"
+        },
+        "stoppedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "stopReasonCode": {
+          "const": "clean"
+        },
+        "handshakeAuthenticated": {
+          "const": true
+        },
+        "shutdownAcknowledged": {
+          "const": true
+        },
+        "gracefulShutdownConfirmed": {
+          "const": true
+        },
+        "exitCode": {
+          "const": 0
+        },
+        "terminatedByParent": {
+          "const": false
+        },
+        "ownershipConfirmed": {
+          "const": true
+        },
+        "confirmedExited": {
+          "const": true
+        },
+        "ownedProcessesConfirmedExited": {
+          "const": true
+        },
+        "jobObjectAssigned": {
+          "const": true
+        },
+        "deniedNetworkAttemptCount": {
+          "const": 0
+        }
+      }
+    },
+    "Phase3bLaunchProcessEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "launch",
+        "ownedProcesses",
+        "providerRuntimeExit",
+        "forcedPids",
+        "remainingPids",
+        "unrelatedProcessesInspected",
+        "unrelatedProcessesTerminated"
+      ],
+      "properties": {
+        "launch": {
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "ownedProcesses": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Phase3bOwnedProcessEvidence"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "electron"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "minContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "service"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "minContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "provider_worker"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "minContains": 1
+            }
+          ]
+        },
+        "providerRuntimeExit": {
+          "$ref": "#/$defs/Phase3bRuntimeExitEvidence"
+        },
+        "forcedPids": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "remainingPids": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "unrelatedProcessesInspected": {
+          "const": false
+        },
+        "unrelatedProcessesTerminated": {
+          "const": false
+        }
+      }
+    },
+    "Phase3bProcessEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "launches"
+      ],
+      "properties": {
+        "launches": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Phase3bLaunchProcessEvidence"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "launch": {
+                    "const": 1
+                  }
+                },
+                "required": [
+                  "launch"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "launch": {
+                    "const": 2
+                  }
+                },
+                "required": [
+                  "launch"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
+        }
+      }
+    },
+    "Phase3bScreenshotEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "captured"
+      ],
+      "properties": {
+        "artifactId": {
+          "const": "packaged-ui-screenshot"
+        },
+        "captured": {
+          "const": true
+        }
+      }
+    },
+    "Phase3bAuditionsEvidence": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/Phase3bAuditionEvidence"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "roleType": {
+                "const": "narrator"
+              }
+            },
+            "required": [
+              "roleType"
+            ]
+          },
+          "minContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "roleType": {
+                "const": "character"
+              }
+            },
+            "required": [
+              "roleType"
+            ]
+          },
+          "minContains": 2
+        }
+      ]
+    },
+    "Phase3bGateDecisionsEvidence": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 304,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/Phase3bGateDecisionEvidence"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "gateId": {
+                "const": "per_role_audition_review"
+              }
+            },
+            "required": [
+              "gateId"
+            ]
+          },
+          "minContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "gateId": {
+                "const": "narrator_audition_review"
+              }
+            },
+            "required": [
+              "gateId"
+            ]
+          },
+          "minContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "gateId": {
+                "const": "character_audition_review"
+              }
+            },
+            "required": [
+              "gateId"
+            ]
+          },
+          "minContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "gateId": {
+                "const": "pronunciation_review"
+              }
+            },
+            "required": [
+              "gateId"
+            ]
+          },
+          "minContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "gateId": {
+                "const": "voice_readiness_review"
+              }
+            },
+            "required": [
+              "gateId"
+            ]
+          },
+          "minContains": 1
+        }
+      ]
+    },
+    "Phase3bAssertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase0ThroughPhase3aPrerequisitesCurrent",
+        "fixtureProviderClearlyClassified",
+        "modelVerifiedAndActivated",
+        "pronunciationDecisionApproved",
+        "narratorAndTwoCharacterAuditionsGenerated",
+        "authenticatedWavLoadsPassed",
+        "verifiedCacheHitProven",
+        "targetedInvalidationProven",
+        "fiveGateTypesApproved",
+        "restartPersistenceProven",
+        "runtimeNetworkPolicyAndOwnedPidEndpointObservationProven",
+        "electronServiceAndProviderWorkerOwnershipProven",
+        "allExactOwnedProcessesExited",
+        "noUnrelatedProcessInspectedOrTerminated"
+      ],
+      "properties": {
+        "phase0ThroughPhase3aPrerequisitesCurrent": {
+          "const": true
+        },
+        "fixtureProviderClearlyClassified": {
+          "const": true
+        },
+        "modelVerifiedAndActivated": {
+          "const": true
+        },
+        "pronunciationDecisionApproved": {
+          "const": true
+        },
+        "narratorAndTwoCharacterAuditionsGenerated": {
+          "const": true
+        },
+        "authenticatedWavLoadsPassed": {
+          "const": true
+        },
+        "verifiedCacheHitProven": {
+          "const": true
+        },
+        "targetedInvalidationProven": {
+          "const": true
+        },
+        "fiveGateTypesApproved": {
+          "const": true
+        },
+        "restartPersistenceProven": {
+          "const": true
+        },
+        "runtimeNetworkPolicyAndOwnedPidEndpointObservationProven": {
+          "const": true
+        },
+        "electronServiceAndProviderWorkerOwnershipProven": {
+          "const": true
+        },
+        "allExactOwnedProcessesExited": {
+          "const": true
+        },
+        "noUnrelatedProcessInspectedOrTerminated": {
+          "const": true
+        }
+      }
+    },
+    "Phase3bEvidenceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "exists",
+        "sizeBytes",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000\\r\\n]+$"
+        },
+        "exists": {
+          "const": true
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "Phase3bPackagedE2eResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "completedAt",
+        "status",
+        "evidenceClassification",
+        "fixtureClaims",
+        "runtime",
+        "fixtureProvider",
+        "realProviderAdapter",
+        "model",
+        "pronunciation",
+        "auditions",
+        "cacheHit",
+        "targetedInvalidation",
+        "gateDecisions",
+        "restart",
+        "process",
+        "screenshot",
+        "assertions"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "7.0.0"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "status": {
+          "const": "passed"
+        },
+        "evidenceClassification": {
+          "const": "deterministic_fixture_lifecycle_only"
+        },
+        "fixtureClaims": {
+          "$ref": "#/$defs/Phase3bFixtureClaims"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Phase3bRuntimeEvidence"
+        },
+        "fixtureProvider": {
+          "$ref": "#/$defs/Phase3bProviderEvidence"
+        },
+        "realProviderAdapter": {
+          "$ref": "#/$defs/Phase3bProviderEvidence"
+        },
+        "model": {
+          "$ref": "#/$defs/Phase3bModelEvidence"
+        },
+        "pronunciation": {
+          "$ref": "#/$defs/Phase3bPronunciationEvidence"
+        },
+        "auditions": {
+          "$ref": "#/$defs/Phase3bAuditionsEvidence"
+        },
+        "cacheHit": {
+          "$ref": "#/$defs/Phase3bCacheHitEvidence"
+        },
+        "targetedInvalidation": {
+          "$ref": "#/$defs/Phase3bTargetedInvalidationEvidence"
+        },
+        "gateDecisions": {
+          "$ref": "#/$defs/Phase3bGateDecisionsEvidence"
+        },
+        "restart": {
+          "$ref": "#/$defs/Phase3bRestartEvidence"
+        },
+        "process": {
+          "$ref": "#/$defs/Phase3bProcessEvidence"
+        },
+        "screenshot": {
+          "$ref": "#/$defs/Phase3bScreenshotEvidence"
+        },
+        "assertions": {
+          "$ref": "#/$defs/Phase3bAssertions"
+        }
+      }
+    },
+    "Phase3bLocalSpeechAuditionsEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidenceFile",
+        "schemaVersion",
+        "completedAt",
+        "evidenceClassification",
+        "fixtureClaims",
+        "runtime",
+        "fixtureProvider",
+        "realProviderAdapter",
+        "model",
+        "pronunciation",
+        "auditions",
+        "cacheHit",
+        "targetedInvalidation",
+        "gateDecisions",
+        "restart",
+        "process",
+        "screenshot",
+        "assertions"
+      ],
+      "properties": {
+        "evidenceFile": {
+          "$ref": "#/$defs/Phase3bEvidenceFile"
+        },
+        "schemaVersion": {
+          "const": "7.0.0"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "evidenceClassification": {
+          "const": "deterministic_fixture_lifecycle_only"
+        },
+        "fixtureClaims": {
+          "$ref": "#/$defs/Phase3bFixtureClaims"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Phase3bRuntimeEvidence"
+        },
+        "fixtureProvider": {
+          "$ref": "#/$defs/Phase3bProviderEvidence"
+        },
+        "realProviderAdapter": {
+          "$ref": "#/$defs/Phase3bProviderEvidence"
+        },
+        "model": {
+          "$ref": "#/$defs/Phase3bModelEvidence"
+        },
+        "pronunciation": {
+          "$ref": "#/$defs/Phase3bPronunciationEvidence"
+        },
+        "auditions": {
+          "$ref": "#/$defs/Phase3bAuditionsEvidence"
+        },
+        "cacheHit": {
+          "$ref": "#/$defs/Phase3bCacheHitEvidence"
+        },
+        "targetedInvalidation": {
+          "$ref": "#/$defs/Phase3bTargetedInvalidationEvidence"
+        },
+        "gateDecisions": {
+          "$ref": "#/$defs/Phase3bGateDecisionsEvidence"
+        },
+        "restart": {
+          "$ref": "#/$defs/Phase3bRestartEvidence"
+        },
+        "process": {
+          "$ref": "#/$defs/Phase3bProcessEvidence"
+        },
+        "screenshot": {
+          "$ref": "#/$defs/Phase3bScreenshotEvidence"
+        },
+        "assertions": {
+          "$ref": "#/$defs/Phase3bAssertions"
+        }
+      }
+    },
+    "Phase3bBuildAssertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stagedServiceMatchesEmbeddedService",
+        "packagedE2eHarnessResultMatchesStepOutcome",
+        "packagedE2eOwnershipExitProven",
+        "phase1DocxImportReviewProven",
+        "phase2ProfileAndAgentsProven",
+        "phase2ApprovedInputProven",
+        "phase2RunSnapshotAndStagesProven",
+        "phase2StoryAssertionsProven",
+        "phase2CorrectionsProven",
+        "phase2FourGateDecisionsProven",
+        "phase2DecisionRecordsPersisted",
+        "phase2RestartDurabilityProven",
+        "phase2WholeBookAnalysisProven",
+        "phase3bLocalSpeechAuditionsProven",
+        "packagedE2eEvidenceComplete"
+      ],
+      "properties": {
+        "stagedServiceMatchesEmbeddedService": {
+          "const": true
+        },
+        "packagedE2eHarnessResultMatchesStepOutcome": {
+          "const": true
+        },
+        "packagedE2eOwnershipExitProven": {
+          "const": true
+        },
+        "phase1DocxImportReviewProven": {
+          "const": true
+        },
+        "phase2ProfileAndAgentsProven": {
+          "const": true
+        },
+        "phase2ApprovedInputProven": {
+          "const": true
+        },
+        "phase2RunSnapshotAndStagesProven": {
+          "const": true
+        },
+        "phase2StoryAssertionsProven": {
+          "const": true
+        },
+        "phase2CorrectionsProven": {
+          "const": true
+        },
+        "phase2FourGateDecisionsProven": {
+          "const": true
+        },
+        "phase2DecisionRecordsPersisted": {
+          "const": true
+        },
+        "phase2RestartDurabilityProven": {
+          "const": true
+        },
+        "phase2WholeBookAnalysisProven": {
+          "const": true
+        },
+        "phase3bLocalSpeechAuditionsProven": {
+          "const": true
+        },
+        "packagedE2eEvidenceComplete": {
+          "const": true
+        }
+      }
+    },
     "Phase3BuildEvidenceManifest": {
       "type": "object",
       "additionalProperties": false,
@@ -4250,12 +5742,13 @@
         "storyAnalysisContract",
         "packagedE2e",
         "voiceCastingContract",
+        "localSpeechAuditionsContract",
         "testTimestamp",
         "runner"
       ],
       "properties": {
         "schemaVersion": {
-          "const": "4.0.0"
+          "const": "6.0.0"
         },
         "artifactPathScope": {
           "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/artifactPathScope"
@@ -4276,7 +5769,7 @@
           "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/artifacts"
         },
         "assertions": {
-          "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/assertions"
+          "$ref": "#/$defs/Phase3bBuildAssertions"
         },
         "secureIngest": {
           "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/secureIngest"
@@ -4289,6 +5782,9 @@
         },
         "voiceCastingContract": {
           "$ref": "#/$defs/Phase3VoiceCastingEvidence"
+        },
+        "localSpeechAuditionsContract": {
+          "$ref": "#/$defs/Phase3bLocalSpeechAuditionsEvidence"
         },
         "testTimestamp": {
           "$ref": "#/$defs/Timestamp"
@@ -4326,7 +5822,7 @@
               "$ref": "#/$defs/Id"
             },
             "workflow": {
-              "const": "Phase 3A Windows CI"
+              "const": "Phase 3B Windows CI"
             },
             "job": {
               "const": "verify-and-build"

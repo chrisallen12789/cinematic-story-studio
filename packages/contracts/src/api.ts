@@ -53,6 +53,7 @@ import type {
   VoiceProviderDescriptor,
   VoiceRightsRecord
 } from "./voice-casting.js";
+import type { AuditionGateId } from "./local-speech-auditions.js";
 
 export interface ApiError {
   readonly code: string;
@@ -315,7 +316,8 @@ export type JobType =
   | "extract_document"
   | "analyze_story"
   | "analyze_whole_book"
-  | "analyze_casting";
+  | "analyze_casting"
+  | "generate_audition";
 
 export type JobState =
   | "queued"
@@ -343,7 +345,8 @@ export interface Job {
       | "document_extraction"
       | "story"
       | "analysis_run"
-      | "casting_run";
+      | "casting_run"
+      | "audition_session";
     readonly id: EntityId;
   };
   readonly inputRevision: number;
@@ -790,6 +793,49 @@ export const API_V1_PATHS = {
     gateId: CastingGateId
   ) =>
     `/api/v1/projects/${projectId}/casting-runs/${castingRunId}/reviews/${gateId}/decisions`,
+  projectAuditionWorkspace: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/auditions/workspace`,
+  projectSpeechModelPackages: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/speech/model-packages`,
+  projectSpeechModelPackageActions: (
+    projectId: EntityId,
+    modelPackageId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/speech/model-packages/${modelPackageId}/actions`,
+  projectPronunciationEntries: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/pronunciations/entries`,
+  projectAuditionSessions: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/audition-sessions`,
+  projectAuditionSessionScripts: (
+    projectId: EntityId,
+    auditionSessionId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/audition-sessions/${auditionSessionId}/scripts`,
+  projectAuditionSessionNormalizationPreview: (
+    projectId: EntityId,
+    auditionSessionId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/audition-sessions/${auditionSessionId}/normalization-preview`,
+  projectAuditionSessionGenerate: (
+    projectId: EntityId,
+    auditionSessionId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/audition-sessions/${auditionSessionId}/generate`,
+  projectAuditionClips: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/audition-clips`,
+  projectAuditionReviewDecisions: (projectId: EntityId) =>
+    `/api/v1/projects/${projectId}/audition-review-decisions`,
+  projectAuditionClipAudio: (
+    projectId: EntityId,
+    auditionClipId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/audition-clips/${auditionClipId}/audio`,
+  projectAuditionReviewDecision: (
+    projectId: EntityId,
+    gateId: AuditionGateId,
+    reviewId: EntityId
+  ) =>
+    `/api/v1/projects/${projectId}/audition-reviews/${gateId}/${reviewId}/decisions`,
   dialogueSpeaker: (projectId: EntityId, lineId: EntityId) =>
     `/api/v1/projects/${projectId}/dialogue-lines/${lineId}/speaker`,
   projectJobs: (projectId: EntityId) =>

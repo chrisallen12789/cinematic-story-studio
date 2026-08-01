@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/audition-role-status.schema.json",
+  "title": "AuditionRoleStatus",
+  "$ref": "local-speech-auditions.schema.json#/$defs/AuditionRoleStatus"
+}

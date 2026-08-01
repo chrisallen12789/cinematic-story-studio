@@ -154,8 +154,64 @@ export const SCHEMA_REFS = {
     "https://schemas.cinematic-story-studio.dev/v3/synthetic-voice-catalog.schema.json",
   Phase3PackagedE2eResult:
     "https://schemas.cinematic-story-studio.dev/v3/phase-3-packaged-e2e-result.schema.json",
+  Phase3bPackagedE2eResult:
+    "https://schemas.cinematic-story-studio.dev/v3/phase-3b-packaged-e2e-result.schema.json",
   Phase3BuildEvidenceManifest:
-    "https://schemas.cinematic-story-studio.dev/v3/phase-3-build-evidence-manifest.schema.json"
+    "https://schemas.cinematic-story-studio.dev/v3/phase-3-build-evidence-manifest.schema.json",
+  SpeechProviderAdapterDescriptor:
+    "https://schemas.cinematic-story-studio.dev/v3/speech-provider-adapter-descriptor.schema.json",
+  LocalSpeechRuntimeDescriptor:
+    "https://schemas.cinematic-story-studio.dev/v3/local-speech-runtime-descriptor.schema.json",
+  SpeechRuntimeProfile:
+    "https://schemas.cinematic-story-studio.dev/v3/speech-runtime-profile.schema.json",
+  SpeechRuntimeInstance:
+    "https://schemas.cinematic-story-studio.dev/v3/speech-runtime-instance.schema.json",
+  SpeechRuntimeHealth:
+    "https://schemas.cinematic-story-studio.dev/v3/speech-runtime-health.schema.json",
+  ModelPackageManifest:
+    "https://schemas.cinematic-story-studio.dev/v3/model-package-manifest.schema.json",
+  ModelInstallationRecord:
+    "https://schemas.cinematic-story-studio.dev/v3/model-installation-record.schema.json",
+  ModelVerificationRecord:
+    "https://schemas.cinematic-story-studio.dev/v3/model-verification-record.schema.json",
+  VoiceRuntimeBinding:
+    "https://schemas.cinematic-story-studio.dev/v3/voice-runtime-binding.schema.json",
+  TextNormalizationPlan:
+    "https://schemas.cinematic-story-studio.dev/v3/text-normalization-plan.schema.json",
+  PronunciationDictionary:
+    "https://schemas.cinematic-story-studio.dev/v3/pronunciation-dictionary.schema.json",
+  PronunciationEntry:
+    "https://schemas.cinematic-story-studio.dev/v3/pronunciation-entry.schema.json",
+  CompiledPronunciationPlan:
+    "https://schemas.cinematic-story-studio.dev/v3/compiled-pronunciation-plan.schema.json",
+  AuditionSession:
+    "https://schemas.cinematic-story-studio.dev/v3/audition-session.schema.json",
+  AuditionScript:
+    "https://schemas.cinematic-story-studio.dev/v3/audition-script.schema.json",
+  AuditionScriptDetail:
+    "https://schemas.cinematic-story-studio.dev/v3/audition-script-detail.schema.json",
+  SpeechPreviewRequest:
+    "https://schemas.cinematic-story-studio.dev/v3/speech-preview-request.schema.json",
+  SpeechProviderRequest:
+    "https://schemas.cinematic-story-studio.dev/v3/speech-provider-request.schema.json",
+  SpeechProviderResult:
+    "https://schemas.cinematic-story-studio.dev/v3/speech-provider-result.schema.json",
+  AuditionClip:
+    "https://schemas.cinematic-story-studio.dev/v3/audition-clip.schema.json",
+  AudioArtifactRecord:
+    "https://schemas.cinematic-story-studio.dev/v3/audio-artifact-record.schema.json",
+  AuditionCacheRecord:
+    "https://schemas.cinematic-story-studio.dev/v3/audition-cache-record.schema.json",
+  AudioQualityRecord:
+    "https://schemas.cinematic-story-studio.dev/v3/audio-quality-record.schema.json",
+  AuditionReview:
+    "https://schemas.cinematic-story-studio.dev/v3/audition-review.schema.json",
+  AuditionReviewDecision:
+    "https://schemas.cinematic-story-studio.dev/v3/audition-review-decision.schema.json",
+  VoiceReadinessSnapshot:
+    "https://schemas.cinematic-story-studio.dev/v3/voice-readiness-snapshot.schema.json",
+  AuditionRoleStatus:
+    "https://schemas.cinematic-story-studio.dev/v3/audition-role-status.schema.json"
 } as const;
 
 export type PublicSchemaName = keyof typeof SCHEMA_REFS;

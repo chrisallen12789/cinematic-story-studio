@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/phase-3b-packaged-e2e-result.schema.json",
+  "title": "Phase3bPackagedE2eResult",
+  "$ref": "definitions.schema.json#/$defs/Phase3bPackagedE2eResult"
+}

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/speech-runtime-instance.schema.json",
+  "title": "SpeechRuntimeInstance",
+  "$ref": "local-speech-auditions.schema.json#/$defs/SpeechRuntimeInstance"
+}

@@ -119,9 +119,12 @@ const phase3Entries = {
   SyntheticVoiceCatalog: "synthetic-voice-catalog.schema.json",
   Phase3PackagedE2eResult:
     "phase-3-packaged-e2e-result.schema.json",
+  Phase3bPackagedE2eResult:
+    "phase-3b-packaged-e2e-result.schema.json",
   Phase3BuildEvidenceManifest:
     "phase-3-build-evidence-manifest.schema.json",
 };
+
 
 async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
@@ -1531,7 +1534,10 @@ test("Phase 3A contracts have stable closed JSON Schema 2020-12 entry points", a
   const fileNames = (await readdir(phase3Directory)).filter((name) =>
     name.endsWith(".schema.json")
   );
-  assert.equal(fileNames.length, Object.keys(phase3Entries).length + 1);
+  assert.ok(
+    fileNames.length >= Object.keys(phase3Entries).length + 1,
+    "Phase 3A entry points must remain present when additive v3 contracts are published",
+  );
   const definitions = await readJson(phase3DefinitionsPath);
 
   for (const fileName of fileNames) {
@@ -2100,13 +2106,16 @@ test("Phase 3A durable job stages and frozen Phase 2 prerequisites are complete"
   }
 });
 
-test("Phase 3A CI proof schemas require casting and exact process evidence without private text", async () => {
+test("Phase 3 CI proof schemas require casting, local-speech, and exact process evidence without private text", async () => {
   const definitions = await readJson(phase3DefinitionsPath);
   const packaged = definitions.$defs.Phase3PackagedE2eResult;
+  const phase3bPackaged = definitions.$defs.Phase3bPackagedE2eResult;
   const manifest = definitions.$defs.Phase3BuildEvidenceManifest;
 
   assert.equal(packaged.properties.schemaVersion.const, "5.0.0");
-  assert.equal(manifest.properties.schemaVersion.const, "4.0.0");
+  assert.equal(phase3bPackaged.properties.schemaVersion.const, "7.0.0");
+  assert.equal(phase3bPackaged.additionalProperties, false);
+  assert.equal(manifest.properties.schemaVersion.const, "6.0.0");
   assert.equal(
     definitions.$defs.Phase3PackagedFlow.prefixItems.length,
     32,
@@ -2254,7 +2263,7 @@ test("Phase 3A CI proof schemas require casting and exact process evidence witho
   );
   assert.equal(
     manifest.properties.assertions.$ref,
-    "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/assertions",
+    "#/$defs/Phase3bBuildAssertions",
   );
   assert.equal(
     manifest.properties.voiceCastingContract.$ref,
@@ -2273,9 +2282,18 @@ test("Phase 3A CI proof schemas require casting and exact process evidence witho
     "storyAnalysisContract",
     "packagedE2e",
     "voiceCastingContract",
+    "localSpeechAuditionsContract",
     "testTimestamp",
     "runner",
   ]);
+  assert.equal(
+    manifest.properties.localSpeechAuditionsContract.$ref,
+    "#/$defs/Phase3bLocalSpeechAuditionsEvidence",
+  );
+  assert.equal(
+    manifest.properties.runner.properties.workflow.const,
+    "Phase 3B Windows CI",
+  );
   assert.equal(
     definitions.$defs.Phase3VoiceCastingEvidence.properties
       .correctionPersistence.const,
@@ -2295,6 +2313,7 @@ test("Phase 3A CI proof schemas require casting and exact process evidence witho
   const proofSchemas = collectReachableDefinitions(definitions, [
     "Phase3BuildEvidenceManifest",
     "Phase3PackagedE2eResult",
+    "Phase3bPackagedE2eResult",
   ]);
   const serializedProofSchemas = JSON.stringify(proofSchemas);
   for (const privateContentField of [
@@ -2310,6 +2329,77 @@ test("Phase 3A CI proof schemas require casting and exact process evidence witho
       serializedProofSchemas.includes(`"${privateContentField}"`),
       false,
       `CI proof schemas must not admit ${privateContentField}`,
+    );
+  }
+});
+
+test("Phase 3B public evidence closes cache identities and the manifest projection", async () => {
+  const definitions = await readJson(phase3DefinitionsPath);
+  const packaged = definitions.$defs.Phase3bPackagedE2eResult;
+  const projected = definitions.$defs.Phase3bLocalSpeechAuditionsEvidence;
+  const manifest = definitions.$defs.Phase3BuildEvidenceManifest;
+
+  assert.equal(packaged.properties.schemaVersion.const, "7.0.0");
+  assert.equal(manifest.properties.schemaVersion.const, "6.0.0");
+  assert.equal(packaged.additionalProperties, false);
+  assert.equal(projected.additionalProperties, false);
+  assert.equal(projected.required.includes("evidenceFile"), true);
+  assert.equal(projected.required.includes("status"), false);
+  assert.equal(packaged.required.includes("status"), true);
+  assert.equal(packaged.required.includes("evidenceFile"), false);
+  assert.equal(
+    definitions.$defs.Phase3bEvidenceFile.properties.exists.const,
+    true,
+  );
+
+  for (const [definitionName, cacheKeyNames] of [
+    ["Phase3bAuditionEvidence", ["cacheKey"]],
+    [
+      "Phase3bCacheHitEvidence",
+      ["originalCacheKey", "repeatedCacheKey"],
+    ],
+    [
+      "Phase3bTargetedInvalidationEvidence",
+      ["priorCacheKey", "regeneratedCacheKey"],
+    ],
+  ]) {
+    const definition = definitions.$defs[definitionName];
+    assert.equal(definition.additionalProperties, false);
+    for (const cacheKeyName of cacheKeyNames) {
+      assert.equal(
+        definition.properties[cacheKeyName].$ref,
+        "#/$defs/Sha256",
+        `${definitionName}.${cacheKeyName} must expose only a digest`,
+      );
+    }
+  }
+
+  assert.equal(
+    Object.values(
+      definitions.$defs.Phase3bBuildAssertions.properties,
+    ).every((property) => property.const === true),
+    true,
+  );
+  const reachable = collectReachableDefinitions(definitions, [
+    "Phase3bPackagedE2eResult",
+    "Phase3bLocalSpeechAuditionsEvidence",
+    "Phase3BuildEvidenceManifest",
+  ]);
+  assert.deepEqual(collectRequiredDeclarationGaps(reachable), []);
+  const serialized = JSON.stringify(reachable);
+  for (const prohibitedField of [
+    "text",
+    "script",
+    "manuscript",
+    "absolutePath",
+    "filePath",
+    "token",
+    "credential",
+  ]) {
+    assert.equal(
+      serialized.includes(`"${prohibitedField}"`),
+      false,
+      `public Phase 3B evidence must not admit ${prohibitedField}`,
     );
   }
 });

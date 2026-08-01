@@ -1,0 +1,778 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/local-speech-auditions.schema.json",
+  "title": "Phase 3B local speech auditions",
+  "$defs": {
+    "Id": { "$ref": "definitions.schema.json#/$defs/Id" },
+    "Sha256": { "$ref": "definitions.schema.json#/$defs/Sha256" },
+    "Timestamp": { "$ref": "definitions.schema.json#/$defs/Timestamp" },
+    "ContractVersion": { "const": "1.0.0" },
+    "ProtocolVersion": { "const": "1.0.0" },
+    "BoundedText": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "BoundedId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "CodePointSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "producerId", "producerVersion", "recordedAt"],
+      "properties": {
+        "origin": { "enum": ["fixture_provider", "real_local_provider", "application", "human", "system"] },
+        "producerId": { "$ref": "#/$defs/BoundedId" },
+        "producerVersion": { "$ref": "#/$defs/BoundedId" },
+        "recordedAt": { "$ref": "#/$defs/Timestamp" },
+        "inputFingerprint": { "$ref": "#/$defs/Sha256" },
+        "reasonCode": { "$ref": "#/$defs/BoundedId" }
+      }
+    },
+    "ProviderRequestExecutionDetails": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "providerLanguage",
+            "providerVoiceId",
+            "restrictedLocalUseAcknowledged",
+            "restrictedLocalUseAcknowledgementEventId",
+            "voiceRuntimeBindingFingerprint",
+            "voiceRuntimeBindingId",
+            "executionClassification",
+            "providerDispatchCount"
+          ],
+          "properties": {
+            "providerLanguage": { "type": "string", "minLength": 2, "maxLength": 32 },
+            "providerVoiceId": { "$ref": "#/$defs/BoundedId" },
+            "restrictedLocalUseAcknowledged": { "type": "boolean" },
+            "restrictedLocalUseAcknowledgementEventId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+            "voiceRuntimeBindingFingerprint": { "$ref": "#/$defs/Sha256" },
+            "voiceRuntimeBindingId": { "$ref": "#/$defs/Id" },
+            "executionClassification": { "enum": ["provider_execution", "verified_cache_lookup"] },
+            "providerDispatchCount": { "enum": [0, 1] },
+            "sourceProviderRequestId": { "$ref": "#/$defs/Id" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "restrictedLocalUseAcknowledged": { "const": true } } },
+              "then": { "properties": { "restrictedLocalUseAcknowledgementEventId": { "$ref": "#/$defs/Id" } } },
+              "else": { "properties": { "restrictedLocalUseAcknowledgementEventId": { "type": "null" } } }
+            },
+            {
+              "if": { "properties": { "executionClassification": { "const": "verified_cache_lookup" } } },
+              "then": {
+                "required": ["sourceProviderRequestId"],
+                "properties": {
+                  "providerDispatchCount": { "const": 0 },
+                  "sourceProviderRequestId": { "$ref": "#/$defs/Id" }
+                }
+              },
+              "else": {
+                "not": {
+                  "required": ["sourceProviderRequestId"],
+                  "properties": { "sourceProviderRequestId": { "$ref": "#/$defs/Id" } }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attempt",
+            "supersedesProviderRequestId",
+            "originalIdempotencyKeyFingerprint",
+            "executionClassification",
+            "providerDispatchCount"
+          ],
+          "properties": {
+            "attempt": { "type": "integer", "minimum": 2, "maximum": 1000 },
+            "supersedesProviderRequestId": { "$ref": "#/$defs/Id" },
+            "originalIdempotencyKeyFingerprint": { "$ref": "#/$defs/Sha256" },
+            "executionClassification": { "enum": ["provider_execution", "verified_cache_lookup"] },
+            "providerDispatchCount": { "enum": [0, 1] },
+            "sourceProviderRequestId": { "$ref": "#/$defs/Id" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "executionClassification": { "const": "verified_cache_lookup" } } },
+              "then": {
+                "required": ["sourceProviderRequestId"],
+                "properties": {
+                  "providerDispatchCount": { "const": 0 },
+                  "sourceProviderRequestId": { "$ref": "#/$defs/Id" }
+                }
+              },
+              "else": {
+                "not": {
+                  "required": ["sourceProviderRequestId"],
+                  "properties": { "sourceProviderRequestId": { "$ref": "#/$defs/Id" } }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "ProviderRequestProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "producerId", "producerVersion", "recordedAt", "inputFingerprint", "details"],
+      "properties": {
+        "origin": { "enum": ["fixture_provider", "real_local_provider", "application", "human", "system"] },
+        "producerId": { "$ref": "#/$defs/BoundedId" },
+        "producerVersion": { "$ref": "#/$defs/BoundedId" },
+        "recordedAt": { "$ref": "#/$defs/Timestamp" },
+        "inputFingerprint": { "$ref": "#/$defs/Sha256" },
+        "reasonCode": { "$ref": "#/$defs/BoundedId" },
+        "details": { "$ref": "#/$defs/ProviderRequestExecutionDetails" }
+      }
+    },
+    "SpeechProviderAdapterDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "providerId", "providerVersion", "adapterId", "adapterVersion", "providerClass", "displayName", "synthesisImplemented", "localOnly", "networkRequired", "credentialsRequired", "deterministic", "productionExportEligible", "supportedLanguages", "outputFormats", "supportedSampleRatesHz", "licenseIdentifier", "commercialUseClassification", "attributionRequired", "status", "statusReasonCode", "descriptorFingerprint", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "providerId": { "$ref": "#/$defs/BoundedId" },
+        "providerVersion": { "$ref": "#/$defs/BoundedId" },
+        "adapterId": { "$ref": "#/$defs/BoundedId" },
+        "adapterVersion": { "$ref": "#/$defs/BoundedId" },
+        "providerClass": { "enum": ["deterministic_fixture", "real_local", "development_only"] },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "synthesisImplemented": { "type": "boolean" },
+        "localOnly": { "const": true },
+        "networkRequired": { "const": false },
+        "credentialsRequired": { "const": false },
+        "deterministic": { "type": "boolean" },
+        "productionExportEligible": { "type": "boolean" },
+        "supportedLanguages": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "minLength": 2, "maxLength": 32 } },
+        "outputFormats": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "const": "pcm_s16le_wav" } },
+        "supportedSampleRatesHz": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "type": "integer", "minimum": 8000, "maximum": 192000 } },
+        "licenseIdentifier": { "$ref": "#/$defs/BoundedId" },
+        "commercialUseClassification": { "enum": ["allowed", "restricted", "fixture_only", "unknown"] },
+        "attributionRequired": { "type": "boolean" },
+        "status": { "enum": ["available", "degraded", "unavailable", "disabled"] },
+        "statusReasonCode": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/BoundedId" }] },
+        "descriptorFingerprint": { "$ref": "#/$defs/Sha256" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "LocalSpeechRuntimeDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "runtimeDescriptorId", "runtimeId", "runtimeVersion", "protocolVersion", "platform", "architecture", "processBoundary", "transport", "executableIdentity", "shellUsed", "networkPolicy", "startupDeadlineMilliseconds", "requestDeadlineMilliseconds", "idleShutdownMilliseconds", "maximumRetryAttempts", "maximumConcurrentRequests", "descriptorFingerprint", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "runtimeDescriptorId": { "$ref": "#/$defs/Id" },
+        "runtimeId": { "$ref": "#/$defs/BoundedId" },
+        "runtimeVersion": { "$ref": "#/$defs/BoundedId" },
+        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "platform": { "const": "windows" },
+        "architecture": { "enum": ["x64", "arm64"] },
+        "processBoundary": { "const": "managed_child_process" },
+        "transport": { "enum": ["authenticated_stdio", "authenticated_loopback"] },
+        "executableIdentity": { "$ref": "#/$defs/BoundedId" },
+        "shellUsed": { "const": false },
+        "networkPolicy": { "const": "deny_during_synthesis" },
+        "startupDeadlineMilliseconds": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "requestDeadlineMilliseconds": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "idleShutdownMilliseconds": { "type": "integer", "minimum": 0, "maximum": 3600000 },
+        "maximumRetryAttempts": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "maximumConcurrentRequests": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "descriptorFingerprint": { "$ref": "#/$defs/Sha256" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "SpeechRuntimeProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "runtimeProfileId", "revision", "runtimeDescriptorId", "providerIds", "compatibleModelPackageIds", "protocolVersion", "startupDeadlineMilliseconds", "requestDeadlineMilliseconds", "idleShutdownMilliseconds", "maximumRetryAttempts", "maximumConcurrentRequests", "shellUsed", "networkAccessDuringSynthesis", "profileFingerprint", "active", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "runtimeProfileId": { "$ref": "#/$defs/Id" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "runtimeDescriptorId": { "$ref": "#/$defs/Id" },
+        "providerIds": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } },
+        "compatibleModelPackageIds": { "type": "array", "maxItems": 200, "uniqueItems": true, "items": { "$ref": "#/$defs/Id" } },
+        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "startupDeadlineMilliseconds": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "requestDeadlineMilliseconds": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "idleShutdownMilliseconds": { "type": "integer", "minimum": 0, "maximum": 3600000 },
+        "maximumRetryAttempts": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "maximumConcurrentRequests": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "shellUsed": { "const": false },
+        "networkAccessDuringSynthesis": { "const": false },
+        "profileFingerprint": { "$ref": "#/$defs/Sha256" },
+        "active": { "type": "boolean" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "SpeechRuntimeRestartReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "reasonCode", "priorState", "observedAt", "observerServiceInstanceId", "ownershipConfirmed", "gracefulShutdownConfirmed", "processExitConfirmed"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "reasonCode": { "const": "SERVICE_RESTART_INTERRUPTED" },
+        "priorState": { "enum": ["starting", "ready", "busy", "idle", "stopping"] },
+        "observedAt": { "$ref": "#/$defs/Timestamp" },
+        "observerServiceInstanceId": { "$ref": "#/$defs/Id" },
+        "ownershipConfirmed": { "const": false },
+        "gracefulShutdownConfirmed": { "const": false },
+        "processExitConfirmed": { "const": false }
+      }
+    },
+    "SpeechRuntimeInstance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "runtimeInstanceId", "runtimeProfileId", "runtimeProfileFingerprint", "providerId", "modelPackageFingerprint", "workerPid", "parentPid", "executableIdentity", "executableSha256", "creationIdentity", "protocolVersion", "handshakeAuthenticated", "state", "startedAt", "lastActivityAt", "stoppedAt", "stopReasonCode", "shutdownAcknowledged", "gracefulShutdownConfirmed", "exitCode", "terminatedByParent", "ownershipConfirmed", "confirmedExited", "ownedProcessesConfirmedExited", "jobObjectAssigned", "deniedNetworkAttemptCount", "networkPolicy", "observedNetworkRequestCount", "restartReconciliation", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "runtimeInstanceId": { "$ref": "#/$defs/Id" },
+        "runtimeProfileId": { "$ref": "#/$defs/Id" },
+        "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" },
+        "providerId": { "$ref": "#/$defs/BoundedId" },
+        "modelPackageFingerprint": { "$ref": "#/$defs/Sha256" },
+        "workerPid": { "type": "integer", "minimum": 1 },
+        "parentPid": { "type": "integer", "minimum": 1 },
+        "executableIdentity": { "$ref": "#/$defs/BoundedId" },
+        "executableSha256": { "$ref": "#/$defs/Sha256" },
+        "creationIdentity": { "$ref": "#/$defs/BoundedId" },
+        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "handshakeAuthenticated": { "const": true },
+        "state": { "enum": ["starting", "ready", "busy", "idle", "stopping", "stopped", "failed"] },
+        "startedAt": { "$ref": "#/$defs/Timestamp" },
+        "lastActivityAt": { "$ref": "#/$defs/Timestamp" },
+        "stoppedAt": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Timestamp" }] },
+        "stopReasonCode": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/BoundedId" }] },
+        "shutdownAcknowledged": { "type": ["boolean", "null"] },
+        "gracefulShutdownConfirmed": { "type": ["boolean", "null"] },
+        "exitCode": { "type": ["integer", "null"] },
+        "terminatedByParent": { "type": ["boolean", "null"] },
+        "ownershipConfirmed": { "type": ["boolean", "null"] },
+        "confirmedExited": { "type": ["boolean", "null"] },
+        "ownedProcessesConfirmedExited": { "type": ["boolean", "null"] },
+        "jobObjectAssigned": { "type": "boolean" },
+        "deniedNetworkAttemptCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "networkPolicy": { "const": "python_socket_api_denied" },
+        "observedNetworkRequestCount": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
+        "restartReconciliation": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/SpeechRuntimeRestartReconciliation" }] },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "SpeechRuntimeHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "runtimeProfileId", "runtimeProfileFingerprint", "runtimeInstanceId", "providerId", "status", "reasonCode", "checkedAt", "expiresAt", "modelPackageFingerprint", "protocolVersion"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "runtimeProfileId": { "$ref": "#/$defs/Id" },
+        "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" },
+        "runtimeInstanceId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "providerId": { "$ref": "#/$defs/BoundedId" },
+        "status": { "enum": ["available", "degraded", "unavailable", "disabled"] },
+        "reasonCode": { "$ref": "#/$defs/BoundedId" },
+        "checkedAt": { "$ref": "#/$defs/Timestamp" },
+        "expiresAt": { "$ref": "#/$defs/Timestamp" },
+        "modelPackageFingerprint": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Sha256" }] },
+        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" }
+      }
+    },
+    "ModelPackageFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relativePath", "byteSize", "sha256", "mediaClassification", "executable"],
+      "properties": {
+        "relativePath": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\u0000]+$" },
+        "byteSize": { "type": "integer", "minimum": 1, "maximum": 2147483648 },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "mediaClassification": { "enum": ["onnx", "safetensors", "configuration", "tokenizer", "voice_data", "license", "notice"] },
+        "executable": { "const": false }
+      }
+    },
+    "ModelPackageManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "manifestVersion", "modelPackageId", "providerId", "modelId", "modelVersion", "runtimeVersion", "platform", "architecture", "sourceClassification", "officialSourceReference", "licenseIdentifier", "commercialUseClassification", "attributionRequirements", "files", "totalExpandedByteSize", "requiredRuntimeDependencies", "compatibilityConstraints", "state", "manifestFingerprint", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "manifestVersion": { "$ref": "#/$defs/BoundedId" },
+        "modelPackageId": { "$ref": "#/$defs/Id" },
+        "providerId": { "$ref": "#/$defs/BoundedId" },
+        "modelId": { "$ref": "#/$defs/BoundedId" },
+        "modelVersion": { "$ref": "#/$defs/BoundedId" },
+        "runtimeVersion": { "$ref": "#/$defs/BoundedId" },
+        "platform": { "const": "windows" },
+        "architecture": { "enum": ["x64", "arm64"] },
+        "sourceClassification": { "enum": ["official_release", "maintainer_referenced_conversion", "repository_fixture"] },
+        "officialSourceReference": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "licenseIdentifier": { "$ref": "#/$defs/BoundedId" },
+        "commercialUseClassification": { "enum": ["allowed", "restricted", "fixture_only", "unknown"] },
+        "attributionRequirements": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 512 } },
+        "files": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "$ref": "#/$defs/ModelPackageFile" } },
+        "totalExpandedByteSize": { "type": "integer", "minimum": 1, "maximum": 2147483648 },
+        "requiredRuntimeDependencies": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } },
+        "compatibilityConstraints": { "type": "array", "maxItems": 64, "items": { "type": "string", "minLength": 1, "maxLength": 512 } },
+        "state": { "enum": ["active", "deprecated", "revoked"] },
+        "manifestFingerprint": { "$ref": "#/$defs/Sha256" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "ModelInstallationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "installationId", "modelPackageId", "manifestFingerprint", "installationRevision", "storageKey", "status", "active", "installedAt", "updatedAt", "lastAction", "actionReasonCode", "immutableEventId", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "installationId": { "$ref": "#/$defs/Id" },
+        "modelPackageId": { "$ref": "#/$defs/Id" },
+        "manifestFingerprint": { "$ref": "#/$defs/Sha256" },
+        "installationRevision": { "type": "integer", "minimum": 1 },
+        "storageKey": { "$ref": "#/$defs/BoundedId" },
+        "status": { "enum": ["pending", "installed", "active", "inactive", "repair_required", "removed", "failed"] },
+        "active": { "type": "boolean" },
+        "installedAt": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Timestamp" }] },
+        "updatedAt": { "$ref": "#/$defs/Timestamp" },
+        "lastAction": { "enum": ["install", "verify", "activate", "deactivate", "repair", "remove"] },
+        "actionReasonCode": { "type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^<>\\u0000-\\u001F\\u007F-\\u009F]+$" },
+        "immutableEventId": { "$ref": "#/$defs/Id" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "ModelVerificationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "verificationId", "installationId", "modelPackageId", "manifestFingerprint", "verificationFingerprint", "status", "verifiedFileCount", "verifiedByteSize", "unexpectedFileCount", "symlinkOrReparsePointDetected", "checkedAt", "blockingReasonCodes", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "verificationId": { "$ref": "#/$defs/Id" },
+        "installationId": { "$ref": "#/$defs/Id" },
+        "modelPackageId": { "$ref": "#/$defs/Id" },
+        "manifestFingerprint": { "$ref": "#/$defs/Sha256" },
+        "verificationFingerprint": { "$ref": "#/$defs/Sha256" },
+        "status": { "enum": ["verified", "mismatch", "missing", "unsafe"] },
+        "verifiedFileCount": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "verifiedByteSize": { "type": "integer", "minimum": 0, "maximum": 2147483648 },
+        "unexpectedFileCount": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "symlinkOrReparsePointDetected": { "type": "boolean" },
+        "checkedAt": { "$ref": "#/$defs/Timestamp" },
+        "blockingReasonCodes": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "VoiceRuntimeBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "bindingId", "bindingKind", "voiceProfileId", "voiceProfileVersion", "voiceProfileFingerprint", "sourceProviderId", "sourceProviderVersion", "sourceProviderFingerprint", "sourceModelId", "sourceModelVersion", "sourceModelFingerprint", "providerId", "providerVersion", "providerVoiceId", "modelId", "modelVersion", "modelPackageId", "modelPackageFingerprint", "runtimeProfileId", "runtimeProfileFingerprint", "bindingFingerprint", "active", "provenance", "createdAt"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "bindingId": { "$ref": "#/$defs/Id" },
+        "bindingKind": { "enum": ["exact_provider_match", "declared_fixture_adapter"] },
+        "voiceProfileId": { "$ref": "#/$defs/Id" },
+        "voiceProfileVersion": { "$ref": "#/$defs/BoundedId" },
+        "voiceProfileFingerprint": { "$ref": "#/$defs/Sha256" },
+        "sourceProviderId": { "$ref": "#/$defs/BoundedId" },
+        "sourceProviderVersion": { "$ref": "#/$defs/BoundedId" },
+        "sourceProviderFingerprint": { "$ref": "#/$defs/Sha256" },
+        "sourceModelId": { "$ref": "#/$defs/BoundedId" },
+        "sourceModelVersion": { "$ref": "#/$defs/BoundedId" },
+        "sourceModelFingerprint": { "$ref": "#/$defs/Sha256" },
+        "providerId": { "$ref": "#/$defs/BoundedId" },
+        "providerVersion": { "$ref": "#/$defs/BoundedId" },
+        "providerVoiceId": { "$ref": "#/$defs/BoundedId" },
+        "modelId": { "$ref": "#/$defs/BoundedId" },
+        "modelVersion": { "$ref": "#/$defs/BoundedId" },
+        "modelPackageId": { "$ref": "#/$defs/Id" },
+        "modelPackageFingerprint": { "$ref": "#/$defs/Sha256" },
+        "runtimeProfileId": { "$ref": "#/$defs/Id" },
+        "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" },
+        "bindingFingerprint": { "$ref": "#/$defs/Sha256" },
+        "active": { "type": "boolean" },
+        "provenance": { "$ref": "#/$defs/Provenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "TextNormalizationTransformation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transformationId", "kind", "sourceSpan", "destinationSpan", "originalTextSha256", "replacementTextSha256", "reasonCode", "requiredByProvider", "humanApprovalRequired", "approved"],
+      "properties": {
+        "transformationId": { "$ref": "#/$defs/Id" },
+        "kind": { "enum": ["line_ending", "control_whitespace", "unicode_composition", "typographic_quote", "typographic_dash", "ellipsis", "unsupported_character"] },
+        "sourceSpan": { "$ref": "#/$defs/CodePointSpan" },
+        "destinationSpan": { "$ref": "#/$defs/CodePointSpan" },
+        "originalTextSha256": { "$ref": "#/$defs/Sha256" },
+        "replacementTextSha256": { "$ref": "#/$defs/Sha256" },
+        "originalText": { "type": "string", "maxLength": 256 },
+        "replacementText": { "type": "string", "maxLength": 256 },
+        "reasonCode": { "$ref": "#/$defs/BoundedId" },
+        "requiredByProvider": { "type": "boolean" },
+        "humanApprovalRequired": { "type": "boolean" },
+        "approved": { "type": "boolean" }
+      }
+    },
+    "TextNormalizationPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "normalizationPlanId", "projectId", "originalTextSha256", "normalizedTextSha256", "providerId", "profileId", "profileVersion", "transformations", "appliedPronunciationEntryIds", "unsupportedCharacterCodePoints", "warnings", "humanReviewRequired", "planFingerprint", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "normalizationPlanId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "originalTextSha256": { "$ref": "#/$defs/Sha256" },
+        "normalizedTextSha256": { "$ref": "#/$defs/Sha256" },
+        "providerId": { "$ref": "#/$defs/BoundedId" },
+        "profileId": { "$ref": "#/$defs/BoundedId" },
+        "profileVersion": { "$ref": "#/$defs/BoundedId" },
+        "transformations": { "type": "array", "maxItems": 2000, "items": { "$ref": "#/$defs/TextNormalizationTransformation" } },
+        "appliedPronunciationEntryIds": { "type": "array", "maxItems": 1000, "uniqueItems": true, "items": { "$ref": "#/$defs/Id" } },
+        "unsupportedCharacterCodePoints": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "pattern": "^U\\+[0-9A-F]{4,6}$" } },
+        "warnings": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } },
+        "humanReviewRequired": { "type": "boolean" },
+        "planFingerprint": { "$ref": "#/$defs/Sha256" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "PronunciationDictionary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "dictionaryId", "projectId", "revision", "entryCount", "currentEntryCount", "dictionaryFingerprint", "createdAt", "updatedAt", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "dictionaryId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "entryCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "currentEntryCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "dictionaryFingerprint": { "$ref": "#/$defs/Sha256" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "updatedAt": { "$ref": "#/$defs/Timestamp" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "PronunciationEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "entryId", "projectId", "dictionaryId", "dictionaryRevision", "revision", "writtenForm", "normalizedLookupForm", "language", "locale", "scope", "scopeId", "representation", "pronunciation", "ipa", "providerId", "providerCompiledValue", "caseSensitive", "matchRule", "priority", "actor", "reason", "verificationState", "entryFingerprint", "supersedesEntryId", "supersededByEntryId", "immutable", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "entryId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "dictionaryId": { "$ref": "#/$defs/Id" },
+        "dictionaryRevision": { "type": "integer", "minimum": 1 },
+        "revision": { "type": "integer", "minimum": 1 },
+        "writtenForm": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^<>\\u0000-\\u001F\\u007F]+$" },
+        "normalizedLookupForm": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "language": { "type": "string", "minLength": 2, "maxLength": 16 },
+        "locale": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 2, "maxLength": 32 }] },
+        "scope": { "enum": ["project", "narrator", "character_role", "chapter", "scene", "custom"] },
+        "scopeId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "representation": { "enum": ["provider_neutral", "ipa", "provider_specific"] },
+        "pronunciation": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^<>\\u0000-\\u001F\\u007F]+$" },
+        "ipa": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^<>\\u0000-\\u001F\\u007F]+$" }] },
+        "providerId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/BoundedId" }] },
+        "providerCompiledValue": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^<>\\u0000-\\u001F\\u007F]+$" }] },
+        "caseSensitive": { "type": "boolean" },
+        "matchRule": { "enum": ["whole_word", "phrase"] },
+        "priority": { "type": "integer", "minimum": -1000, "maximum": 1000 },
+        "actor": { "type": "object", "additionalProperties": false, "required": ["classification", "actorId"], "properties": { "classification": { "const": "human" }, "actorId": { "$ref": "#/$defs/Id" } } },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "verificationState": { "enum": ["pending", "approved", "changes_requested", "rejected", "superseded"] },
+        "entryFingerprint": { "$ref": "#/$defs/Sha256" },
+        "supersedesEntryId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "supersededByEntryId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "immutable": { "const": true },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "CompiledPronunciationSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceSpan", "entryId", "entryRevision", "writtenFormSha256", "compiledValueSha256", "representation"],
+      "properties": {
+        "sourceSpan": { "$ref": "#/$defs/CodePointSpan" },
+        "entryId": { "$ref": "#/$defs/Id" },
+        "entryRevision": { "type": "integer", "minimum": 1 },
+        "writtenFormSha256": { "$ref": "#/$defs/Sha256" },
+        "compiledValueSha256": { "$ref": "#/$defs/Sha256" },
+        "representation": { "enum": ["provider_neutral", "ipa", "provider_specific"] }
+      }
+    },
+    "CompiledPronunciationPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "pronunciationPlanId", "projectId", "dictionaryId", "dictionaryRevision", "dictionaryFingerprint", "sourceTextSha256", "locale", "roleId", "scopeContext", "appliedEntries", "dependencyEntryRevisions", "providerId", "escapedProviderPayloadSha256", "planFingerprint", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "pronunciationPlanId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "dictionaryId": { "$ref": "#/$defs/Id" },
+        "dictionaryRevision": { "type": "integer", "minimum": 1 },
+        "dictionaryFingerprint": { "$ref": "#/$defs/Sha256" },
+        "sourceTextSha256": { "$ref": "#/$defs/Sha256" },
+        "locale": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "roleId": { "$ref": "#/$defs/Id" },
+        "scopeContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["chapterId", "sceneId", "customScopeIds"],
+          "properties": {
+            "chapterId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+            "sceneId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+            "customScopeIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/$defs/Id" } }
+          }
+        },
+        "appliedEntries": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/CompiledPronunciationSpan" } },
+        "dependencyEntryRevisions": { "type": "array", "maxItems": 1000, "items": { "type": "object", "additionalProperties": false, "required": ["entryId", "revision"], "properties": { "entryId": { "$ref": "#/$defs/Id" }, "revision": { "type": "integer", "minimum": 1 } } } },
+        "providerId": { "$ref": "#/$defs/BoundedId" },
+        "escapedProviderPayloadSha256": { "$ref": "#/$defs/Sha256" },
+        "planFingerprint": { "$ref": "#/$defs/Sha256" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "AuditionSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "auditionSessionId", "projectId", "roleId", "castAssignmentId", "castAssignmentRevision", "approvedCastSnapshotId", "approvedCastSnapshotRevision", "approvedCastSnapshotFingerprint", "voiceRuntimeBindingId", "voiceRuntimeBindingFingerprint", "providerVoiceId", "voiceRuntimeBinding", "providerId", "providerVersion", "modelPackageFingerprint", "runtimeProfileFingerprint", "pronunciationDictionaryRevision", "pronunciationDictionaryFingerprint", "state", "revision", "scriptCount", "clipCount", "approvedClipId", "jobId", "sessionFingerprint", "createdAt", "updatedAt", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "auditionSessionId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "roleId": { "$ref": "#/$defs/Id" },
+        "castAssignmentId": { "$ref": "#/$defs/Id" },
+        "castAssignmentRevision": { "type": "integer", "minimum": 1 },
+        "approvedCastSnapshotId": { "$ref": "#/$defs/Id" },
+        "approvedCastSnapshotRevision": { "type": "integer", "minimum": 1 },
+        "approvedCastSnapshotFingerprint": { "$ref": "#/$defs/Sha256" },
+        "voiceRuntimeBindingId": { "$ref": "#/$defs/Id" },
+        "voiceRuntimeBindingFingerprint": { "$ref": "#/$defs/Sha256" },
+        "providerVoiceId": { "$ref": "#/$defs/BoundedId" },
+        "voiceRuntimeBinding": { "$ref": "#/$defs/VoiceRuntimeBinding" },
+        "providerId": { "$ref": "#/$defs/BoundedId" },
+        "providerVersion": { "$ref": "#/$defs/BoundedId" },
+        "modelPackageFingerprint": { "$ref": "#/$defs/Sha256" },
+        "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" },
+        "pronunciationDictionaryRevision": { "type": "integer", "minimum": 1 },
+        "pronunciationDictionaryFingerprint": { "$ref": "#/$defs/Sha256" },
+        "state": { "enum": ["draft", "queued", "generating", "reviewable", "failed", "cancelled", "invalidated"] },
+        "revision": { "type": "integer", "minimum": 1 },
+        "scriptCount": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "clipCount": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "approvedClipId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "jobId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "sessionFingerprint": { "$ref": "#/$defs/Sha256" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "updatedAt": { "$ref": "#/$defs/Timestamp" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "AuditionScript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "auditionScriptId", "auditionSessionId", "projectId", "roleId", "kind", "sourceTextSha256", "sourceSpan", "sourceDocumentId", "sourceAnalysisEntity", "sourceRevision", "normalizedTextSha256", "normalizationPlanId", "pronunciationPlanId", "localOnly", "scriptFingerprint", "createdAt"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "auditionScriptId": { "$ref": "#/$defs/Id" },
+        "auditionSessionId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "roleId": { "$ref": "#/$defs/Id" },
+        "kind": { "enum": ["standardized_synthetic", "approved_manuscript_excerpt", "role_dialogue_excerpt", "narrator_excerpt", "pronunciation_test", "synthetic_fallback"] },
+        "sourceTextSha256": { "$ref": "#/$defs/Sha256" },
+        "sourceSpan": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/CodePointSpan" }] },
+        "sourceDocumentId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "sourceAnalysisEntity": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["entityId", "collection", "effectiveRevision", "effectiveFingerprint"], "properties": { "entityId": { "$ref": "#/$defs/Id" }, "collection": { "enum": ["dialogue-lines", "narration-spans"] }, "effectiveRevision": { "type": "integer", "minimum": 1 }, "effectiveFingerprint": { "$ref": "#/$defs/Sha256" } } }] },
+        "sourceRevision": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }] },
+        "normalizedTextSha256": { "$ref": "#/$defs/Sha256" },
+        "normalizationPlanId": { "$ref": "#/$defs/Id" },
+        "pronunciationPlanId": { "$ref": "#/$defs/Id" },
+        "localOnly": { "const": true },
+        "scriptFingerprint": { "$ref": "#/$defs/Sha256" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "AuditionScriptDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "auditionScriptId", "auditionSessionId", "projectId", "roleId", "kind", "sourceTextSha256", "sourceSpan", "sourceDocumentId", "sourceAnalysisEntity", "sourceRevision", "normalizedTextSha256", "normalizationPlanId", "pronunciationPlanId", "localOnly", "scriptFingerprint", "createdAt", "text"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" },
+        "auditionScriptId": { "$ref": "#/$defs/Id" },
+        "auditionSessionId": { "$ref": "#/$defs/Id" },
+        "projectId": { "$ref": "#/$defs/Id" },
+        "roleId": { "$ref": "#/$defs/Id" },
+        "kind": { "enum": ["standardized_synthetic", "approved_manuscript_excerpt", "role_dialogue_excerpt", "narrator_excerpt", "pronunciation_test", "synthetic_fallback"] },
+        "sourceTextSha256": { "$ref": "#/$defs/Sha256" },
+        "sourceSpan": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/CodePointSpan" }] },
+        "sourceDocumentId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "sourceAnalysisEntity": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["entityId", "collection", "effectiveRevision", "effectiveFingerprint"], "properties": { "entityId": { "$ref": "#/$defs/Id" }, "collection": { "enum": ["dialogue-lines", "narration-spans"] }, "effectiveRevision": { "type": "integer", "minimum": 1 }, "effectiveFingerprint": { "$ref": "#/$defs/Sha256" } } }] },
+        "sourceRevision": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }] },
+        "normalizedTextSha256": { "$ref": "#/$defs/Sha256" },
+        "normalizationPlanId": { "$ref": "#/$defs/Id" },
+        "pronunciationPlanId": { "$ref": "#/$defs/Id" },
+        "localOnly": { "const": true },
+        "scriptFingerprint": { "$ref": "#/$defs/Sha256" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4000 }
+      }
+    },
+    "AuditionEvidenceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "sourceDocumentId", "sourceRevision", "extractionId", "extractionRevision", "extractedTextSha256", "phase2RunId", "phase2SnapshotId", "phase2SnapshotRevision", "phase2SnapshotFingerprint", "phase2CorrectionSetFingerprint", "castingRunId", "approvedCastSnapshotId", "approvedCastSnapshotRevision", "approvedCastSnapshotFingerprint", "castAssignmentId", "castAssignmentRevision", "voiceProfileId", "voiceProfileVersion", "voiceRuntimeBindingId", "voiceRuntimeBindingFingerprint", "providerVoiceId", "providerId", "providerVersion", "modelId", "modelVersion", "catalogRevisionId", "catalogFingerprint", "rightsRecordId", "rightsRecordRevision", "rightsRecordFingerprint", "pronunciationDictionaryId", "pronunciationDictionaryRevision", "pronunciationDictionaryFingerprint", "runtimeProfileId", "runtimeProfileFingerprint", "modelPackageId", "modelPackageFingerprint", "producerVersion"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/Id" }, "sourceDocumentId": { "$ref": "#/$defs/Id" }, "sourceRevision": { "type": "integer", "minimum": 1 },
+        "extractionId": { "$ref": "#/$defs/Id" }, "extractionRevision": { "type": "integer", "minimum": 1 }, "extractedTextSha256": { "$ref": "#/$defs/Sha256" },
+        "phase2RunId": { "$ref": "#/$defs/Id" }, "phase2SnapshotId": { "$ref": "#/$defs/Id" }, "phase2SnapshotRevision": { "type": "integer", "minimum": 1 }, "phase2SnapshotFingerprint": { "$ref": "#/$defs/Sha256" }, "phase2CorrectionSetFingerprint": { "$ref": "#/$defs/Sha256" },
+        "castingRunId": { "$ref": "#/$defs/Id" }, "approvedCastSnapshotId": { "$ref": "#/$defs/Id" }, "approvedCastSnapshotRevision": { "type": "integer", "minimum": 1 }, "approvedCastSnapshotFingerprint": { "$ref": "#/$defs/Sha256" },
+        "castAssignmentId": { "$ref": "#/$defs/Id" }, "castAssignmentRevision": { "type": "integer", "minimum": 1 }, "voiceProfileId": { "$ref": "#/$defs/Id" }, "voiceProfileVersion": { "$ref": "#/$defs/BoundedId" }, "voiceRuntimeBindingId": { "$ref": "#/$defs/Id" }, "voiceRuntimeBindingFingerprint": { "$ref": "#/$defs/Sha256" }, "providerVoiceId": { "$ref": "#/$defs/BoundedId" },
+        "providerId": { "$ref": "#/$defs/BoundedId" }, "providerVersion": { "$ref": "#/$defs/BoundedId" }, "modelId": { "$ref": "#/$defs/BoundedId" }, "modelVersion": { "$ref": "#/$defs/BoundedId" },
+        "catalogRevisionId": { "$ref": "#/$defs/Id" }, "catalogFingerprint": { "$ref": "#/$defs/Sha256" }, "rightsRecordId": { "$ref": "#/$defs/Id" }, "rightsRecordRevision": { "type": "integer", "minimum": 1 }, "rightsRecordFingerprint": { "$ref": "#/$defs/Sha256" },
+        "pronunciationDictionaryId": { "$ref": "#/$defs/Id" }, "pronunciationDictionaryRevision": { "type": "integer", "minimum": 1 }, "pronunciationDictionaryFingerprint": { "$ref": "#/$defs/Sha256" },
+        "runtimeProfileId": { "$ref": "#/$defs/Id" }, "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" }, "modelPackageId": { "$ref": "#/$defs/Id" }, "modelPackageFingerprint": { "$ref": "#/$defs/Sha256" }, "producerVersion": { "$ref": "#/$defs/BoundedId" }
+      }
+    },
+    "AuditionRoleStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "runtimeBindingStatus": { "const": "compatible" } }, "required": ["runtimeBindingStatus"] },
+          "then": { "properties": { "voiceRuntimeBinding": { "allOf": [{ "$ref": "#/$defs/VoiceRuntimeBinding" }, { "properties": { "active": { "const": true } } }] }, "runtimeBindingReasonCode": { "const": null } } }
+        },
+        {
+          "if": { "properties": { "runtimeBindingStatus": { "const": "incompatible" } }, "required": ["runtimeBindingStatus"] },
+          "then": { "properties": { "voiceRuntimeBinding": { "const": null }, "runtimeBindingReasonCode": { "const": "VOICE_RUNTIME_BINDING_INCOMPATIBLE" }, "sessionEvidence": { "const": null }, "generationRequest": { "const": null } } }
+        },
+        {
+          "if": { "properties": { "runtimeBindingStatus": { "const": "unavailable" } }, "required": ["runtimeBindingStatus"] },
+          "then": { "properties": { "voiceRuntimeBinding": { "const": null }, "runtimeBindingReasonCode": { "const": "VERIFIED_ACTIVE_MODEL_PACKAGE_REQUIRED" }, "sessionEvidence": { "const": null }, "generationRequest": { "const": null } } }
+        }
+      ],
+      "required": ["roleId", "roleType", "displayLabel", "required", "assignmentId", "assignmentRevision", "voiceProfileId", "voiceDisplayLabel", "voiceRuntimeBinding", "runtimeBindingStatus", "runtimeBindingReasonCode", "rightsState", "latestSessionId", "latestClipId", "reviewState", "sessionEvidence", "generationRequest"],
+      "properties": {
+        "roleId": { "$ref": "#/$defs/Id" },
+        "roleType": { "enum": ["narrator", "character"] },
+        "displayLabel": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "required": { "type": "boolean" },
+        "assignmentId": { "$ref": "#/$defs/Id" },
+        "assignmentRevision": { "type": "integer", "minimum": 1 },
+        "voiceProfileId": { "$ref": "#/$defs/Id" },
+        "voiceDisplayLabel": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "voiceRuntimeBinding": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/VoiceRuntimeBinding" }] },
+        "runtimeBindingStatus": { "enum": ["compatible", "incompatible", "unavailable"] },
+        "runtimeBindingReasonCode": { "oneOf": [{ "type": "null" }, { "enum": ["VOICE_RUNTIME_BINDING_INCOMPATIBLE", "VERIFIED_ACTIVE_MODEL_PACKAGE_REQUIRED"] }] },
+        "rightsState": { "enum": ["verified", "restricted"] },
+        "latestSessionId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "latestClipId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] },
+        "reviewState": { "enum": ["pending", "approved", "changes_requested", "rejected", "invalidated", "blocked"] },
+        "sessionEvidence": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/AuditionEvidenceBinding" }] },
+        "generationRequest": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/SpeechPreviewRequest" }] }
+      }
+    },
+    "SpeechPreviewRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "requestId", "auditionSessionId", "auditionSessionRevision", "auditionScriptId", "auditionScriptFingerprint", "evidence", "normalizedTextSha256", "normalizationPlanFingerprint", "pronunciationPlanFingerprint", "providerControls", "outputFormat", "sampleRateHz", "channels", "idempotencyKey", "requestFingerprint"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "requestId": { "$ref": "#/$defs/Id" }, "auditionSessionId": { "$ref": "#/$defs/Id" }, "auditionSessionRevision": { "type": "integer", "minimum": 1 }, "auditionScriptId": { "$ref": "#/$defs/Id" }, "auditionScriptFingerprint": { "$ref": "#/$defs/Sha256" }, "evidence": { "$ref": "#/$defs/AuditionEvidenceBinding" }, "normalizedTextSha256": { "$ref": "#/$defs/Sha256" }, "normalizationPlanFingerprint": { "$ref": "#/$defs/Sha256" }, "pronunciationPlanFingerprint": { "$ref": "#/$defs/Sha256" },
+        "providerControls": { "type": "object", "additionalProperties": false, "required": ["speakingRate", "pitch", "style", "energy", "controlsFingerprint"], "properties": { "speakingRate": { "type": "number", "minimum": 0.5, "maximum": 2 }, "pitch": { "type": ["number", "null"] }, "style": { "type": ["string", "null"], "maxLength": 64 }, "energy": { "type": ["number", "null"] }, "controlsFingerprint": { "$ref": "#/$defs/Sha256" } } },
+        "outputFormat": { "const": "pcm_s16le_wav" }, "sampleRateHz": { "const": 24000 }, "channels": { "const": 1 }, "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 160 }, "requestFingerprint": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "SpeechProviderRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "providerRequestId", "speechPreviewRequestId", "providerId", "providerVersion", "modelId", "modelVersion", "modelPackageFingerprint", "runtimeProfileId", "runtimeProfileFingerprint", "runtimeInstanceId", "voiceProfileId", "voiceProfileVersion", "voiceRuntimeBindingId", "voiceRuntimeBindingFingerprint", "providerVoiceId", "castAssignmentId", "castAssignmentRevision", "auditionSessionId", "normalizedTextSha256", "pronunciationPlanFingerprint", "providerControlFingerprint", "cacheKey", "state", "startedAt", "finishedAt", "retryable", "warnings", "requestFingerprint", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "providerRequestId": { "$ref": "#/$defs/Id" }, "speechPreviewRequestId": { "$ref": "#/$defs/Id" }, "providerId": { "$ref": "#/$defs/BoundedId" }, "providerVersion": { "$ref": "#/$defs/BoundedId" }, "modelId": { "$ref": "#/$defs/BoundedId" }, "modelVersion": { "$ref": "#/$defs/BoundedId" }, "modelPackageFingerprint": { "$ref": "#/$defs/Sha256" }, "runtimeProfileId": { "$ref": "#/$defs/Id" }, "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" }, "runtimeInstanceId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "voiceProfileId": { "$ref": "#/$defs/Id" }, "voiceProfileVersion": { "$ref": "#/$defs/BoundedId" }, "voiceRuntimeBindingId": { "$ref": "#/$defs/Id" }, "voiceRuntimeBindingFingerprint": { "$ref": "#/$defs/Sha256" }, "providerVoiceId": { "$ref": "#/$defs/BoundedId" }, "castAssignmentId": { "$ref": "#/$defs/Id" }, "castAssignmentRevision": { "type": "integer", "minimum": 1 }, "auditionSessionId": { "$ref": "#/$defs/Id" }, "normalizedTextSha256": { "$ref": "#/$defs/Sha256" }, "pronunciationPlanFingerprint": { "$ref": "#/$defs/Sha256" }, "providerControlFingerprint": { "$ref": "#/$defs/Sha256" }, "cacheKey": { "$ref": "#/$defs/Sha256" }, "state": { "enum": ["queued", "running", "succeeded", "failed", "cancelled"] }, "startedAt": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Timestamp" }] }, "finishedAt": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Timestamp" }] }, "retryable": { "type": "boolean" }, "warnings": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/BoundedId" } }, "requestFingerprint": { "$ref": "#/$defs/Sha256" }, "provenance": { "$ref": "#/$defs/ProviderRequestProvenance" }
+      }
+    },
+    "SpeechProviderResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "providerRequestId", "outcome", "retryable", "audioArtifactId", "outputArtifactSha256", "networkRequestCount", "warnings", "startedAt", "finishedAt", "resultFingerprint", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "providerRequestId": { "$ref": "#/$defs/Id" }, "outcome": { "enum": ["succeeded", "failed", "cancelled"] }, "retryable": { "type": "boolean" }, "audioArtifactId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "outputArtifactSha256": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Sha256" }] }, "networkRequestCount": { "type": "integer", "minimum": 0 }, "warnings": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/BoundedId" } }, "startedAt": { "$ref": "#/$defs/Timestamp" }, "finishedAt": { "$ref": "#/$defs/Timestamp" }, "resultFingerprint": { "$ref": "#/$defs/Sha256" }, "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "AudioArtifactRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "audioArtifactId", "projectId", "storageKey", "mediaType", "codec", "sampleRateHz", "channels", "sampleWidthBytes", "frameCount", "durationMilliseconds", "byteSize", "sha256", "availability", "playbackEligible", "publishedAtomically", "createdAt", "immutable"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "audioArtifactId": { "$ref": "#/$defs/Id" }, "projectId": { "$ref": "#/$defs/Id" }, "storageKey": { "$ref": "#/$defs/BoundedId" }, "mediaType": { "const": "audio/wav" }, "codec": { "const": "pcm_s16le" }, "sampleRateHz": { "const": 24000 }, "channels": { "const": 1 }, "sampleWidthBytes": { "const": 2 }, "frameCount": { "type": "integer", "minimum": 1 }, "durationMilliseconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 30000 }, "byteSize": { "type": "integer", "minimum": 45, "maximum": 25165824 }, "sha256": { "$ref": "#/$defs/Sha256" }, "availability": { "enum": ["present", "purged", "corrupt", "quarantined"] }, "playbackEligible": { "type": "boolean" }, "publishedAtomically": { "const": true }, "createdAt": { "$ref": "#/$defs/Timestamp" }, "immutable": { "const": true }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "availability": { "const": "present" } }, "required": ["availability"] },
+          "then": { "properties": { "playbackEligible": { "const": true } } },
+          "else": { "properties": { "playbackEligible": { "const": false } } }
+        }
+      ]
+    },
+    "AudioQualityRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "qualityRecordId", "projectId", "audioArtifactId", "profileId", "profileVersion", "validWav", "nonSilent", "peakDbfs", "silenceRatio", "clippedSampleCount", "blockingFindingCodes", "warningCodes", "subjectiveQualityClaimed", "qualityFingerprint", "measuredAt", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "qualityRecordId": { "$ref": "#/$defs/Id" }, "projectId": { "$ref": "#/$defs/Id" }, "audioArtifactId": { "$ref": "#/$defs/Id" }, "profileId": { "$ref": "#/$defs/BoundedId" }, "profileVersion": { "$ref": "#/$defs/BoundedId" }, "validWav": { "type": "boolean" }, "nonSilent": { "type": "boolean" }, "peakDbfs": { "type": "number" }, "silenceRatio": { "type": "number", "minimum": 0, "maximum": 1 }, "clippedSampleCount": { "type": "integer", "minimum": 0 }, "blockingFindingCodes": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } }, "warningCodes": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } }, "subjectiveQualityClaimed": { "const": false }, "qualityFingerprint": { "$ref": "#/$defs/Sha256" }, "measuredAt": { "$ref": "#/$defs/Timestamp" }, "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "AuditionCacheRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "cacheRecordId", "projectId", "cacheKey", "providerId", "runtimeProfileFingerprint", "modelPackageFingerprint", "voiceProfileId", "voiceRuntimeBindingId", "voiceRuntimeBindingFingerprint", "providerVoiceId", "castAssignmentId", "castAssignmentRevision", "normalizedTextSha256", "pronunciationDictionaryFingerprint", "pronunciationPlanFingerprint", "providerControlFingerprint", "outputProfileFingerprint", "producerVersion", "audioArtifactId", "artifactSha256", "state", "lastVerifiedAt", "createdAt"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "cacheRecordId": { "$ref": "#/$defs/Id" }, "projectId": { "$ref": "#/$defs/Id" }, "cacheKey": { "$ref": "#/$defs/Sha256" }, "providerId": { "$ref": "#/$defs/BoundedId" }, "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" }, "modelPackageFingerprint": { "$ref": "#/$defs/Sha256" }, "voiceProfileId": { "$ref": "#/$defs/Id" }, "voiceRuntimeBindingId": { "$ref": "#/$defs/Id" }, "voiceRuntimeBindingFingerprint": { "$ref": "#/$defs/Sha256" }, "providerVoiceId": { "$ref": "#/$defs/BoundedId" }, "castAssignmentId": { "$ref": "#/$defs/Id" }, "castAssignmentRevision": { "type": "integer", "minimum": 1 }, "normalizedTextSha256": { "$ref": "#/$defs/Sha256" }, "pronunciationDictionaryFingerprint": { "$ref": "#/$defs/Sha256" }, "pronunciationPlanFingerprint": { "$ref": "#/$defs/Sha256" }, "providerControlFingerprint": { "$ref": "#/$defs/Sha256" }, "outputProfileFingerprint": { "$ref": "#/$defs/Sha256" }, "producerVersion": { "$ref": "#/$defs/BoundedId" }, "audioArtifactId": { "$ref": "#/$defs/Id" }, "artifactSha256": { "$ref": "#/$defs/Sha256" }, "state": { "enum": ["verified", "corrupt", "missing", "cleared"] }, "lastVerifiedAt": { "$ref": "#/$defs/Timestamp" }, "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "AuditionClip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "auditionClipId", "projectId", "auditionSessionId", "auditionScriptId", "roleId", "castAssignmentId", "castAssignmentRevision", "providerRequestId", "providerId", "providerVersion", "voiceRuntimeBindingId", "voiceRuntimeBindingFingerprint", "providerVoiceId", "providerClass", "modelId", "modelVersion", "modelPackageFingerprint", "runtimeProfileFingerprint", "normalizedTextSha256", "pronunciationPlanFingerprint", "providerControlFingerprint", "cacheKey", "cacheStatus", "cacheProof", "audioArtifact", "audioQuality", "state", "clipFingerprint", "revision", "createdAt", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "auditionClipId": { "$ref": "#/$defs/Id" }, "projectId": { "$ref": "#/$defs/Id" }, "auditionSessionId": { "$ref": "#/$defs/Id" }, "auditionScriptId": { "$ref": "#/$defs/Id" }, "roleId": { "$ref": "#/$defs/Id" }, "castAssignmentId": { "$ref": "#/$defs/Id" }, "castAssignmentRevision": { "type": "integer", "minimum": 1 }, "providerRequestId": { "$ref": "#/$defs/Id" }, "providerId": { "$ref": "#/$defs/BoundedId" }, "providerVersion": { "$ref": "#/$defs/BoundedId" }, "voiceRuntimeBindingId": { "$ref": "#/$defs/Id" }, "voiceRuntimeBindingFingerprint": { "$ref": "#/$defs/Sha256" }, "providerVoiceId": { "$ref": "#/$defs/BoundedId" }, "providerClass": { "enum": ["deterministic_fixture", "real_local"] }, "modelId": { "$ref": "#/$defs/BoundedId" }, "modelVersion": { "$ref": "#/$defs/BoundedId" }, "modelPackageFingerprint": { "$ref": "#/$defs/Sha256" }, "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" }, "normalizedTextSha256": { "$ref": "#/$defs/Sha256" }, "pronunciationPlanFingerprint": { "$ref": "#/$defs/Sha256" }, "providerControlFingerprint": { "$ref": "#/$defs/Sha256" }, "cacheKey": { "$ref": "#/$defs/Sha256" }, "cacheStatus": { "enum": ["miss", "verified_hit", "corrupt_miss"] }, "cacheProof": { "type": "object", "additionalProperties": false, "required": ["cacheRecordId", "cacheKey", "voiceRuntimeBindingId", "voiceRuntimeBindingFingerprint", "providerVoiceId", "verificationFingerprint"], "properties": { "cacheRecordId": { "$ref": "#/$defs/Id" }, "cacheKey": { "$ref": "#/$defs/Sha256" }, "voiceRuntimeBindingId": { "$ref": "#/$defs/Id" }, "voiceRuntimeBindingFingerprint": { "$ref": "#/$defs/Sha256" }, "providerVoiceId": { "$ref": "#/$defs/BoundedId" }, "verificationFingerprint": { "$ref": "#/$defs/Sha256" } } }, "audioArtifact": { "$ref": "#/$defs/AudioArtifactRecord" }, "audioQuality": { "$ref": "#/$defs/AudioQualityRecord" }, "state": { "enum": ["reviewable", "approved", "rejected", "invalidated"] }, "clipFingerprint": { "$ref": "#/$defs/Sha256" }, "revision": { "type": "integer", "minimum": 1 }, "createdAt": { "$ref": "#/$defs/Timestamp" }, "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "AuditionGateEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "gateId", "roleId", "auditionSessionId", "auditionClipId", "auditionClipRevision", "approvedCastSnapshotFingerprint", "castAssignmentFingerprint", "rightsRecordFingerprint", "runtimeProfileFingerprint", "modelVerificationFingerprint", "pronunciationDictionaryFingerprint", "pronunciationDependencyFingerprint", "audioQualityFingerprint", "evidenceFingerprint"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/Id" }, "gateId": { "enum": ["per_role_audition_review", "narrator_audition_review", "character_audition_review", "pronunciation_review", "voice_readiness_review"] }, "roleId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "auditionSessionId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "auditionClipId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "auditionClipRevision": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }] }, "approvedCastSnapshotFingerprint": { "$ref": "#/$defs/Sha256" }, "castAssignmentFingerprint": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Sha256" }] }, "rightsRecordFingerprint": { "$ref": "#/$defs/Sha256" }, "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" }, "modelVerificationFingerprint": { "$ref": "#/$defs/Sha256" }, "pronunciationDictionaryFingerprint": { "$ref": "#/$defs/Sha256" }, "pronunciationDependencyFingerprint": { "$ref": "#/$defs/Sha256" }, "audioQualityFingerprint": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Sha256" }] }, "evidenceFingerprint": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "AuditionReviewDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "decisionId", "reviewId", "projectId", "gateId", "roleId", "decision", "actor", "expectedReviewRevision", "evidenceFingerprint", "rationale", "decidedAt", "immutable", "supersedesDecisionId", "provenance"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "decisionId": { "$ref": "#/$defs/Id" }, "reviewId": { "$ref": "#/$defs/Id" }, "projectId": { "$ref": "#/$defs/Id" }, "gateId": { "enum": ["per_role_audition_review", "narrator_audition_review", "character_audition_review", "pronunciation_review", "voice_readiness_review"] }, "roleId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "decision": { "enum": ["approved", "changes_requested", "rejected", "invalidated"] }, "actor": { "type": "object", "additionalProperties": false, "required": ["classification", "actorId"], "properties": { "classification": { "enum": ["human", "system"] }, "actorId": { "$ref": "#/$defs/Id" } } }, "expectedReviewRevision": { "type": "integer", "minimum": 1 }, "evidenceFingerprint": { "$ref": "#/$defs/Sha256" }, "rationale": { "type": "string", "minLength": 1, "maxLength": 4000 }, "decidedAt": { "$ref": "#/$defs/Timestamp" }, "immutable": { "const": true }, "supersedesDecisionId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "AuditionReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "reviewId", "projectId", "gateId", "roleId", "state", "revision", "prerequisiteGateIds", "evidence", "blockerCodes", "warningCodes", "latestDecision", "updatedAt"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "reviewId": { "$ref": "#/$defs/Id" }, "projectId": { "$ref": "#/$defs/Id" }, "gateId": { "enum": ["per_role_audition_review", "narrator_audition_review", "character_audition_review", "pronunciation_review", "voice_readiness_review"] }, "roleId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "state": { "enum": ["blocked", "pending", "approved", "changes_requested", "rejected", "invalidated"] }, "revision": { "type": "integer", "minimum": 1 }, "prerequisiteGateIds": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "enum": ["per_role_audition_review", "narrator_audition_review", "character_audition_review", "pronunciation_review", "voice_readiness_review"] } }, "evidence": { "$ref": "#/$defs/AuditionGateEvidence" }, "blockerCodes": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } }, "warningCodes": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } }, "latestDecision": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/AuditionReviewDecision" }] }, "updatedAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "VoiceReadinessSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "snapshotId", "projectId", "revision", "approvedCastSnapshotId", "approvedCastSnapshotRevision", "approvedCastSnapshotFingerprint", "runtimeProfileFingerprint", "modelVerificationFingerprint", "rightsEvidenceFingerprint", "narratorAuditionDecisionIds", "characterAuditionDecisionIds", "pronunciationReviewDecisionId", "requiredRoleCount", "approvedRoleCount", "blockingFindingCodes", "snapshotFingerprint", "reviewEligible", "authorizes", "authorizesFullBookRendering", "createdAt", "immutable"],
+      "properties": {
+        "contractVersion": { "$ref": "#/$defs/ContractVersion" }, "snapshotId": { "$ref": "#/$defs/Id" }, "projectId": { "$ref": "#/$defs/Id" }, "revision": { "type": "integer", "minimum": 1 }, "approvedCastSnapshotId": { "$ref": "#/$defs/Id" }, "approvedCastSnapshotRevision": { "type": "integer", "minimum": 1 }, "approvedCastSnapshotFingerprint": { "$ref": "#/$defs/Sha256" }, "runtimeProfileFingerprint": { "$ref": "#/$defs/Sha256" }, "modelVerificationFingerprint": { "$ref": "#/$defs/Sha256" }, "rightsEvidenceFingerprint": { "$ref": "#/$defs/Sha256" }, "narratorAuditionDecisionIds": { "type": "array", "minItems": 1, "maxItems": 300, "uniqueItems": true, "items": { "$ref": "#/$defs/Id" } }, "characterAuditionDecisionIds": { "type": "array", "maxItems": 300, "uniqueItems": true, "items": { "$ref": "#/$defs/Id" } }, "pronunciationReviewDecisionId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Id" }] }, "requiredRoleCount": { "type": "integer", "minimum": 1, "maximum": 300 }, "approvedRoleCount": { "type": "integer", "minimum": 0, "maximum": 300 }, "blockingFindingCodes": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/BoundedId" } }, "snapshotFingerprint": { "$ref": "#/$defs/Sha256" }, "reviewEligible": { "type": "boolean" }, "authorizes": { "const": "later_performance_direction_only" }, "authorizesFullBookRendering": { "const": false }, "createdAt": { "$ref": "#/$defs/Timestamp" }, "immutable": { "const": true }
+      }
+    }
+  }
+}

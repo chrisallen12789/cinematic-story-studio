@@ -81,6 +81,35 @@ and adds `voiceCastingContract.packagedE2e` for the Phase 3A result schema
 `phase-3-voice-casting-evidence.json` only to their CI-provided generated
 paths; neither file is committed.
 
+## Phase 3B exact-artifact extension
+
+The mandatory Windows gate continues to launch the exact unpacked executable
+and complete all Phase 0–3A evidence. It then uses only repository-owned
+synthetic text and the visibly fixture-only deterministic provider to verify and
+activate its virtual package, create an empty project dictionary and an approved
+entry, create role-bound sessions/scripts, produce one narrator and two
+character clips, load each clip through authenticated IPC, prove a verified
+cache hit, supersede an applicable pronunciation, and prove targeted
+invalidation plus a new artifact. It records the exact Phase 3B decisions and
+restores them after relaunch.
+
+Process evidence is extended to the managed speech worker. The service supplies
+the project-owned authenticated worker identity; the test independently
+correlates PID, ancestry, executable path/name, creation identity, runtime/
+profile/package fingerprints, and Windows Job Object ownership before accepting
+it. Service-reported runtime evidence carries the service-computed SHA-256 of the
+resolved executable after identity validation. On
+both closes, Electron, service, and every exact owned provider-worker PID must be
+absent. Ambiguous ownership fails the gate and never authorizes enumeration or
+termination by process name.
+
+The generated manifest adds only IDs, revisions, fingerprints, hashes, audio
+properties, cache/invalidation/QC/decision assertions, and exact process-exit
+evidence. It contains no script text, manuscript text, pronunciation value,
+absolute path, model/audio bytes, secret, or private license material. Hosted CI
+fixture evidence is explicitly separate from the private workstation real-
+provider integration record and is never described as natural-speech quality.
+
 ## Install and launch behavior
 
 The NSIS target is initially per-user install without elevation unless a reviewed requirement demands otherwise. It creates Start-menu entries and offers a desktop shortcut. Launch has no console window and needs no PowerShell, Python, Node, Docker, FastAPI, FFmpeg, or manual port configuration from the user.

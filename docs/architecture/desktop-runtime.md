@@ -42,7 +42,18 @@ The preload bridge accepts only discriminated request objects and returns discri
 - operation-specific authorization;
 - response/event payloads received from the service.
 
-There is no `invoke(channel: string, payload: unknown)`, raw HTTP proxy, arbitrary path reader, shell command, environment accessor, or generic credential method. Subscription functions return an unsubscribe handle; main removes listeners when a window closes. High-volume source/audio bytes do not pass through renderer IPC.
+There is no `invoke(channel: string, payload: unknown)`, raw HTTP proxy,
+arbitrary path reader, shell command, environment accessor, or generic
+credential method. Subscription functions return an unsubscribe handle; main
+removes listeners when a window closes. Source-file bytes do not pass through
+renderer IPC. A Phase 3B audition clip is the deliberate bounded exception for
+audio playback: Electron main authenticates the artifact-ID request, streams at
+most 24 MiB, and validates response type, no-store policy, expected length,
+SHA-256, and 24 kHz mono PCM16 WAV structure. Only then does the named preload
+method return a validated `ArrayBuffer`; the renderer creates and revokes a
+renderer-only Blob URL. No filesystem path, storage key, `file://` URL, bearer
+token, or generic byte/path reader crosses the bridge. See
+[Phase 3B API pagination and payload limits](phase-3b-api-pagination-and-payload-limits.md#audition-audio-and-renderer-ipc).
 
 Phase 2 analysis IPC accepts only allow-listed collection, gate, correction,
 filter, cursor, revision, and fingerprint unions. Main validates the request
@@ -59,6 +70,14 @@ cross-project identity, an over-bound page/payload, and an unexpected response
 fail closed. There is no generic casting HTTP proxy, provider invocation,
 credential method, manuscript-text projection, audio method, playback, or
 waveform channel. See [voice casting architecture](voice-casting.md).
+
+Phase 3B audition IPC has one named channel per workspace, model lifecycle,
+pronunciation, session, script, normalization, generation, clip, audio, review,
+and cache operation. Main validates active-project ownership and the bounded
+service response for each operation. Model ZIP selection remains a native-main
+capability; the renderer sends neither a path nor archive bytes. The audio
+channel described above is artifact-identity based and cannot be repurposed as
+an arbitrary file reader.
 
 For import, the renderer asks main to show a native picker with supported filters. Main opens the selected file safely, checks basic metadata, and streams it to the authenticated multipart endpoint. The service repeats authoritative validation. The renderer receives source metadata, not an authority to read the selected path.
 

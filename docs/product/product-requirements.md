@@ -110,6 +110,46 @@ The primary user is an author, producer, or audio director who wants one install
 - **PR-043** Phase 0 exposes provider health, a development-only Docker Kokoro health check, and an FFmpeg capability check. Kokoro being absent does not break project work.
 - **PR-044** Packaged builds manage required FFmpeg binaries and a future bundled local speech runtime. Docker remains a development option only.
 
+### Local speech auditions and pronunciation
+
+- **PR-045** Phase 3B authority comes only from the latest succeeded Phase 3A
+  casting run and its exact validated immutable current cast-snapshot manifest.
+  The service accepts only assignment IDs/revisions and lock state selected by
+  that manifest, exact current leaf provider/model/profile/rights evidence with
+  temporally applicable rights, and the latest eligible Narrator, Character,
+  and Complete Cast reviews with exact approved human decision provenance,
+  supersession, and required warning acknowledgements. It never combines two
+  snapshots. A newer snapshot suppresses old current projections, and a new
+  same-snapshot decision tuple invalidates dependent Phase 3B authority.
+- **PR-046** Phase 3B provides a deterministic, repository-owned, fixture-only
+  PCM adapter for governed lifecycle evidence and a managed real Kokoro
+  component verification command. Kokoro is unavailable in the governed
+  product until a Phase 3A voice profile, snapshot-selected assignment, and
+  rights record explicitly bind `af_heart` and the separate legal/rights review
+  is complete; model installation, verification, and activation do not grant
+  that authority.
+- **PR-047** Users can create scoped append-only pronunciation evidence, inspect
+  normalization and effective pronunciation plans, create bounded role-bound
+  audition sessions/scripts, run a durable generation job, load a verified
+  private 24 kHz mono PCM16 audition through authenticated named IPC, and
+  observe exact cache, provenance, machine-QC, cancellation, retry, and restart
+  evidence. No filesystem path or generic byte reader crosses renderer IPC.
+- **PR-048** Per-role, Narrator, Character, Pronunciation, and Voice Readiness
+  reviews use exact immutable evidence and append-only decisions. Only humans
+  approve, request changes, or reject; only the system invalidates. Assignment,
+  rights, model/runtime, applicable pronunciation, cache, artifact, cast-
+  snapshot, or same-snapshot Phase 3A decision drift invalidates only dependent
+  current evidence and never restores approval through regeneration or reversion.
+- **PR-049** Phase 3B APIs and desktop IPC are authenticated, project-scoped,
+  body- and response-bounded, and paginated. The Auditions workspace pages roles
+  with `roleCursor`/`roleLimit`, binds cursors to the exact service-defined
+  project, snapshot, role, dictionary, eligibility-count, and collection-
+  generation identity, and returns metadata only; one validated audition byte
+  payload is the explicit bounded playback exception. Exact cast-assignment and
+  rights authority is validated separately before any audition action or current
+  session/generation/review evidence is authorized; metadata may remain visible
+  when that authority is stale.
+
 ## Windows experience
 
 - **PR-050** A packaged user installs through a normal Windows installer and launches from Start menu and, when selected, a desktop shortcut.
@@ -122,7 +162,12 @@ The primary user is an author, producer, or audio director who wants one install
 
 - **Security and privacy:** loopback-only authenticated service; least-privilege renderer; validated paths and archives; safe subprocess argument arrays; no source text, secrets, or audio in telemetry or logs; dependency and secret scanning.
 - **Reliability:** transactional writes, foreign keys, migration backups, atomic artifact publication, durable jobs, bounded retries, and actionable recovery.
-- **Performance:** UI actions remain responsive while jobs run. Lists are paginated and large story/audio payloads are streamed rather than copied through renderer IPC.
+- **Performance:** UI actions remain responsive while jobs run. Lists are
+  paginated, and large or unbounded story/audio payloads are not copied through
+  renderer IPC. Phase 3B playback is the bounded exception: Electron main may
+  return one authenticated, integrity-validated audition as an `ArrayBuffer` of
+  at most 24 MiB through the named audio channel; larger future audio requires a
+  reviewed streaming design.
 - **Accessibility:** all Phase 0 workflows are keyboard operable, have visible focus, expose semantic status/progress, and do not rely on color alone.
 - **Reproducibility:** stable ordering, schema/agent/provider versions, hashes, configuration, locale, timestamps separated from content identity, and seeds where supported.
 - **Compatibility:** supported production platform is maintained 64-bit Windows. Development may also run on other platforms without changing Windows guarantees.
@@ -173,6 +218,26 @@ export, signing, updates, releases, marketplaces, Phase 3B, or Phase 4. A
 rights state records evidence under a versioned policy; it is not legal
 certainty. A compatibility result explains declared metadata; it is not
 artistic correctness.
+
+## Phase 3B release boundary
+
+Phase 3B adds contract `1.0.0`, schema-v5 managed runtime/model/pronunciation/
+audition/cache/QC/review persistence, exact Phase 3A authority reconstruction,
+the deterministic fixture provider, private component-only Kokoro verification,
+bounded local audition generation and playback, pronunciation and normalization
+review, five append-only approval gates, targeted invalidation, the Auditions
+workspace, and exact development/packaged lifecycle evidence. Exact behavior,
+provider availability, and claim limits are in
+[Phase 3B local speech auditions and pronunciation](phase-3b-local-speech-auditions.md).
+
+Phase 3B does **not** add a governed Kokoro voice, production-cleared speech,
+full-book or chapter synthesis, performance direction, ambience, Foley, music,
+mixing, mastering, export, cloud speech, credentials, voice cloning, model
+training, installer/public release, signing, updates, Phase 3C, or Phase 4. The
+fixture establishes lifecycle and governance only. The private real-provider
+command is unbound component evidence and cannot authorize product use,
+intelligibility, naturalness, artistic suitability, consent, likeness,
+commercial clearance, or production readiness.
 
 ## Acceptance and traceability
 

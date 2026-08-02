@@ -310,7 +310,11 @@ def test_legacy_runtime_profiles_reopen_append_only_and_idempotently(
         current_by_provider = {
             snapshot["providerId"]: snapshot
             for snapshot in first_snapshots
-            if snapshot["profileVersion"] == audition_repository_module._RUNTIME_PROFILE_VERSION
+            if snapshot["id"]
+            in {
+                audition_repository_module._FIXTURE_PROFILE_RECORD_ID,
+                audition_repository_module._KOKORO_PROFILE_RECORD_ID,
+            }
         }
         assert current_by_provider[FIXTURE_PROVIDER_ID] == {
             "active": True,
@@ -328,7 +332,7 @@ def test_legacy_runtime_profiles_reopen_append_only_and_idempotently(
             "fingerprint": audition_repository_module._KOKORO_PROFILE_FINGERPRINT,
             "id": audition_repository_module._KOKORO_PROFILE_RECORD_ID,
             "profileId": audition_repository_module._KOKORO_PROFILE_ID,
-            "profileVersion": audition_repository_module._RUNTIME_PROFILE_VERSION,
+            "profileVersion": audition_repository_module._KOKORO_RUNTIME_PROFILE_VERSION,
             "providerId": KOKORO_PROVIDER_ID,
             "startupTimeoutMs": 30_000,
         }
@@ -337,6 +341,12 @@ def test_legacy_runtime_profiles_reopen_append_only_and_idempotently(
         ) == (
             audition_repository_module._FIXTURE_PROFILE_RECORD_ID,
             audition_repository_module._FIXTURE_PROFILE_FINGERPRINT,
+        )
+        assert audition_repository_module._current_runtime_profile_identity(
+            KOKORO_PROVIDER_ID
+        ) == (
+            audition_repository_module._KOKORO_PROFILE_RECORD_ID,
+            audition_repository_module._KOKORO_PROFILE_FINGERPRINT,
         )
 
         created = first_client.post(

@@ -2509,8 +2509,7 @@ def test_catalog_roles_candidates_pagination_and_mutation_payload_limits(
         limit=5,
         identity_key="voiceProfileId",
     )
-    assert catalog_total == 14
-    assert len(catalog_items) == 14
+    assert catalog_total == len(catalog_items) == 15
 
     roles_url = f"/api/v1/projects/{project_id}/casting-runs/{run['castingRunId']}/roles"
     role_items, role_total = _collect_pages(

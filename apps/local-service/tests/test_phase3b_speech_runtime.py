@@ -279,6 +279,67 @@ def test_startup_deadline_preserves_deadline_exit_reason(
     assert runtime.is_running is False
 
 
+def test_startup_deadline_reaps_reader_before_descriptor_reuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = ManagedSpeechRuntime(_runtime_config(max_retries=0))
+    original_reader_loop = speech_runtime._reader_loop
+    reader_reached_eof = threading.Event()
+    release_reader = threading.Event()
+    join_called = threading.Event()
+    captured_readers: list[threading.Thread] = []
+
+    def delayed_reader_loop(
+        stream: object,
+        messages: object,
+    ) -> None:
+        original_reader_loop(stream, messages)  # type: ignore[arg-type]
+        reader_reached_eof.set()
+        release_reader.wait(timeout=2.0)
+
+    def expire_startup(_timeout_seconds: float) -> bytes:
+        assert runtime._reader is not None
+        reader = runtime._reader
+        captured_readers.append(reader)
+        original_join = reader.join
+
+        def release_then_join(timeout: float | None = None) -> None:
+            join_called.set()
+            release_reader.set()
+            original_join(timeout=timeout)
+
+        monkeypatch.setattr(reader, "join", release_then_join)
+        raise SpeechRuntimeError(
+            "SPEECH_WORKER_DEADLINE_EXCEEDED",
+            "The speech worker did not respond before its deadline.",
+            retryable=True,
+        )
+
+    monkeypatch.setattr(speech_runtime, "_reader_loop", delayed_reader_loop)
+    monkeypatch.setattr(runtime, "_await_frame", expire_startup)
+    try:
+        with pytest.raises(SpeechRuntimeError) as error:
+            runtime.start()
+        assert error.value.code == "SPEECH_WORKER_DEADLINE_EXCEEDED"
+        assert reader_reached_eof.wait(timeout=1.0)
+        assert len(captured_readers) == 1
+        assert join_called.is_set()
+        assert captured_readers[0].is_alive() is False
+
+        monkeypatch.setattr(speech_runtime, "_reader_loop", original_reader_loop)
+        successor = ManagedSpeechRuntime(_runtime_config(max_retries=0))
+        identity = successor.start()
+        successor_exit = successor.stop(reason="clean")
+        assert identity.launcher_pid > 0
+        assert successor_exit is not None
+        assert successor_exit.confirmed_exited is True
+        assert successor_exit.owned_processes_confirmed_exited is True
+    finally:
+        release_reader.set()
+        for reader in captured_readers:
+            reader.join(timeout=1.0)
+
+
 def test_shutdown_rejects_forged_authenticated_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

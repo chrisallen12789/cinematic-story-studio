@@ -550,8 +550,7 @@ class ManagedSpeechRuntime:
             )
             self._last_exit = evidence
             if confirmed_exited and owned_processes_exited:
-                self._close_process_streams(process)
-                self._clear_process_state()
+                self._finalize_exited_process(process)
             return evidence
 
     def _observe_natural_idle_exit(
@@ -617,8 +616,7 @@ class ManagedSpeechRuntime:
         )
         self._last_exit = evidence
         if confirmed_exited and owned_processes_exited:
-            self._close_process_streams(process)
-            self._clear_process_state()
+            self._finalize_exited_process(process)
         return evidence
 
     def close(self) -> None:
@@ -1106,9 +1104,22 @@ class ManagedSpeechRuntime:
         )
         self._last_exit = evidence
         if evidence.confirmed_exited and evidence.owned_processes_confirmed_exited:
-            self._close_process_streams(process)
-            self._clear_process_state()
+            self._finalize_exited_process(process)
         return evidence
+
+    def _finalize_exited_process(self, process: subprocess.Popen[bytes]) -> bool:
+        """Release an exited worker only after its stdout reader reaches EOF."""
+
+        reader = self._reader
+        if reader is not None:
+            if reader is threading.current_thread():
+                return False
+            reader.join(timeout=_PROCESS_EXIT_GRACE_SECONDS)
+            if reader.is_alive():
+                return False
+        self._close_process_streams(process)
+        self._clear_process_state()
+        return True
 
     @staticmethod
     def _close_process_streams(process: subprocess.Popen[bytes]) -> None:

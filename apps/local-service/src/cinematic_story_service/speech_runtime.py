@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 from uuid import UUID, uuid4
@@ -148,6 +148,23 @@ class SpeechRuntimeExitEvidence:
 
 
 _ReaderItem = bytes | BaseException | None
+
+
+def _reader_finalization_incomplete(
+    evidence: SpeechRuntimeExitEvidence,
+) -> SpeechRuntimeExitEvidence:
+    reason = (
+        evidence.reason
+        if evidence.reason in {"deadline", "protocol_error", "process_error"}
+        else "process_error"
+    )
+    return replace(
+        evidence,
+        reason=reason,
+        graceful_shutdown_confirmed=False,
+        confirmed_exited=False,
+        owned_processes_confirmed_exited=False,
+    )
 
 
 def _network_attempt_count(payload: dict[str, Any]) -> int:
@@ -548,9 +565,11 @@ class ManagedSpeechRuntime:
                 owned_processes_confirmed_exited=owned_processes_exited,
                 denied_network_attempt_count=denied_network_attempt_count,
             )
+            if confirmed_exited and owned_processes_exited and not self._finalize_exited_process(
+                process
+            ):
+                evidence = _reader_finalization_incomplete(evidence)
             self._last_exit = evidence
-            if confirmed_exited and owned_processes_exited:
-                self._finalize_exited_process(process)
             return evidence
 
     def _observe_natural_idle_exit(
@@ -614,9 +633,11 @@ class ManagedSpeechRuntime:
             owned_processes_confirmed_exited=owned_processes_exited,
             denied_network_attempt_count=denied_network_attempt_count,
         )
+        if confirmed_exited and owned_processes_exited and not self._finalize_exited_process(
+            process
+        ):
+            evidence = _reader_finalization_incomplete(evidence)
         self._last_exit = evidence
-        if confirmed_exited and owned_processes_exited:
-            self._finalize_exited_process(process)
         return evidence
 
     def close(self) -> None:
@@ -1102,9 +1123,13 @@ class ManagedSpeechRuntime:
             owned_processes_confirmed_exited=owned_processes_exited,
             denied_network_attempt_count=self._denied_network_attempt_count or 0,
         )
+        if (
+            evidence.confirmed_exited
+            and evidence.owned_processes_confirmed_exited
+            and not self._finalize_exited_process(process)
+        ):
+            evidence = _reader_finalization_incomplete(evidence)
         self._last_exit = evidence
-        if evidence.confirmed_exited and evidence.owned_processes_confirmed_exited:
-            self._finalize_exited_process(process)
         return evidence
 
     def _finalize_exited_process(self, process: subprocess.Popen[bytes]) -> bool:

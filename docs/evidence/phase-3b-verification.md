@@ -2,12 +2,17 @@
 
 ## Evidence policy and current status
 
-This is the in-progress Phase 3B evidence record. It records completed local
-closure checks and deterministic source/fixture facts against implementation
-commit `8e6ff7c8837c322ff2f62dacf0d97eb25eaaf71c`. The draft pull-request head,
-GitHub Actions runs, and exact hosted artifact remain pending and are not
-implicit passes. Prior private-provider values are never carried forward when
-the retained JSON does not match its recorded size/hash/process tuple.
+This is the in-progress Phase 3B evidence record. It records completed final
+local closure checks and deterministic source/fixture facts against local
+implementation checkpoint `da1a201ff2f204f7c87ee6efefd09fd85e1d97a5`, Git
+tree `99994aa3d490d0cc578bc0a9f2c4119599baee01`. Draft pull request #6 exists,
+but its remote head is still the older `b40ff3d9998932f3df2f30cf4e624df1ccc4b04d`;
+the local checkpoint has not yet been pushed. GitHub Actions runs and the exact
+hosted artifact for the eventual final pushed head therefore remain pending
+and are not implicit passes. The successful `b40ff3d` hosted checkpoint is
+recorded below only as superseded evidence. Prior private-provider values are
+never carried forward when the retained JSON does not match its recorded
+size/hash/process tuple.
 
 Local, hosted-CI, and artifact evidence are separate:
 
@@ -42,15 +47,15 @@ never committed.
 | Branch | `codex/phase-3b-local-speech-auditions` |
 | Verified base | `main` at merge commit `e32f315adf2f612d4ac967a732e74947f96b8238` |
 | Starting branch point | `e32f315adf2f612d4ac967a732e74947f96b8238`; this is the verified base, not a Phase 3B implementation commit |
-| Phase 3B implementation and local artifact source commit | `8e6ff7c8837c322ff2f62dacf0d97eb25eaaf71c` |
-| Draft pull request | Pending; required title is `Phase 3B: add managed local speech auditions and pronunciation` |
+| Phase 3B final local implementation checkpoint | Commit `da1a201ff2f204f7c87ee6efefd09fd85e1d97a5`; tree `99994aa3d490d0cc578bc0a9f2c4119599baee01` |
+| Draft pull request | [#6](https://github.com/chrisallen12789/cinematic-story-studio/pull/6), `Phase 3B: add managed local speech auditions and pronunciation`; open, draft, and unmerged; remote head `b40ff3d9998932f3df2f30cf4e624df1ccc4b04d`, with local `da1a201` not yet pushed |
 | Application version | `0.1.0` |
 | Database schema | Version 5, direct upgrade from the exact issued version 4 |
-| Verification date | 2026-08-01 UTC |
-| Canonical Windows CI run/job | Pending |
-| Pull-request Security safeguards run/job | Pending |
-| Pull-request Dependency review run/job | Pending |
-| Artifact ID/size/digest/expiry | Pending |
+| Verification date | 2026-08-02 UTC |
+| Canonical Windows CI run/job for final pushed head | Pending push and GitHub execution |
+| Pull-request Security safeguards run/job for final pushed head | Pending push and GitHub execution |
+| Pull-request Dependency review run/job for final pushed head | Pending push and GitHub execution |
+| Final-head artifact ID/size/digest/expiry | Pending push and GitHub execution |
 
 The Phase 3B pull request must remain draft, open, and unmerged. Phase 3C,
 Phase 4, full-book rendering, mixing, mastering, export, release, signing, and
@@ -100,38 +105,20 @@ The current workstation tools are Node.js `24.14.0`, pnpm `11.9.0`, and the
 service environment's supported CPython `3.12.10`. The current
 `apps/local-service/requirements.lock` is 61,104 bytes with SHA-256
 `8e4a886fa63e86e4a1f8512a9b448a01fbaa16efa8f7f2eddd471893c4ddccc0`.
-The CI-equivalent pinned-compiler regeneration on 2026-08-01 reproduced those
+The CI-equivalent pinned-compiler regeneration on 2026-08-02 reproduced those
 exact bytes. A fresh `--require-hashes` install, editable
 `--no-build-isolation --no-deps` service install, and `pip check` completed with
 `No broken requirements found`.
 
-These are completed focused checks, not an additive full-suite total. Some
-tests are repeated across focused files.
-
-| Local check | Exact current result |
-| --- | --- |
-| Provider and managed-runtime aggregate | 27 passed, 2 skipped, 1 warning in 53.41 seconds |
-| Real-provider product-path refusal without a governed voice binding | 1 passed, 0 skipped, 1 warning in 30.15 seconds |
-| Phase 3B repository and authenticated API focus | 11 passed, 1 symlink-permission skip, 1 warning in 12.59 seconds |
-| Review-integrity regression | 1 passed, 0 skipped, 1 warning in 53.52 seconds |
-| Invalidation-reconciliation regression | 1 passed, 0 skipped, 1 warning in 71.56 seconds |
-| Full Phase 3B workflow file | 3 passed, 0 skipped, 1 warning in 166.99 seconds |
-| Atomic startup-reconciliation case | 1 passed, 0 skipped, 1 warning in 1.19 seconds |
-| Atomic cancellation/publication-boundary case | 1 passed, 0 skipped, 1 warning in 59.03 seconds |
-| Phase 3B scale file | 1 passed, 0 skipped, 1 warning in 356.97 seconds of Pytest-reported elapsed time; 367.645 seconds outer command wall time |
-| Python lint/type focus | Ruff formatting/lint passed on the exercised Phase 3B modules; configured strict mypy passed all 32 service source files |
-| Current documentation policy/link checks | Passed through the repository lint gate after the evidence closure edit |
-
-The warning in these Pytest invocations is the same upstream
+The exact frozen-tree closure results are consolidated below. Focused suites
+repeat tests in the aggregate and are not additive totals. The warning in the
+Pytest invocations is the same upstream
 `StarletteDeprecationWarning` for the Starlette TestClient/current `httpx`
 compatibility path; a focused rerun repeating it is not an additional finding.
-The two provider/runtime skips require a completed PyInstaller build and an
-exact `CINEMATIC_STORY_TEST_FROZEN_SERVICE` path. They cover frozen-archive
-license/metadata inventory and dispatch through the exact frozen product
-worker. The repository/API skip is the explicit Windows account symlink-
-permission case; link/reparse rejection remains covered by the executable
-cases the account can create. These skips must be rerun or remain explicitly
-reported after the build.
+The four aggregate and focused-Phase-3B skips are two explicit Windows account
+symlink-permission cases plus two tests requiring an exact
+`CINEMATIC_STORY_TEST_FROZEN_SERVICE` path. The latter tests were rerun against
+the rebuilt frozen service in the separate passing frozen-service gate.
 
 The workflow regressions exercised current Phase 0-3A prerequisites, corrected
 Phase 2 evidence reconstruction, scoped pronunciation, durable generation,
@@ -150,19 +137,21 @@ file and final aggregate suite passed in the final local gates below.
 | Locked parser/schema/fixture/build-evidence checks | 54 passed, 0 skipped, 0 failed |
 | `pnpm lint` | Passed, including tracked repository scan and diff safeguards |
 | `pnpm typecheck` | Passed; strict mypy covered 32 service source files and both TypeScript projects passed |
-| `pnpm test` | Passed: 61 Node tests; 485 backend passed, 4 skipped, 1 warning; 19 desktop files with 292 tests passed |
-| Focused Phase 2 | 90 passed, 0 skipped, 1 warning in 457.17 seconds |
-| Focused Phase 3A | 64 passed, 0 skipped, 1 warning in 444.57 seconds |
-| Focused Phase 3B | 195 passed, 4 skipped, 1 warning in 1,718.53 seconds |
-| Development Electron E2E | 1 passed in 6.8 minutes |
-| `pnpm build` | Passed; exact unpacked application and staged one-file service produced |
-| Frozen-service runtime checks against the exact local build | 3 passed, 29 deselected, 1 warning in 7.01 seconds |
-| Locally packaged Electron E2E | 1 passed in 9.1 minutes against the exact local unpacked executable |
-| Tracked/staged/private-content and clean-tree gates | Passed at final closure: staged scan before the final commit, then tracked/private-content scan and clean-tree verification at the final head |
+| `pnpm test` | Passed: 61 Node tests; 485 backend passed, 4 skipped, 1 warning in 3,026.46 seconds; 19 desktop files passed with 301 of 301 tests |
+| Focused Phase 2 | 90 passed, 0 skipped, 1 warning in 546.00 seconds |
+| Focused Phase 3A | 64 passed, 0 skipped, 1 warning in 513.20 seconds |
+| Focused Phase 3B | 195 passed, 4 skipped, 1 warning in 1,975.92 seconds |
+| Installed FFmpeg capability, reported separately | FFmpeg `8.1.2`; 1 passed, 0 skipped, 1 warning in 0.69 seconds |
+| Development Electron E2E | 1 passed in 7.7 minutes; no relevant process remained afterward |
+| `pnpm build` | Passed; exact unpacked application and staged one-file service produced from `da1a201` |
+| Frozen-service runtime checks against the exact rebuilt local service | 3 passed, 29 deselected, 1 warning in 6.39 seconds |
+| Locally packaged Electron E2E | 1 passed in 10.1 minutes against the exact rebuilt local unpacked executable; schema-7 result completed `2026-08-02T07:47:55.009Z` |
+| Security and repository closure at `da1a201` | Passed: 411 tracked files, no tracked/private-content finding, no Gitleaks finding, clean index/worktree, and no corrupt reachable Git object; 16 preserved dangling blobs were reported as recovery remnants |
+| This evidence-only documentation edit | Must receive its own diff, link/policy, private-content, and staged checks before commit; it is not retroactively included in the clean `da1a201` tree proof |
 
-The FFmpeg executable capability test must be reported separately at closure.
-Its local availability does not change a hosted backend count if the hosted
-runner skips it.
+The installed FFmpeg executable capability test passed locally and is reported
+separately above. Its local availability does not change a hosted backend count
+when a hosted runner skips it.
 
 ## Private real-provider functional verification
 
@@ -170,11 +159,12 @@ The real-provider evidence is private local, component-only evidence, not a
 committed fixture, hosted-CI evidence, or product-path audition. Its exact
 classification is `component_only_unbound_real_provider_verification`. Both
 the exact model package and generated WAV remain under ignored local storage;
-only placeholder files in those roots may be tracked. The closure command
-completed at `2026-08-01T23:06:08.512Z`; its exact ignored run directory is
-`local-renders/phase3b-real-provider/run-20260801T230608512Z-e0515ec59c6940a0a87c26afad488163`.
+only placeholder files in those roots may be tracked. The closure result has
+test timestamp `2026-08-02T07:31:21.979Z`; its exact ignored run directory is
+`local-renders/phase3b-real-provider/run-20260802T073121979Z-f7c166b30dec4d3ea8c4ced68a3c5f3a`.
 
-The fresh rerun must use the committed bounded component-verification command:
+The fresh closure rerun used the committed bounded component-verification
+command:
 
 ```text
 pnpm service:python apps/local-service/scripts/verify_real_speech_provider.py --acknowledge-restricted-local-use
@@ -229,15 +219,16 @@ clearance.
 | Governed Phase 3A binding | `componentOnlyVerification=true`; `governedPhase3aVoiceProfileBound=false`; `governedRightsRecordBound=false`; no governed voice-profile, cast-assignment, or rights-record IDs exist in this evidence |
 | Restricted-use acknowledgement scope | `restrictedLocalUseAcknowledged=true`; command-only acknowledgement is not a voice-rights, consent, or commercial-use approval |
 | Synthetic input/request/dictionary/plan/configuration fingerprints | Input text SHA-256 `1ed323899698425fd1c3f3010a7ab35cb0be06137592371a7400b6399891ffff`; request `b7aac434310ec21d16a980ecc606ecbfe9953b62221529d77542e809a86687e7`; dictionary `2f6a343c97f1a2097377b30f86ee2e24d9f6cb6fa24a99680aa8e4a02320c670`; plan `1fc1a4595ad0a28f6b2a91d9b4317a20fc8828e85044a2a7e59c9e3ffffef883`; provider configuration `44f334dd52bf1b19006baccb85e65d019f0ecd4ef7cf5a53d9a77161cc545ec8` |
-| Private evidence JSON bytes / SHA-256 | 5,098 / `d5764adb87324edea0b5351575b95e002afac65eb1489236071159339474ffcf` |
+| Private evidence JSON bytes / SHA-256 | 5,098 / `9ee3ac590362d74927cc5b5ed779970e5e69a1b396bd6c718a4f38e329efdb13` |
 | WAV bytes / SHA-256 / format / duration | 109,244 / `66fb2b9f137e237c805506bed32221db55ab96477db72cbd2acc54180baf6153`; 24 kHz, mono, PCM16, 54,600 frames, 2.275 seconds |
 | Signal, silence edges, and QC findings/fingerprint | Peak -3.386244 dBFS; RMS -24.385807 dBFS; 34,453 non-silent frames; 326.166667 ms leading and 397.541667 ms trailing silence; no blocking/warning codes; QC `4b742fb0ba45947fd0e7268ab2650fe2058175953a7909ff171714dd5ed38c96` |
+| Human listening | Not performed; signal checks do not establish intelligibility, naturalness, artistic fit, or production fitness |
 
 ### Managed worker ownership and shutdown
 
 | Field | Closure value |
 | --- | --- |
-| Worker / launcher / owner / parent PIDs | Worker `19296`; launcher/parent `16040`; owner `7692` |
+| Worker / launcher / owner / parent PIDs | Worker `11320`; launcher/parent `18952`; owner `6800` |
 | Executable identity and service-computed SHA-256 | `python.exe`; 274,424 bytes; `0b471133e110cfb53a061cad528ce8e517d7b9ac41a0a396c39ad795a487fc14` |
 | Runtime protocol / Job Object / authenticated ownership | `1.0.0`; Job Object assigned; authenticated ownership true |
 | Python socket-denial count | 0; network classification `offline-python-socket-denied`; network access was not permitted |
@@ -282,9 +273,9 @@ content only:
 
 | E2E layer | Current result |
 | --- | --- |
-| Development Electron E2E | Passed, 1 test in 6.8 minutes |
-| Locally packaged E2E against the local unpacked build | Passed, 1 test in 9.1 minutes; schema-7 result completed `2026-08-01T23:16:30.850Z` |
-| Exact-CI-artifact packaged E2E | Pending GitHub run |
+| Development Electron E2E | Passed, 1 test in 7.7 minutes |
+| Locally packaged E2E against the rebuilt local unpacked build | Passed, 1 test in 10.1 minutes; schema-7 result completed `2026-08-02T07:47:55.009Z` |
+| Exact-CI-artifact packaged E2E for the final pushed head | Pending GitHub execution |
 
 No E2E layer is marked passed until its exact invocation completes.
 
@@ -312,6 +303,20 @@ endpoints; it does not claim a packet capture or OS outbound firewall. It never
 performs a name-wildcard endpoint query and never reads unrelated process
 content.
 
+An intermediate pre-`da1a201` local packaged run failed closed with
+`PROCESS_INVENTORY_AMBIGUOUS_IDENTITY`; its exact failing candidate row was not
+retained, so this record does not claim a definitive root cause for that run.
+The `da1a201` fix addresses a newly observed child whose executable path is
+transiently null without ever treating that null identity as owned. Only the
+reason-coded `NEW_CHILD_PATH_UNAVAILABLE` case receives bounded confirmation,
+at 100 ms intervals for at most 5 seconds. Adoption still requires an unchanged
+PID, parent PID, executable name, creation identity, and the exact expected
+packaged executable path. A predating process, wrong parent/path, multiple
+candidates, changing or disappearing identity, query failure, or timeout fails
+closed. Eight focused regressions cover confirmation, disappearance/change,
+wrong path, multiple candidates, parent change, slow-query/deadline behavior,
+timeout, and the prohibition on retrying chronology failures.
+
 After each close, the gate must prove every exact owned Electron, service, and
 provider-worker PID is gone, with `forcedPids=[]`, `remainingPids=[]`,
 `unrelatedProcessesInspected=false`, and
@@ -321,14 +326,20 @@ by process name. The `unrelatedProcessesInspected` field excludes the required
 prelaunch relevant-name inventory, which records only bounded identity metadata;
 it means that no non-owned PID is adopted or queried for endpoints or process
 content. The local packaged run began from empty relevant-name baselines on both
-launches. Launch 1 owned PIDs `6400,6488,7068,9036,10212,12852,12928,15408,18520`;
-launch 2 owned PIDs `3984,6156,9168,12508,15560,17984,18068,18932`. Both launch
+launches. Launch 1 owned PIDs
+`3192,5408,7856,10232,12076,12080,13156,15584,16136,18896`; launch 2 owned PIDs
+`1316,3232,4924,7548,7892,8568,9004,17548`. Both launch
 proofs have `graceful=true`, `forcedPids=[]`, and `remainingPids=[]`; every one
-of the 17 exact PIDs was independently absent after the test. Provider runtime
-exits were clean with exact worker/parent pairs `12928/6488` and `17984/15560`,
-authenticated shutdown acknowledgement, Job Object assignment, zero denied
-Python network attempts, and confirmed owned-tree exit. Exact CI PIDs remain
-pending GitHub execution.
+of the 18 exact PIDs was independently absent after the test, with
+`unrelatedProcessesInspected=false` and `unrelatedProcessesTerminated=false`.
+Provider runtime `4eaf7c22-9ab0-41bc-9482-8bf85882b257` exited cleanly with
+worker/parent `15584/7856` at `2026-08-02T07:46:40.387Z`; runtime
+`701aaf0d-fb72-475e-8b9e-6c1855025698` exited cleanly with worker/parent
+`7548/7892` at `2026-08-02T07:47:51.431Z`. Both had authenticated handshake and
+shutdown acknowledgement, graceful exit code 0, Job Object assignment, zero
+denied Python network attempts, and confirmed owned-tree exit. Exact-owned-PID
+TCP observation found no non-loopback endpoint. Exact CI PIDs for the final
+pushed head remain pending GitHub execution.
 
 ## Build-evidence and artifact semantics
 
@@ -368,25 +379,34 @@ not claims about future GitHub-produced bytes:
 
 | Local artifact field | Exact value |
 | --- | --- |
-| Application | 225,613,824 bytes; SHA-256 `5035d639bdf1a3d33f7e346c64ee87a24f1c18c8acf5ded035df576779883146` |
-| Staged service | 51,905,646 bytes; SHA-256 `a16f5401e9f0fe873225984965f9c3d7f7db9f44082b4f68e9536ee70a09be62` |
-| Embedded service | 51,905,646 bytes; SHA-256 `a16f5401e9f0fe873225984965f9c3d7f7db9f44082b4f68e9536ee70a09be62` |
+| Application | 225,613,824 bytes; SHA-256 `b4aa3910b820baff6c616d52db1617eb1dbf5a42aef7b17d7029af0a4672f884` |
+| Staged service | 51,904,751 bytes; SHA-256 `fc9571446aaf46b1fc4633b26130af1d243abaa15a71e9ffc34c9473082deec6` |
+| Embedded service | 51,904,751 bytes; SHA-256 `fc9571446aaf46b1fc4633b26130af1d243abaa15a71e9ffc34c9473082deec6` |
 | Staged/embedded equality | Exact size and SHA-256 match |
-| Phase 3B result | 27,868 bytes; SHA-256 `2299751a9ba2daa27b7f4c8b495a5e364a1c5f879c6e3173b7c801c3aa7cbc2b` |
-| Packaged result | 23,728 bytes; SHA-256 `b53c6f975ccbee52cd78cc10ebbe32c2beec67cac40a282ad956779ce0da7331` |
-| Screenshot | 149,360 bytes; SHA-256 `9ba01928491fefdc4817540f17fe2c71a08a3e2c38e91589743f828e116c17a7` |
+| Packaged machine result | 23,958 bytes; SHA-256 `47a72b7c8e75df0bcaee3810a386b14983327e1aa8961f98c25414b88ec25314` |
+| Phase 3 result | 8,998 bytes; SHA-256 `0a956e91c144361a2102cedac6c7d00c8be3ea6d52d2687da33d52a9ccbd60a9` |
+| Voice-casting evidence | 17,204 bytes; SHA-256 `76458bac31edd2d9bba59a814947fe01f17e87c0a60bedde3de50da65904b3ad` |
+| Phase 3B result | 28,131 bytes; SHA-256 `e76e8d28362085d6a00887409bc96f8aa6bf75fc57596ae05e8f3b4603aeca79` |
+| Screenshot | 149,653 bytes; SHA-256 `af132d2bda4773b3c8635b6f6e253ad2b2f44cf286233fcc58cb3c160a6c0075` |
+
+The final application bytes were unchanged from the immediately preceding
+local build. The PyInstaller service bytes were different, as permitted by the
+documented lack of cross-run reproducibility; no deterministic cross-build
+claim is made. The required proof is exact equality between staged and embedded
+service bytes within this final build and the passing packaged E2E against that
+same build, both of which hold.
 
 | Hosted artifact field | Current value |
 | --- | --- |
-| Workflow head / tested checkout / PR head | Pending |
-| Application bytes / SHA-256 | Pending |
-| Staged service bytes / SHA-256 | Pending |
-| Embedded service bytes / SHA-256 | Pending |
-| Staged/embedded equality | Pending |
-| Phase 3B result bytes / SHA-256 | Pending |
-| Screenshot bytes / SHA-256 | Pending |
-| Build manifest bytes / SHA-256 | Pending |
-| Artifact ID / compressed size / digest / expiry | Pending |
+| Workflow head / tested checkout / PR head | Pending for final pushed head |
+| Application bytes / SHA-256 | Pending for final pushed head |
+| Staged service bytes / SHA-256 | Pending for final pushed head |
+| Embedded service bytes / SHA-256 | Pending for final pushed head |
+| Staged/embedded equality | Pending for final pushed head |
+| Packaged and Phase 3/3B result bytes / SHA-256 | Pending for final pushed head |
+| Screenshot bytes / SHA-256 | Pending for final pushed head |
+| Build manifest bytes / SHA-256 | Pending for final pushed head |
+| Artifact ID / compressed size / digest / expiry | Pending for final pushed head |
 
 No cross-environment or cross-run byte reproducibility is claimed. The required
 proof is equality of the staged and embedded service within one build and E2E
@@ -405,18 +425,47 @@ capture non-optional.
 
 | GitHub check | Exact result |
 | --- | --- |
-| Phase 3B Windows CI run/job/head/attempt | Pending |
-| Lock reproduction and frozen/hash-locked installation | Pending |
-| Schema/tooling tests | Pending exact count |
-| Full backend | Pending passed/skipped/warning count |
-| Hosted FFmpeg-dependent test | Pending; report separately |
-| Desktop tests | Pending exact file/test count |
-| Focused Phase 2, Phase 3A, and Phase 3B suites | Pending exact repeated-subset counts |
-| Development Electron E2E | Pending |
-| Exact-artifact packaged E2E | Pending |
-| Manifest validation / byte revalidation / scan / clean tree | Pending |
-| Security safeguards | Pending run/job and exact scan result |
-| Dependency review | Pending run/job and exact delta result |
+| Phase 3B Windows CI run/job/head/attempt | Pending for final pushed head |
+| Lock reproduction and frozen/hash-locked installation | Pending for final pushed head |
+| Schema/tooling tests | Pending exact final-head count |
+| Full backend | Pending final-head passed/skipped/warning count |
+| Hosted FFmpeg-dependent test | Pending for final pushed head; report separately |
+| Desktop tests | Pending exact final-head file/test count |
+| Focused Phase 2, Phase 3A, and Phase 3B suites | Pending exact final-head repeated-subset counts |
+| Development Electron E2E | Pending for final pushed head |
+| Exact-artifact packaged E2E | Pending for final pushed head |
+| Manifest validation / byte revalidation / scan / clean tree | Pending for final pushed head |
+| Security safeguards | Pending final-head run/job and exact scan result |
+| Dependency review | Pending final-head run/job and exact delta result |
+
+### Superseded hosted checkpoint at `b40ff3d`
+
+The following GitHub evidence was successful for PR head
+`b40ff3d9998932f3df2f30cf4e624df1ccc4b04d`, before the later local fixes and
+final local rebuild. It proves that older checkpoint only. It is retained for
+traceability and must never be substituted for final-head hosted closure.
+
+| Superseded GitHub check | Exact `b40ff3d` result |
+| --- | --- |
+| Windows CI | Run `30727362332`, attempt 1, job `91441430657` (`Lint, test, build, and Phase 3B packaged E2E`); PR head `b40ff3d9998932f3df2f30cf4e624df1ccc4b04d`; tested merge checkout `cd90b89e368cd00e4696ababeb3f687154f570fa`; all required steps passed |
+| Runner / timestamp | `GitHub Actions 1000001553`; Windows/X64, GitHub-hosted; manifest timestamp `2026-08-02T02:45:10.322Z` |
+| Repository and backend tests | 61 Node tests; 486 backend passed, 3 skipped, 1 warning in 1,819.13 seconds; the three hosted skips were one FFmpeg capability case and two frozen-service cases |
+| Desktop and focused tests | 19 desktop files / 292 tests; Phase 2: 90 passed, 1 warning in 260.80 seconds; Phase 3A: 64 passed, 1 warning in 229.27 seconds; Phase 3B: 196 passed, 3 skipped, 1 warning in 866.07 seconds |
+| Electron and frozen-service gates | Development E2E: 1 passed in 4.5 minutes; frozen service: 3 passed, 29 deselected, 1 warning in 4.17 seconds; exact-artifact packaged E2E: 1 passed in 5.0 minutes |
+| Security safeguards | Run `30727362298`, job `91441422114`; 411 tracked files and 65 commits / approximately 8,756,288 bytes scanned; no leak found |
+| Dependency review | Run `30727362306`, job `91441422127`; the moderate-severity threshold passed with no vulnerable or denied dependency in the PR delta; license metadata was not detected for `kokorog2p==0.6.7` and `onnxruntime==1.28.0`, which remains a warning/limitation |
+| Artifact | ID `8827442914`; compressed size 479,233,538 bytes; digest `sha256:52d1b3f15b707524976390f63bae72445c86ffa0a9b2a3c06427aa279f6ca30b`; expiry `2026-08-09T02:45:16Z` |
+| Application | 225,613,824 bytes; SHA-256 `5035d639bdf1a3d33f7e346c64ee87a24f1c18c8acf5ded035df576779883146` |
+| Staged / embedded service | 52,917,052 bytes each; SHA-256 `c6ec64000ceb80f289b7832a6321825a8ee129829055152cea4b54a54755e7dc` each; exact equality true |
+| Result / screenshot / manifest | Phase 3B result: 27,838 bytes / `cd297d45c16210f425205ffc31310e09a3b54e09c863781a348c0f9cb432ba5c`; packaged result: 23,687 bytes / `93cd0aa6c4241236b5340a5fe8286fd4876fc36ed0653ae4240f72e486ecc360`; screenshot: 128,294 bytes / `119aee2812a0c96136775fdfcb425d09b39b60c3ffcaabd8c3ff7d4b48f0b193`; manifest: 83,486 bytes / `4462d8b62bbff69e8cd2e54839ea99085a6410da6571f9df18efb5cf7503bf16` |
+
+The superseded packaged run began from empty relevant-name baselines. Launch 1
+owned PIDs `208,2012,2552,4404,5888,6004,7232,7532,7732`, with runtime
+worker/parent `7732/7532`; launch 2 owned PIDs
+`264,2568,2912,3652,5608,7400,8924,9128`, with runtime worker/parent
+`7400/8924`. All exact PIDs were gone after shutdown, with no forced or
+remaining PID, unrelated-process inspection/termination, or denied Python
+network attempt. These PIDs likewise attest only to `b40ff3d`.
 
 ## Database-v5 migration and recovery
 
@@ -525,7 +574,7 @@ only, never full-book rendering or export.
 
 ## Performance and scale evidence
 
-The completed scale file exercised exactly 300 active roles, 1,000 current
+An earlier instrumented scale-only run exercised exactly 300 active roles, 1,000 current
 pronunciation entries, 2,000 audition sessions, 2,000 clip metadata records,
 10,000 cache records, and only three persisted fixture audio artifacts. The 300
 roles required exactly two workspace pages at `roleLimit=200`; cross-project and
@@ -539,7 +588,9 @@ also covered deterministic cache identity, hard count limits, cancellation,
 retry, interrupted restart, runtime startup/shutdown, and maximum provider
 concurrency 1. It passed with 1 test, 0 skips, and the repeated Starlette warning
 in 356.97 seconds of Pytest-reported elapsed time; the outer command wall time
-was 367.645 seconds.
+was 367.645 seconds. Those timings are retained as an instrumented workstation
+observation, not the final gate duration; the current frozen-tree Phase 3B
+focused result is the 195-passed/4-skipped/1-warning result above.
 
 Observed workstation intervals were:
 
@@ -586,15 +637,22 @@ revalidation; no renderer path or
 
 Fresh local live-registry checks completed for the current Node lock and the
 61,104-byte Python requirements lock. pnpm `11.9.0` ran
-`pnpm audit --audit-level high` at `2026-08-01T23:19:26.3321064Z` and reported
-`No known vulnerabilities found`. A temporary Python 3.12.10 environment with
-top-level `pip==26.1.2` and `pip-audit==2.10.1` ran
+`pnpm audit --audit-level high` at `2026-08-02T06:53:58.5273246Z`; the command
+reported `No known vulnerabilities found`, and its JSON result recorded zero
+vulnerabilities at every severity across 534 total dependencies. A temporary
+Python 3.12.10 environment with top-level `pip==26.1.2` and
+`pip-audit==2.10.1` ran
 `pip-audit --require-hashes --disable-pip -r apps/local-service/requirements.lock`
-at `2026-08-01T23:19:43.2678697Z` and
-reported `No known vulnerabilities found`. The exact lock install separately
-completed `pip check` with `No broken requirements found`. An earlier Python
-advisory result for different lock bytes is superseded and is not carried
-forward.
+at `2026-08-02T06:53:58.6853617Z` and reported `No known vulnerabilities
+found` for all 53 locked entries. The exact lock install separately completed
+`pip check` with `No broken requirements found`. An earlier Python advisory
+result for different lock bytes is superseded and is not carried forward.
+
+The local repository-security closure used checksum-pinned Gitleaks `8.30.1`:
+68 commits and approximately 8,776,942 bytes were scanned with no leak found.
+The tracked-content scanner passed all 411 tracked files. `git diff --check`,
+status/index checks, and `git fsck` exited 0. The 16 reported dangling blobs are
+preserved local recovery remnants; no reachable object corruption was found.
 
 These live advisory queries are point-in-time local evidence, not immutable
 advisory-database snapshots. The audited Python target is hash-locked; the
@@ -602,11 +660,13 @@ temporary audit tool environment pins its two top-level tools but resolves their
 transitive tool dependencies from the live index. The Windows build workflow adds no
 `pnpm audit` or `pip-audit` gate. Its dependency evidence is the pinned Python
 3.12.10 lock reproduction, hash-locked install, frozen pnpm install, and
-`pip check`. The pull-request Dependency review workflow, still pending for
-this branch, applies `fail-on-severity: moderate` to the PR dependency delta
-only; it is not a full-lock vulnerability audit. Security safeguards separately
-run repository policy and checksum-pinned Gitleaks `8.30.1`; secret scanning is
-not described as a dependency audit.
+`pip check`. The pull-request Dependency review workflow for the final pushed
+head remains pending and applies `fail-on-severity: moderate` to the PR
+dependency delta only; it is not a full-lock vulnerability audit. The
+successful `b40ff3d` dependency review above is superseded and does not attest
+to the final head. Security safeguards separately run repository policy and
+checksum-pinned Gitleaks `8.30.1`; secret scanning is not described as a
+dependency audit.
 
 ## Known limitations and unverified behavior
 
@@ -627,7 +687,8 @@ not described as a dependency audit.
   backend/schema/voice-tensor checks occur on first component initialization.
   Activation does not create the missing Phase 3A binding.
 - Python-level socket denial is defense in depth, not an OS firewall or packet
-  capture. The exact-CI owned-PID endpoint observation remains pending.
+  capture. The exact-CI owned-PID endpoint observation for the final pushed head
+  remains pending; the successful `b40ff3d` observation is superseded.
 - Packaged ownership uses a 100 ms bounded process-table sampler plus stable
   pre/post-observation and shutdown reconciliation, not a kernel process-event
   ledger. It fails on observed churn or ambiguity and proves exit for every
@@ -654,8 +715,9 @@ not described as a dependency audit.
 - Existing decisions remain immutable history after invalidation; regeneration
   never restores approval automatically.
 - Hosted Windows tests, exact hosted process proof, artifact hashes, Security
-  safeguards, and Dependency review remain pending and must be recorded before
-  hosted evidence closure.
+  safeguards, and Dependency review for the final pushed head remain pending
+  and must be recorded before hosted evidence closure. The successful
+  `b40ff3d` hosted checkpoint above is superseded by later local changes.
 
 ## Documentation coverage
 

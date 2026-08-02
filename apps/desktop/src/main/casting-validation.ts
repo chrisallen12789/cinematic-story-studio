@@ -72,6 +72,7 @@ import {
 import { ValidationError } from "./validation.js";
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/u;
+const MODEL_IDENTIFIER_PATTERN = /^(?!\/)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/@-]{1,160}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const SEMVER_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u;
@@ -1052,7 +1053,7 @@ function validateCatalogRevision(value: unknown): VoiceCatalogRevision {
     "catalogRevision.providerDescriptorIds",
     MAX_ARRAY
   );
-  identifierArray(
+  modelIdentifierArray(
     item.modelDescriptorIds,
     "catalogRevision.modelDescriptorIds",
     MAX_ARRAY
@@ -1145,10 +1146,10 @@ function validateModel(value: unknown): VoiceModelDescriptor {
     "provenance"
   ]);
   contractVersion(item.contractVersion, "model.contractVersion");
-  identifier(item.modelId, "model.modelId");
+  modelIdentifier(item.modelId, "model.modelId");
   identifier(item.providerId, "model.providerId");
   text(item.modelName, "model.modelName", 1, 120);
-  semver(item.modelVersion, "model.modelVersion");
+  text(item.modelVersion, "model.modelVersion", 1, 80);
   const capability = exact(item.capability, "model.capability", [
     "supportedLanguages",
     "supportedLocales",
@@ -1259,7 +1260,7 @@ function validateVoiceProfile(
   contractVersion(item.contractVersion, "voice.contractVersion");
   const voiceProfileId = identifier(item.voiceProfileId, "voice.voiceProfileId");
   const providerId = identifier(item.providerId, "voice.providerId");
-  const modelId = identifier(item.modelId, "voice.modelId");
+  const modelId = modelIdentifier(item.modelId, "voice.modelId");
   if (
     !providerIds.has(providerId) ||
     !modelIds.has(modelId) ||
@@ -3168,6 +3169,14 @@ function identifier(value: unknown, field: string): string {
   return result;
 }
 
+function modelIdentifier(value: unknown, field: string): string {
+  const result = text(value, field, 1, 160);
+  if (!MODEL_IDENTIFIER_PATTERN.test(result)) {
+    throw invalid(`${field} must be a model identifier.`);
+  }
+  return result;
+}
+
 function nullableIdentifier(value: unknown, field: string): string | null {
   return value === null ? null : identifier(value, field);
 }
@@ -3360,6 +3369,18 @@ function identifierArray(
 ): readonly string[] {
   const result = boundedArray(value, field, maximum).map((item, index) =>
     identifier(item, `${field}[${index}]`)
+  );
+  unique(result, field);
+  return result;
+}
+
+function modelIdentifierArray(
+  value: unknown,
+  field: string,
+  maximum: number
+): readonly string[] {
+  const result = boundedArray(value, field, maximum).map((item, index) =>
+    modelIdentifier(item, `${field}[${index}]`)
   );
   unique(result, field);
   return result;

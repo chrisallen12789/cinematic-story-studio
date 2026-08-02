@@ -205,6 +205,89 @@ describe("casting desktop request validation", () => {
     });
   });
 
+  it("accepts bounded provider-repository model IDs without widening other IDs", () => {
+    const catalog = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../../local-service/src/cinematic_story_service/catalogs/synthetic_voice_catalog.v1.json",
+          import.meta.url
+        ),
+        "utf8"
+      )
+    ) as Record<string, unknown>;
+    const catalogRevision = structuredClone(
+      catalog.catalogRevision
+    ) as Record<string, unknown>;
+    const providers = structuredClone(catalog.providers) as Record<
+      string,
+      unknown
+    >[];
+    const models = structuredClone(catalog.models) as Record<string, unknown>[];
+    const voices = structuredClone(catalog.voices) as Record<string, unknown>[];
+    const firstModel = models[0];
+    if (firstModel === undefined || typeof firstModel.modelId !== "string") {
+      throw new Error("The model fixture was empty or invalid.");
+    }
+    const priorModelId = firstModel.modelId;
+    const repositoryModelId = "onnx-community/Kokoro-82M-v1.0-ONNX";
+    firstModel.modelId = repositoryModelId;
+    firstModel.modelVersion = "1.0";
+    catalogRevision.modelDescriptorIds = (
+      catalogRevision.modelDescriptorIds as unknown[]
+    ).map((value) => (value === priorModelId ? repositoryModelId : value));
+    for (const voice of voices) {
+      if (voice.modelId === priorModelId) voice.modelId = repositoryModelId;
+    }
+
+    const response = {
+      correlationId: "catalog-provider-repository-model",
+      catalogRevision,
+      providers,
+      models,
+      items: voices,
+      rights: catalog.rights,
+      total: voices.length,
+      pageSize: voices.length
+    };
+    expect(
+      validateVoiceCatalogResponse(response, {
+        projectId: "project-1",
+        limit: 50
+      })
+    ).toMatchObject({ total: voices.length });
+
+    for (const invalidModelId of [
+      "/leading-slash",
+      "trailing-slash/",
+      "doubled//slash",
+      "model path",
+      "namespace\\model",
+      "namespace/model?query"
+    ]) {
+      const invalidModels = structuredClone(models);
+      if (invalidModels[0] === undefined) throw new Error("The model fixture was empty.");
+      invalidModels[0].modelId = invalidModelId;
+      expect(() =>
+        validateVoiceCatalogResponse(
+          { ...response, models: invalidModels },
+          { projectId: "project-1", limit: 50 }
+        )
+      ).toThrow("must be a model identifier");
+    }
+
+    const invalidProviders = structuredClone(providers);
+    if (invalidProviders[0] === undefined) {
+      throw new Error("The provider fixture was empty.");
+    }
+    invalidProviders[0].providerId = "provider/scoped";
+    expect(() =>
+      validateVoiceCatalogResponse(
+        { ...response, providers: invalidProviders },
+        { projectId: "project-1", limit: 50 }
+      )
+    ).toThrow("must be an identifier");
+  });
+
   it("accepts nullable real-voice age-presentation and energy metadata", () => {
     const catalog = JSON.parse(
       readFileSync(

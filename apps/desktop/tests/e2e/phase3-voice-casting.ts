@@ -864,6 +864,7 @@ async function waitForCastingPublication(page: Page): Promise<void> {
           exact: true
         });
         if (await refresh.isEnabled()) {
+          await dismissNotice(page);
           explicitRefreshRequested = true;
           await refresh.click();
         }
@@ -1624,6 +1625,7 @@ async function dismissNotice(page: Page): Promise<void> {
   });
   if ((await dismiss.count()) > 0 && (await dismiss.first().isVisible())) {
     await dismiss.first().click();
+    await expect(dismiss.first()).toBeHidden({ timeout: 5_000 });
   }
 }
 

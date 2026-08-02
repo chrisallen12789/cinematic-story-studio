@@ -296,6 +296,8 @@ export function AuditionsWorkspace({
       ) ?? sessions[0] ?? null,
     [selectedSessionId, sessions]
   );
+  const selectedSessionEvidenceId =
+    selectedSession?.auditionSessionId ?? null;
   const comparedClips = useMemo(
     () => clips.filter((clip) => comparisonIds.includes(clip.auditionClipId)),
     [clips, comparisonIds]
@@ -478,7 +480,7 @@ export function AuditionsWorkspace({
     if (
       !connected ||
       inspectedJobId === null ||
-      selectedSession === null
+      selectedSessionEvidenceId === null
     ) {
       queueMicrotask(() => {
         if (!disposed) setJobLoading(false);
@@ -489,7 +491,7 @@ export function AuditionsWorkspace({
     }
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let attempts = 0;
-    const expectedSessionId = selectedSession.auditionSessionId;
+    const expectedSessionId = selectedSessionEvidenceId;
 
     const poll = async () => {
       const result = await api.jobs.get(inspectedJobId);
@@ -544,7 +546,7 @@ export function AuditionsWorkspace({
     loadWorkspace,
     onError,
     projectId,
-    selectedSession
+    selectedSessionEvidenceId
   ]);
 
   async function perform<T>(

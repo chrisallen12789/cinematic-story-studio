@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -230,6 +230,48 @@ describe("AuditionsWorkspace", () => {
         .toBeGreaterThanOrEqual(2);
     }
   );
+
+  it("refreshes a terminal audition job once across fresh session identities", async () => {
+    const api = createApi();
+    const session = {
+      ...auditionSession(),
+      jobId: "audition-job-1"
+    };
+    vi.mocked(api.auditions.listSessions).mockImplementation(async () =>
+      ok({
+        correlationId: "correlation-sessions-terminal",
+        projectId: "project-1",
+        pageSize: 1,
+        total: 1,
+        items: [{ ...session }]
+      })
+    );
+    vi.mocked(api.jobs.get)
+      .mockResolvedValueOnce(
+        ok({
+          correlationId: "job-terminal",
+          job: auditionJob("succeeded", 1, "complete")
+        })
+      )
+      .mockResolvedValue(fail("NOT_CONFIGURED"));
+
+    renderWorkspace(api);
+
+    await waitFor(() =>
+      expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(api.auditions.listSessions).toHaveBeenCalledTimes(2)
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
+
+    expect(api.jobs.get).toHaveBeenCalledTimes(1);
+    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(2);
+  });
 
   it("creates an explicit governed pronunciation-test script", async () => {
     const api = createApi();

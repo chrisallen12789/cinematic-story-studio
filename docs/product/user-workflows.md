@@ -173,12 +173,23 @@ transmission, or synthesis control in the Phase 3A workspace.
    decisions, runtime history, and readiness projection. Phase 3B does not
    render or export a book.
 
-The installed/activated Kokoro package is not currently a usable governed
-product voice. The retained real-provider evidence is a private component-only
-command using provider-internal voice `af_heart`; no Phase 3A voice profile,
-snapshot-selected cast assignment, or rights record binds that voice. Product
-use remains unavailable until an explicit governed binding exists and the
-separate legal, consent, likeness, provenance, and rights review is complete.
+Phase 3B.1 adds one narrowly governed real-provider path for the exact
+allow-listed Kokoro package. The user first reviews the neutral Real Local
+Voices inventory, package/runtime state, tensor hash, restricted rights and
+unknown consent state, then acknowledges the exact private-audition warning.
+Selecting the real voice still occurs through the Phase 3A immutable correction
+workflow and requires the applicable casting gates to be explicitly reapproved;
+the Auditions workspace cannot write around that history. A real session binds
+the current assignment and approved cast snapshot to the exact catalog,
+provider, model, package, tensor, rights record, acknowledgement, runtime, and
+pronunciation evidence. The comparison workspace never autoplays and requires
+an exact-clip listening attestation for a real per-role decision.
+
+This path authorizes only bounded private local audition. It does not establish
+performer consent, likeness clearance, commercial clearance, production-export
+eligibility, naturalness, artistic quality, or full-book readiness. The Voice
+Readiness gate remains blocked until the required current human listening
+decisions exist. See [Phase 3B.1 governed real local voice activation](phase-3b1-governed-real-voice-activation.md).
 
 ## 5. Observe, cancel, retry, and resume work
 

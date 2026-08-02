@@ -82,7 +82,7 @@ automatic update work are outside this evidence boundary.
 | Generation job | `generate_audition`; 13 ordered stages; hash-/ID-only checkpoint schema 1 |
 | Human gates | `per_role_audition_review`, `narrator_audition_review`, `character_audition_review`, `pronunciation_review`, `voice_readiness_review` |
 | Page and scale bounds | 50 default / 200 maximum page; 300 roles; 1,000 pronunciation entries; 2,000 audition metadata records; 10,000 cache records |
-| Build manifest / Phase 3B result | Schema `6.0.0` / schema `7.0.0` |
+| Current build manifest / Phase 3B result contract | Schema `7.0.0` / schema `8.0.0`; the historical PR #6 artifact below retains its recorded older contract versions |
 | Hosted Phase 3B evidence classification | `deterministic_fixture_lifecycle_only` |
 
 Runtime-profile evolution is append-only. If an upgraded schema-v5 database already contains

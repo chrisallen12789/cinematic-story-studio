@@ -130,10 +130,13 @@ conflicts, append-only assignments and corrections, three approval gates, and
 immutable approved-cast snapshots. Version 1 voice and casting meanings remain
 unchanged.
 
-The profile ID is `governed-voice-casting-v1@1.0.0`, the producer is
+The current profile ID is `governed-voice-casting-v1@1.0.1`, the producer is
 `voice-casting-orchestrator@1.0.0`, and the rights policy is
 `voice-rights-policy-v1`. The canonical profile fingerprint is
-`3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6`.
+`5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97`.
+Exact historical `governed-voice-casting-v1@1.0.0` references with fingerprint
+`3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6`
+remain readable; crossed or unknown ID/fingerprint pairs fail closed.
 The schema pins 300 roles, 5,000 profiles, 50 pre-reduction candidates per
 role, 12 final candidates per role, page bounds of 50/200, and 2,000-code-point
 explanations. A voice profile may be assigned to at most two roles before the

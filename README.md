@@ -4,15 +4,17 @@ Cinematic Story Studio is a Windows desktop application for turning authored sto
 
 ## Project status
 
-Phase 0 established the secure production foundation. Phase 1 adds local TXT,
-Markdown, DOCX, EPUB, and text-based PDF ingestion, immutable original-source
-storage, persistent extraction jobs, and a durable Import Review gate. Phase 2
-is under draft development and adds governed deterministic whole-book story
-intelligence: immutable analysis runs/snapshots, evidence-backed structure,
-characters/aliases, dialogue, POV, locations, timeline, relationships,
-emotion/intent, continuity findings, human correction overlays, and four
-analysis review gates. Analysis remains blocked until a human approves the
-current source and extraction revision.
+Phase 0 through Phase 3B are merged. They provide the secure desktop/service
+foundation, local document ingest, governed whole-book analysis, immutable
+voice casting, managed short local-speech auditions, pronunciation review,
+authenticated playback, and exact process/evidence closure. Phase 3B.1 is the
+bounded draft bridge from the already allow-listed Kokoro/ONNX component to a
+rights-restricted private product audition. It adds one exact governed real
+voice inventory record, explicit restricted-use activation, exact-clip
+listening attestations, and a private local listening package. It does not
+claim consent, commercial clearance, subjective quality, or production
+eligibility. Human listening remains mandatory and pending. Phase 3C and Phase
+4 have not started.
 
 The repository is public. Never commit private manuscripts, credentials, generated audio, project databases, downloaded models, caches, logs containing story text, or machine-specific configuration.
 
@@ -50,8 +52,12 @@ The supported root commands are:
 | `pnpm typecheck` | Type-check contracts, desktop TypeScript, and the Python service. |
 | `pnpm test` | Run schema/tooling tests, service Pytest, and desktop Vitest without cloud credentials. |
 | `pnpm build` | Build contracts, a PyInstaller service, renderer/main/preload, and an unpackaged electron-builder directory. |
+| `pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged:phase3b1-real` | From a frozen clean commit and exact already-local ignored package ZIP, run the packaged fixture gate plus the private governed real-provider product-path gate. It performs no download. |
 
 The development build is written to `apps/desktop/release/0.1.0/win-unpacked`. It is an unsigned, unpackaged CI/development artifact, not a release installer.
+
+Phase-specific boundaries and the private listening workflow are documented in
+[Phase 3B.1 governed real local voice activation](docs/product/phase-3b1-governed-real-voice-activation.md).
 
 ### Manual Phase 1 and Phase 2 verification
 

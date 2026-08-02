@@ -66,13 +66,16 @@ only `invalidated`. Durable assignment invalidation remains effective across a
 catalog reversion and requires explicit human reselection and reapproval; the
 system cannot grant approval.
 
-The governed profile is `governed-voice-casting-v1@1.0.0`, produced by
-`voice-casting-orchestrator@1.0.0`, and uses `voice-rights-policy-v1`. Its
-SHA-256 is pinned in `voice-casting.ts`. Catalog and role pages default to 50
+The current governed profile is `governed-voice-casting-v1@1.0.1`, produced by
+`voice-casting-orchestrator@1.0.0`, and uses `voice-rights-policy-v1`. It adds
+one fingerprint-bound restricted private-audition rule without promoting any
+rights state. Historical `1.0.0` profile references remain readable as an
+exact legacy ID/fingerprint pair. Both SHA-256 values are pinned in
+`voice-casting.ts`. Catalog and role pages default to 50
 records and reject limits above 200. Runs accept at most 300 roles and 5,000
 voice profiles, evaluate at most 50 pre-reduction candidates per role, publish
 at most 12 final candidates per role, and bound explanations to 2,000 Unicode
 code points. More than two assigned roles per voice profile triggers the
-configured reuse conflict. Unknown and prohibited rights are ineligible for final approval;
-restricted rights require a human acknowledgement. Conflict similarity is
-metadata-only and never claims acoustic analysis.
+configured reuse conflict. Unknown and prohibited rights are ineligible for
+final approval; restricted rights require a human acknowledgement. Conflict
+similarity is metadata-only and never claims acoustic analysis.

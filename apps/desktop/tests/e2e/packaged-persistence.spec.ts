@@ -74,7 +74,7 @@ import {
   type Phase3WorkflowEvidence
 } from "./phase3-voice-casting";
 import {
-  adoptVerifiedProcessTree,
+  adoptVerifiedProcessTreeWithPathConfirmation,
   appExecutableName,
   bindProviderWorkerProcessTree,
   containsProcessIdentity,
@@ -530,8 +530,9 @@ test.describe("packaged desktop verification", () => {
       );
       phase3bWorkflow = await runPhase3bGovernanceWorkflow(firstPage);
 
-      await firstOwnershipSampler.stop();
+      const completedFirstOwnershipSampler = firstOwnershipSampler;
       firstOwnershipSampler = null;
+      await completedFirstOwnershipSampler.stop();
       firstOwnership = await bindPhase3bProviderWorkerOwnership(
         firstOwnership,
         phase3bWorkflow.liveRuntimeInstance.workerPid,
@@ -728,8 +729,9 @@ test.describe("packaged desktop verification", () => {
         secondPage,
         phase3bWorkflow
       );
-      await secondOwnershipSampler.stop();
+      const completedSecondOwnershipSampler = secondOwnershipSampler;
       secondOwnershipSampler = null;
+      await completedSecondOwnershipSampler.stop();
       secondOwnership = await bindPhase3bProviderWorkerOwnership(
         secondOwnership,
         phase3bRestartEvidence.liveRuntimeInstance.workerPid,
@@ -1566,13 +1568,18 @@ function startOwnershipSampler(
         const deadline =
           monotonicNow() + ownershipSampleDeadlineMs;
         const current = await queryRelevantProcesses(deadline);
-        ownership.processes = adoptVerifiedProcessTree({
-          current,
-          baseline: ownership.baseline,
-          owned: ownership.processes,
-          rootPid: ownership.rootPid,
-          packaged: ownership.packaged
-        });
+        const adoption =
+          await adoptVerifiedProcessTreeWithPathConfirmation({
+            current,
+            baseline: ownership.baseline,
+            owned: ownership.processes,
+            rootPid: ownership.rootPid,
+            packaged: ownership.packaged,
+            deadlineAt: deadline,
+            queryCurrent: (confirmationDeadline) =>
+              queryRelevantProcesses(confirmationDeadline)
+          });
+        ownership.processes = adoption.ownedProcesses;
       } catch (error) {
         failure =
           error instanceof Error
@@ -1604,13 +1611,17 @@ async function expandOwnership(
     defaultProcessInventoryPolicy.totalDeadlineMs
 ): Promise<LaunchOwnership> {
   const current = await queryRelevantProcesses(deadlineAt);
-  const owned = adoptVerifiedProcessTree({
+  const adoption = await adoptVerifiedProcessTreeWithPathConfirmation({
     current,
     baseline: ownership.baseline,
     owned: ownership.processes,
     rootPid: ownership.rootPid,
-    packaged: ownership.packaged
+    packaged: ownership.packaged,
+    deadlineAt,
+    queryCurrent: (confirmationDeadline) =>
+      queryRelevantProcesses(confirmationDeadline)
   });
+  const owned = adoption.ownedProcesses;
   if (owned.length === 0) {
     throw new Error("The packaged Electron root identity was lost.");
   }
@@ -1773,15 +1784,22 @@ async function waitForOwnedProcessesGone(
   let consecutiveAbsenceObservations = 0;
   while (monotonicNow() < deadline) {
     const current = await queryRelevantProcesses(deadline);
-    processes = adoptVerifiedProcessTree({
+    const adoption = await adoptVerifiedProcessTreeWithPathConfirmation({
       current,
       baseline: ownership.baseline,
       owned: processes,
       rootPid: ownership.rootPid,
-      packaged: ownership.packaged
+      packaged: ownership.packaged,
+      deadlineAt: deadline,
+      queryCurrent: (confirmationDeadline) =>
+        queryRelevantProcesses(confirmationDeadline)
     });
+    processes = adoption.ownedProcesses;
     ownership.processes = processes;
-    remaining = remainingOwnedProcesses(current, processes);
+    remaining = remainingOwnedProcesses(
+      adoption.observedProcesses,
+      processes
+    );
     if (remaining.length === 0) {
       consecutiveAbsenceObservations += 1;
       if (consecutiveAbsenceObservations >= 2) {

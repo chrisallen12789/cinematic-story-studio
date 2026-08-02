@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ProcessInventoryError,
   adoptVerifiedProcessTree,
+  adoptVerifiedProcessTreeWithPathConfirmation,
   appExecutableName,
   bindProviderWorkerProcessTree,
   createPackagedProcessInventory,
@@ -698,9 +699,373 @@ describe("packaged process inventory", () => {
       })
     ).toThrowError(
       expect.objectContaining({
-        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        retryable: true,
+        ambiguityReason: "NEW_CHILD_PATH_UNAVAILABLE",
+        candidate: {
+          pid: candidate.pid,
+          parentPid: candidate.parentPid,
+          name: candidate.name,
+          creationDate: candidate.creationDate
+        }
       })
     );
+  });
+
+  it("adopts a new child only after the same identity exposes the exact path", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+    const exact = {
+      ...partial,
+      executablePath: packaged.serviceExecutablePath
+    };
+    const delays: number[] = [];
+    const deadlines: number[] = [];
+    let queries = 0;
+
+    const adopted = await adoptVerifiedProcessTreeWithPathConfirmation({
+      current: [root, partial],
+      baseline: [],
+      owned: [root],
+      rootPid: root.pid,
+      packaged,
+      deadlineAt: 10_000,
+      now: () => 0,
+      delay: async (milliseconds) => {
+        delays.push(milliseconds);
+      },
+      queryCurrent: async (deadlineAt) => {
+        deadlines.push(deadlineAt);
+        queries += 1;
+        return [root, exact];
+      }
+    });
+
+    expect(adopted).toEqual({
+      ownedProcesses: [root, { ...exact, kind: "service" }],
+      observedProcesses: [root, exact]
+    });
+    expect(delays).toEqual([100]);
+    expect(deadlines).toEqual([5_000]);
+    expect(queries).toBe(1);
+  });
+
+  it("fails if a partial new child disappears before its path is proven", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [root, partial],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => 0,
+        delay: async () => undefined,
+        queryCurrent: async () => [root]
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_LOST"
+    });
+  });
+
+  it("fails if a partial new child changes identity before confirmation", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+    const changed = {
+      ...partial,
+      executablePath: packaged.serviceExecutablePath,
+      creationDate: "2026-07-29T18:15:22.0000000Z"
+    };
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [root, partial],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => 0,
+        delay: async () => undefined,
+        queryCurrent: async () => [root, changed]
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_LOST"
+    });
+  });
+
+  it("fails immediately when a partial child resolves to the wrong path", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [root, partial],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => 0,
+        delay: async () => undefined,
+        queryCurrent: async () => [
+          root,
+          {
+            ...partial,
+            executablePath: "C:\\unrelated\\cinematic-story-service.exe"
+          }
+        ]
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PATH_MISMATCH"
+    });
+  });
+
+  it("confirms multiple partial descendants one exact identity at a time", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partialParent = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+    const partialChild = processIdentity({
+      pid: 4102,
+      parentPid: partialParent.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:22.0000000Z"
+    });
+    const exactParent = {
+      ...partialParent,
+      executablePath: packaged.serviceExecutablePath
+    };
+    const exactChild = {
+      ...partialChild,
+      executablePath: packaged.serviceExecutablePath
+    };
+    let query = 0;
+
+    const adopted = await adoptVerifiedProcessTreeWithPathConfirmation({
+      current: [root, partialParent, partialChild],
+      baseline: [],
+      owned: [root],
+      rootPid: root.pid,
+      packaged,
+      deadlineAt: 10_000,
+      now: () => 0,
+      delay: async () => undefined,
+      queryCurrent: async () => {
+        query += 1;
+        return query === 1
+          ? [root, exactParent, partialChild]
+          : [root, exactParent, exactChild];
+      }
+    });
+
+    expect(adopted).toEqual({
+      ownedProcesses: [
+        root,
+        { ...exactParent, kind: "service" },
+        { ...exactChild, kind: "service" }
+      ],
+      observedProcesses: [root, exactParent, exactChild]
+    });
+    expect(query).toBe(2);
+  });
+
+  it("fails if the verified parent identity changes during confirmation", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [root, partial],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => 0,
+        delay: async () => undefined,
+        queryCurrent: async () => [
+          {
+            ...root,
+            creationDate: "2026-07-29T18:15:22.0000000Z"
+          },
+          {
+            ...partial,
+            executablePath: packaged.serviceExecutablePath
+          }
+        ]
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false
+    });
+  });
+
+  it("enforces the confirmation deadline after a slow inventory query", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+    let clock = 0;
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [root, partial],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => clock,
+        delay: async (milliseconds) => {
+          clock += milliseconds;
+        },
+        queryCurrent: async () => {
+          clock = 6_000;
+          return [
+            root,
+            {
+              ...partial,
+              executablePath: packaged.serviceExecutablePath
+            }
+          ];
+        }
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT"
+    });
+  });
+
+  it("fails if a new child path remains unavailable through the bound", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+    let clock = 0;
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [root, partial],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => clock,
+        delay: async (milliseconds) => {
+          clock += milliseconds;
+        },
+        confirmationWindowMs: 200,
+        confirmationPollMs: 100,
+        queryCurrent: async () => [root, partial]
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT"
+    });
   });
 
   it("fails closed on an ancestry-linked child with the wrong path", () => {
@@ -735,7 +1100,7 @@ describe("packaged process inventory", () => {
     );
   });
 
-  it("fails closed when an ancestry-linked child predates its parent", () => {
+  it("does not retry when an ancestry-linked child predates its parent", async () => {
     const root = ownedProcess({
       pid: 4100,
       parentPid: 5100,
@@ -752,19 +1117,29 @@ describe("packaged process inventory", () => {
       creationDate: "2026-07-29T18:15:20.0000000Z"
     });
 
-    expect(() =>
-      adoptVerifiedProcessTree({
+    let queries = 0;
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
         current: [root, candidate],
         baseline: [],
         owned: [root],
         rootPid: root.pid,
-        packaged
+        packaged,
+        deadlineAt: 10_000,
+        now: () => 0,
+        delay: async () => undefined,
+        queryCurrent: async () => {
+          queries += 1;
+          return [root, candidate];
+        }
       })
-    ).toThrowError(
-      expect.objectContaining({
-        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
-      })
-    );
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PREDATES_ROOT"
+    });
+    expect(queries).toBe(0);
   });
 
   it("preserves already verified identities after the root exits", () => {

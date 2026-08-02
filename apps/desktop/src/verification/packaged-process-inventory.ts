@@ -31,15 +31,48 @@ export type ProcessInventoryFailureCode =
   | "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
   | "PROCESS_INVENTORY_UNSUPPORTED_PLATFORM";
 
+export type ProcessInventoryAmbiguityReason =
+  | "NEW_CHILD_PREDATES_ROOT"
+  | "NEW_CHILD_PREDATES_PARENT"
+  | "NEW_CHILD_PATH_UNAVAILABLE"
+  | "NEW_CHILD_PATH_CONFIRMATION_LOST"
+  | "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT"
+  | "NEW_CHILD_PATH_MISMATCH";
+
+export interface PendingProcessIdentity {
+  readonly pid: number;
+  readonly parentPid: number;
+  readonly name: string;
+  readonly creationDate: string;
+}
+
 export class ProcessInventoryError extends Error {
   readonly code: ProcessInventoryFailureCode;
   readonly retryable: boolean;
+  readonly ambiguityReason: ProcessInventoryAmbiguityReason | null;
+  readonly candidate: PendingProcessIdentity | null;
 
-  constructor(code: ProcessInventoryFailureCode, retryable: boolean) {
-    super(processInventoryMessage(code));
+  constructor(
+    code: ProcessInventoryFailureCode,
+    retryable: boolean,
+    ambiguityReason: ProcessInventoryAmbiguityReason | null = null,
+    candidate: PendingProcessIdentity | null = null
+  ) {
+    const message = processInventoryMessage(code);
+    const candidateMessage =
+      candidate === null
+        ? ""
+        : ` Candidate: pid=${candidate.pid}, parentPid=${candidate.parentPid}, name=${candidate.name}, creationDate=${candidate.creationDate}.`;
+    super(
+      ambiguityReason === null
+        ? `${message}${candidateMessage}`
+        : `${message} Reason: ${ambiguityReason}.${candidateMessage}`
+    );
     this.name = "ProcessInventoryError";
     this.code = code;
     this.retryable = retryable;
+    this.ambiguityReason = ambiguityReason;
+    this.candidate = candidate === null ? null : { ...candidate };
   }
 }
 
@@ -102,6 +135,23 @@ export interface AdoptProcessTreeInput {
   readonly owned: readonly OwnedProcess[];
   readonly rootPid: number;
   readonly packaged: PackagedProcessPaths;
+}
+
+export interface ConfirmedProcessTreeAdoptionInput
+  extends AdoptProcessTreeInput {
+  readonly queryCurrent: (
+    deadlineAt: number
+  ) => Promise<readonly ProcessIdentity[]>;
+  readonly deadlineAt: number;
+  readonly now?: () => number;
+  readonly delay?: (milliseconds: number) => Promise<void>;
+  readonly confirmationWindowMs?: number;
+  readonly confirmationPollMs?: number;
+}
+
+export interface ConfirmedProcessTreeAdoption {
+  readonly ownedProcesses: readonly OwnedProcess[];
+  readonly observedProcesses: readonly ProcessIdentity[];
 }
 
 export interface BindProviderWorkerProcessTreeInput {
@@ -324,15 +374,36 @@ export function adoptVerifiedProcessTree({
           false
         );
       }
-      if (
-        item.creationDate < root.creationDate ||
-        item.creationDate < verifiedParent.creationDate ||
-        item.executablePath === null ||
-        !matchesPackagedProcessPath(item, packaged)
-      ) {
+      if (item.creationDate < root.creationDate) {
         throw new ProcessInventoryError(
           "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
-          false
+          false,
+          "NEW_CHILD_PREDATES_ROOT",
+          pendingProcessIdentity(item)
+        );
+      }
+      if (item.creationDate < verifiedParent.creationDate) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PREDATES_PARENT",
+          pendingProcessIdentity(item)
+        );
+      }
+      if (item.executablePath === null) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          true,
+          "NEW_CHILD_PATH_UNAVAILABLE",
+          pendingProcessIdentity(item)
+        );
+      }
+      if (!matchesPackagedProcessPath(item, packaged)) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_MISMATCH",
+          pendingProcessIdentity(item)
         );
       }
       if (
@@ -407,6 +478,137 @@ export function adoptVerifiedProcessTree({
     );
   }
   return result.sort((left, right) => left.pid - right.pid);
+}
+
+export async function adoptVerifiedProcessTreeWithPathConfirmation({
+  current: initialCurrent,
+  baseline,
+  owned,
+  rootPid,
+  packaged,
+  queryCurrent,
+  deadlineAt,
+  now = () => performance.now(),
+  delay = boundedDelay,
+  confirmationWindowMs = 5_000,
+  confirmationPollMs = 100
+}: ConfirmedProcessTreeAdoptionInput): Promise<ConfirmedProcessTreeAdoption> {
+  if (
+    !Number.isFinite(deadlineAt) ||
+    !Number.isSafeInteger(confirmationWindowMs) ||
+    confirmationWindowMs <= 0 ||
+    confirmationWindowMs > 5_000 ||
+    !Number.isSafeInteger(confirmationPollMs) ||
+    confirmationPollMs <= 0 ||
+    confirmationPollMs > confirmationWindowMs
+  ) {
+    throw new Error("The process path-confirmation policy is invalid.");
+  }
+
+  let current = initialCurrent;
+  let pending: PendingProcessIdentity | null = null;
+  let confirmationDeadline = deadlineAt;
+  while (true) {
+    if (pending !== null) {
+      if (now() >= confirmationDeadline) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+          pending
+        );
+      }
+      const expectedPending = pending;
+      const observed = current.find((item) =>
+        samePendingProcessIdentity(item, expectedPending)
+      );
+      if (observed === undefined) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_LOST",
+          pending
+        );
+      }
+      if (observed.executablePath === null) {
+        if (now() >= confirmationDeadline) {
+          throw new ProcessInventoryError(
+            "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+            false,
+            "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+            pending
+          );
+        }
+        await delay(
+          Math.max(
+            1,
+            Math.min(confirmationPollMs, confirmationDeadline - now())
+          )
+        );
+        if (now() >= confirmationDeadline) {
+          throw new ProcessInventoryError(
+            "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+            false,
+            "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+            pending
+          );
+        }
+        current = await queryCurrent(confirmationDeadline);
+        continue;
+      }
+    }
+
+    try {
+      return {
+        ownedProcesses: adoptVerifiedProcessTree({
+          current,
+          baseline,
+          owned,
+          rootPid,
+          packaged
+        }),
+        observedProcesses: current
+      };
+    } catch (error) {
+      if (
+        !(error instanceof ProcessInventoryError) ||
+        error.code !== "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY" ||
+        error.retryable !== true ||
+        error.ambiguityReason !== "NEW_CHILD_PATH_UNAVAILABLE" ||
+        error.candidate === null
+      ) {
+        throw error;
+      }
+      pending = error.candidate;
+      confirmationDeadline = Math.min(
+        deadlineAt,
+        now() + confirmationWindowMs
+      );
+      if (now() >= confirmationDeadline) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+          pending
+        );
+      }
+      await delay(
+        Math.max(
+          1,
+          Math.min(confirmationPollMs, confirmationDeadline - now())
+        )
+      );
+      if (now() >= confirmationDeadline) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+          pending
+        );
+      }
+      current = await queryCurrent(confirmationDeadline);
+    }
+  }
 }
 
 /**
@@ -560,6 +762,29 @@ function sameStableProcessIdentity(
     return left.executablePath !== right.executablePath;
   }
   return samePath(left.executablePath, right.executablePath);
+}
+
+function samePendingProcessIdentity(
+  left: ProcessIdentity,
+  right: PendingProcessIdentity
+): boolean {
+  return (
+    left.pid === right.pid &&
+    left.parentPid === right.parentPid &&
+    left.name === right.name &&
+    left.creationDate === right.creationDate
+  );
+}
+
+function pendingProcessIdentity(
+  value: ProcessIdentity
+): PendingProcessIdentity {
+  return {
+    pid: value.pid,
+    parentPid: value.parentPid,
+    name: value.name,
+    creationDate: value.creationDate
+  };
 }
 
 function isOwnedDescendant(

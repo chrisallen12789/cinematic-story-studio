@@ -83,6 +83,7 @@ import {
   matchesPackagedProcessPath,
   remainingOwnedProcesses,
   serviceExecutableName,
+  type ConfirmedExitedTransientProcess,
   type OwnedProcess,
   type PackagedProcessPaths,
   type ProcessIdentity
@@ -1156,6 +1157,7 @@ interface LaunchOwnership {
   readonly launcherPid: number;
   readonly rootPid: number;
   processes: readonly OwnedProcess[];
+  confirmedExitedTransientProcesses: readonly ConfirmedExitedTransientProcess[];
   readonly baseline: readonly ProcessIdentity[];
   readonly packaged: PackagedPaths;
 }
@@ -1600,9 +1602,13 @@ async function closeOwnedElectron(
   );
   verifiedOwnership = {
     ...verifiedOwnership,
-    processes: exitObservation.processes
+    processes: exitObservation.processes,
+    confirmedExitedTransientProcesses:
+      exitObservation.confirmedExitedTransientProcesses
   };
   ownership.processes = verifiedOwnership.processes;
+  ownership.confirmedExitedTransientProcesses =
+    verifiedOwnership.confirmedExitedTransientProcesses;
   const remaining = exitObservation.remaining;
   if (remaining.length > 0) {
     throw new Error(
@@ -1632,7 +1638,9 @@ async function closeOwnedElectron(
     );
   }
   return {
-    ownedPids: verifiedOwnership.processes.map((item) => item.pid),
+    ownedPids: allOwnedProcessesForEvidence(verifiedOwnership).map(
+      (item) => item.pid
+    ),
     graceful: true,
     forcedPids: [],
     remainingPids: [],
@@ -1770,6 +1778,7 @@ async function establishRootOwnership(
         launcherPid,
         rootPid,
         processes: [{ ...root, kind: "app" }],
+        confirmedExitedTransientProcesses: [],
         baseline: [...beforeLaunch],
         packaged
       };
@@ -1795,6 +1804,8 @@ function startOwnershipSampler(
             current,
             baseline: ownership.baseline,
             owned: ownership.processes,
+            confirmedExitedTransientProcesses:
+              ownership.confirmedExitedTransientProcesses,
             rootPid: ownership.rootPid,
             packaged: ownership.packaged,
             deadlineAt: deadline,
@@ -1802,6 +1813,8 @@ function startOwnershipSampler(
               queryRelevantProcesses(confirmationDeadline)
           });
         ownership.processes = adoption.ownedProcesses;
+        ownership.confirmedExitedTransientProcesses =
+          adoption.confirmedExitedTransientProcesses;
       } catch (error) {
         failure =
           error instanceof Error
@@ -1837,6 +1850,8 @@ async function expandOwnership(
     current,
     baseline: ownership.baseline,
     owned: ownership.processes,
+    confirmedExitedTransientProcesses:
+      ownership.confirmedExitedTransientProcesses,
     rootPid: ownership.rootPid,
     packaged: ownership.packaged,
     deadlineAt,
@@ -1848,6 +1863,8 @@ async function expandOwnership(
     throw new Error("The packaged Electron root identity was lost.");
   }
   ownership.processes = owned;
+  ownership.confirmedExitedTransientProcesses =
+    adoption.confirmedExitedTransientProcesses;
   if (
     requireService &&
     (!owned.some((item) => item.kind === "service") ||
@@ -1995,6 +2012,7 @@ async function waitForOwnedProcessesGone(
   callerDeadline: number
 ): Promise<{
   readonly processes: readonly OwnedProcess[];
+  readonly confirmedExitedTransientProcesses: readonly ConfirmedExitedTransientProcess[];
   readonly remaining: readonly OwnedProcess[];
 }> {
   const deadline = Math.min(
@@ -2002,6 +2020,8 @@ async function waitForOwnedProcessesGone(
     monotonicNow() + timeoutMs
   );
   let processes = ownership.processes;
+  let confirmedExitedTransientProcesses =
+    ownership.confirmedExitedTransientProcesses;
   let remaining: readonly OwnedProcess[] = processes;
   let consecutiveAbsenceObservations = 0;
   while (monotonicNow() < deadline) {
@@ -2010,6 +2030,7 @@ async function waitForOwnedProcessesGone(
       current,
       baseline: ownership.baseline,
       owned: processes,
+      confirmedExitedTransientProcesses,
       rootPid: ownership.rootPid,
       packaged: ownership.packaged,
       deadlineAt: deadline,
@@ -2017,7 +2038,11 @@ async function waitForOwnedProcessesGone(
         queryRelevantProcesses(confirmationDeadline)
     });
     processes = adoption.ownedProcesses;
+    confirmedExitedTransientProcesses =
+      adoption.confirmedExitedTransientProcesses;
     ownership.processes = processes;
+    ownership.confirmedExitedTransientProcesses =
+      confirmedExitedTransientProcesses;
     remaining = remainingOwnedProcesses(
       adoption.observedProcesses,
       processes
@@ -2025,7 +2050,11 @@ async function waitForOwnedProcessesGone(
     if (remaining.length === 0) {
       consecutiveAbsenceObservations += 1;
       if (consecutiveAbsenceObservations >= 2) {
-        return { processes, remaining: [] };
+        return {
+          processes,
+          confirmedExitedTransientProcesses,
+          remaining: []
+        };
       }
     } else {
       consecutiveAbsenceObservations = 0;
@@ -2037,7 +2066,7 @@ async function waitForOwnedProcessesGone(
       "Owned packaged process absence was not confirmed by two inventories."
     );
   }
-  return { processes, remaining };
+  return { processes, confirmedExitedTransientProcesses, remaining };
 }
 
 function samePath(left: string, right: string): boolean {
@@ -2051,7 +2080,7 @@ function evidenceOwnership(ownership: LaunchOwnership) {
   return {
     launcherPid: ownership.launcherPid,
     rootPid: ownership.rootPid,
-    processes: ownership.processes.map((item) => ({
+    processes: allOwnedProcessesForEvidence(ownership).map((item) => ({
       pid: item.pid,
       parentPid: item.parentPid,
       kind: item.kind,
@@ -2086,10 +2115,11 @@ function phase3b1LocalLaunchProof(
   ownership: LaunchOwnership,
   exitProof: ExitProof
 ) {
+  const allOwnedProcesses = allOwnedProcessesForEvidence(ownership);
   const ownedPids = [...exitProof.ownedPids].sort(
     (left, right) => left - right
   );
-  const expectedPids = ownership.processes
+  const expectedPids = allOwnedProcesses
     .map((item) => item.pid)
     .sort((left, right) => left - right);
   if (
@@ -2099,8 +2129,8 @@ function phase3b1LocalLaunchProof(
     exitProof.remainingPids.length !== 0 ||
     exitProof.serviceShutdown === null ||
     ownedPids.join(",") !== expectedPids.join(",") ||
-    !ownership.processes.some((item) => item.kind === "app") ||
-    !ownership.processes.some((item) => item.kind === "service")
+    !allOwnedProcesses.some((item) => item.kind === "app") ||
+    !allOwnedProcesses.some((item) => item.kind === "service")
   ) {
     throw new Error(
       `The exact Phase 3B.1 owned-process exit proof for launch ${launch} was incomplete.`
@@ -2111,13 +2141,14 @@ function phase3b1LocalLaunchProof(
     preexistingRelevantProcesses: ownership.baseline
       .map(redactPreexistingProcess)
       .sort(compareEvidenceProcess),
-    ownedProcesses: ownership.processes.map((item) => ({
+    ownedProcesses: allOwnedProcesses.map((item) => ({
       pid: item.pid,
       parentPid: item.parentPid,
       kind: item.kind === "app" ? "electron" : item.kind,
       executableName: item.name,
       creationIdentity: item.creationDate,
-      goneAfterShutdown: true
+      goneAfterShutdown: true,
+      ...phase3b1OwnershipBasis(item)
     })),
     electron: {
       launcherPid: ownership.launcherPid,
@@ -2131,6 +2162,44 @@ function phase3b1LocalLaunchProof(
     unrelatedProcessesInspected: false,
     unrelatedProcessesTerminated: false
   } as const;
+}
+
+function phase3b1OwnershipBasis(
+  item: OwnedProcess | ConfirmedExitedTransientProcess
+) {
+  if ("pathStatus" in item) {
+    return {
+      ownershipBasis:
+        "verified_exact_parent_and_two_absence_observations" as const,
+      executablePathStatus: item.pathStatus,
+      absenceObservations: item.absenceObservations,
+      verifiedParentCreationIdentity: item.verifiedParentCreationDate
+    };
+  }
+  if (item.executablePath === null) {
+    throw new Error(
+      "An exact-path owned process lost its executable-path provenance."
+    );
+  }
+  return {
+    ownershipBasis: "exact_executable_path_and_verified_ancestry" as const,
+    executablePathStatus: "exact_path_confirmed" as const,
+    absenceObservations: 0 as const,
+    verifiedParentCreationIdentity: null
+  };
+}
+
+function allOwnedProcessesForEvidence(
+  ownership: LaunchOwnership
+): readonly (OwnedProcess | ConfirmedExitedTransientProcess)[] {
+  const processes = [
+    ...ownership.processes,
+    ...ownership.confirmedExitedTransientProcesses
+  ].sort((left, right) => left.pid - right.pid);
+  if (new Set(processes.map((item) => item.pid)).size !== processes.length) {
+    throw new Error("The packaged ownership evidence repeated a PID.");
+  }
+  return processes;
 }
 
 function phase3LaunchShutdownProof(

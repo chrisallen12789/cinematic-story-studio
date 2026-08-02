@@ -755,6 +755,7 @@ describe("packaged process inventory", () => {
 
     expect(adopted).toEqual({
       ownedProcesses: [root, { ...exact, kind: "service" }],
+      confirmedExitedTransientProcesses: [],
       observedProcesses: [root, exact]
     });
     expect(delays).toEqual([100]);
@@ -762,7 +763,375 @@ describe("packaged process inventory", () => {
     expect(queries).toBe(1);
   });
 
-  it("fails if a partial new child disappears before its path is proven", async () => {
+  it("records an Electron child that exits before CIM exposes its path", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: appExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+    let queries = 0;
+
+    const adopted = await adoptVerifiedProcessTreeWithPathConfirmation({
+      current: [root, partial],
+      baseline: [],
+      owned: [root],
+      rootPid: root.pid,
+      packaged,
+      deadlineAt: 10_000,
+      now: () => 0,
+      delay: async () => undefined,
+      queryCurrent: async () => {
+        queries += 1;
+        return [root];
+      }
+    });
+
+    expect(adopted).toEqual({
+      ownedProcesses: [root],
+      confirmedExitedTransientProcesses: [
+        {
+          ...partial,
+          executablePath: null,
+          kind: "app",
+          pathStatus: "unavailable_before_exit",
+          verifiedParentCreationDate: root.creationDate,
+          absenceObservations: 2
+        }
+      ],
+      observedProcesses: [root]
+    });
+    expect(queries).toBe(2);
+  });
+
+  it("fails if a confirmed-exited transient Electron PID reappears", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: appExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+    const first = await adoptVerifiedProcessTreeWithPathConfirmation({
+      current: [root, partial],
+      baseline: [],
+      owned: [root],
+      rootPid: root.pid,
+      packaged,
+      deadlineAt: 10_000,
+      now: () => 0,
+      delay: async () => undefined,
+      queryCurrent: async () => [root]
+    });
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [
+          root,
+          { ...partial, executablePath: packaged.executablePath }
+        ],
+        baseline: [],
+        owned: first.ownedProcesses,
+        confirmedExitedTransientProcesses:
+          first.confirmedExitedTransientProcesses,
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => 0,
+        delay: async () => undefined,
+        queryCurrent: async () => []
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_LOST"
+    });
+  });
+
+  it("rejects duplicate, orphaned, or provenance-drifted transient ledgers", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const transient = {
+      pid: 4101,
+      parentPid: root.pid,
+      name: appExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z",
+      kind: "app" as const,
+      pathStatus: "unavailable_before_exit" as const,
+      verifiedParentCreationDate: root.creationDate,
+      absenceObservations: 2 as const
+    };
+    const invalidLedgers = [
+      [transient, transient],
+      [{ ...transient, parentPid: 9999 }],
+      [
+        {
+          ...transient,
+          verifiedParentCreationDate: "2026-07-29T18:15:19.0000000Z"
+        }
+      ]
+    ];
+
+    for (const confirmedExitedTransientProcesses of invalidLedgers) {
+      await expect(
+        adoptVerifiedProcessTreeWithPathConfirmation({
+          current: [root],
+          baseline: [],
+          owned: [root],
+          confirmedExitedTransientProcesses,
+          rootPid: root.pid,
+          packaged,
+          deadlineAt: 10_000,
+          now: () => 0,
+          delay: async () => undefined,
+          queryCurrent: async () => []
+        })
+      ).rejects.toMatchObject({
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        retryable: false,
+        ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_LOST"
+      });
+    }
+  });
+
+  it("fails if the exact Electron parent disappears with its partial child", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const partial = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: appExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [root, partial],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => 0,
+        delay: async () => undefined,
+        queryCurrent: async () => []
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_LOST"
+    });
+  });
+
+  it("fails if two unproven path identities appear in one inventory", async () => {
+    const root = ownedProcess({
+      pid: 4100,
+      parentPid: 5100,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const first = processIdentity({
+      pid: 4101,
+      parentPid: root.pid,
+      name: appExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:21.0000000Z"
+    });
+    const second = processIdentity({
+      pid: 4102,
+      parentPid: root.pid,
+      name: appExecutableName,
+      executablePath: null,
+      creationDate: "2026-07-29T18:15:22.0000000Z"
+    });
+    let queries = 0;
+
+    await expect(
+      adoptVerifiedProcessTreeWithPathConfirmation({
+        current: [root, first, second],
+        baseline: [],
+        owned: [root],
+        rootPid: root.pid,
+        packaged,
+        deadlineAt: 10_000,
+        now: () => 0,
+        delay: async () => undefined,
+        queryCurrent: async () => {
+          queries += 1;
+          return [root];
+        }
+      })
+    ).rejects.toMatchObject({
+      code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      retryable: false,
+      ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_LOST"
+    });
+    expect(queries).toBe(0);
+  });
+
+  it.each([
+    {
+      label: "Electron",
+      name: appExecutableName,
+      executablePath: packaged.executablePath
+    },
+    {
+      label: "service",
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath
+    }
+  ])(
+    "fails if the initial pending identity hides a later exact $label identity",
+    async ({ name, executablePath }) => {
+      const root = ownedProcess({
+        pid: 4100,
+        parentPid: 5100,
+        name: appExecutableName,
+        executablePath: packaged.executablePath,
+        kind: "app"
+      });
+      const pending = processIdentity({
+        pid: 4101,
+        parentPid: root.pid,
+        name: appExecutableName,
+        executablePath: null,
+        creationDate: "2026-07-29T18:15:21.0000000Z"
+      });
+      const hidden = processIdentity({
+        pid: 4102,
+        parentPid: root.pid,
+        name,
+        executablePath,
+        creationDate: "2026-07-29T18:15:22.0000000Z"
+      });
+      let queries = 0;
+
+      await expect(
+        adoptVerifiedProcessTreeWithPathConfirmation({
+          current: [root, pending, hidden],
+          baseline: [],
+          owned: [root],
+          rootPid: root.pid,
+          packaged,
+          deadlineAt: 10_000,
+          now: () => 0,
+          delay: async () => undefined,
+          queryCurrent: async () => {
+            queries += 1;
+            return [root];
+          }
+        })
+      ).rejects.toMatchObject({
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        retryable: false,
+        ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_LOST",
+        candidate: {
+          pid: pending.pid,
+          parentPid: pending.parentPid,
+          name: pending.name,
+          creationDate: pending.creationDate
+        }
+      });
+      expect(queries).toBe(0);
+    }
+  );
+
+  it.each([
+    {
+      label: "Electron",
+      name: appExecutableName,
+      executablePath: packaged.executablePath
+    },
+    {
+      label: "service",
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath
+    }
+  ])(
+    "fails if another $label identity appears while a transient exit is being confirmed",
+    async ({ name, executablePath }) => {
+      const root = ownedProcess({
+        pid: 4100,
+        parentPid: 5100,
+        name: appExecutableName,
+        executablePath: packaged.executablePath,
+        kind: "app"
+      });
+      const pending = processIdentity({
+        pid: 4101,
+        parentPid: root.pid,
+        name: appExecutableName,
+        executablePath: null,
+        creationDate: "2026-07-29T18:15:21.0000000Z"
+      });
+      const intervening = processIdentity({
+        pid: 4102,
+        parentPid: root.pid,
+        name,
+        executablePath,
+        creationDate: "2026-07-29T18:15:22.0000000Z"
+      });
+      let queries = 0;
+
+      await expect(
+        adoptVerifiedProcessTreeWithPathConfirmation({
+          current: [root, pending],
+          baseline: [],
+          owned: [root],
+          rootPid: root.pid,
+          packaged,
+          deadlineAt: 10_000,
+          now: () => 0,
+          delay: async () => undefined,
+          queryCurrent: async () => {
+            queries += 1;
+            return [root, intervening];
+          }
+        })
+      ).rejects.toMatchObject({
+        code: "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        retryable: false,
+        ambiguityReason: "NEW_CHILD_PATH_CONFIRMATION_LOST",
+        candidate: {
+          pid: intervening.pid,
+          parentPid: intervening.parentPid,
+          name: intervening.name,
+          creationDate: intervening.creationDate
+        }
+      });
+      expect(queries).toBe(1);
+    }
+  );
+
+  it("fails if a partial service child disappears before its path is proven", async () => {
     const root = ownedProcess({
       pid: 4100,
       parentPid: 5100,
@@ -878,7 +1247,7 @@ describe("packaged process inventory", () => {
     });
   });
 
-  it("confirms multiple partial descendants one exact identity at a time", async () => {
+  it("confirms multiple partial descendants across separate bounded adoptions", async () => {
     const root = ownedProcess({
       pid: 4100,
       parentPid: 5100,
@@ -910,8 +1279,8 @@ describe("packaged process inventory", () => {
     };
     let query = 0;
 
-    const adopted = await adoptVerifiedProcessTreeWithPathConfirmation({
-      current: [root, partialParent, partialChild],
+    const parentAdoption = await adoptVerifiedProcessTreeWithPathConfirmation({
+      current: [root, partialParent],
       baseline: [],
       owned: [root],
       rootPid: root.pid,
@@ -921,9 +1290,23 @@ describe("packaged process inventory", () => {
       delay: async () => undefined,
       queryCurrent: async () => {
         query += 1;
-        return query === 1
-          ? [root, exactParent, partialChild]
-          : [root, exactParent, exactChild];
+        return [root, exactParent];
+      }
+    });
+    const adopted = await adoptVerifiedProcessTreeWithPathConfirmation({
+      current: [root, exactParent, partialChild],
+      baseline: [],
+      owned: parentAdoption.ownedProcesses,
+      confirmedExitedTransientProcesses:
+        parentAdoption.confirmedExitedTransientProcesses,
+      rootPid: root.pid,
+      packaged,
+      deadlineAt: 10_000,
+      now: () => 0,
+      delay: async () => undefined,
+      queryCurrent: async () => {
+        query += 1;
+        return [root, exactParent, exactChild];
       }
     });
 
@@ -933,6 +1316,7 @@ describe("packaged process inventory", () => {
         { ...exactParent, kind: "service" },
         { ...exactChild, kind: "service" }
       ],
+      confirmedExitedTransientProcesses: [],
       observedProcesses: [root, exactParent, exactChild]
     });
     expect(query).toBe(2);

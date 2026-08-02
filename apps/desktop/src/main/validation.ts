@@ -996,7 +996,13 @@ function validateJob(value: unknown): Job {
   const job = expectRecord(value, "job");
   parseIdentifier(job.jobId, "jobId");
   parseIdentifier(job.projectId, "projectId");
-  if (job.type !== "extract_document" && job.type !== "analyze_story") {
+  if (
+    job.type !== "extract_document" &&
+    job.type !== "analyze_story" &&
+    job.type !== "analyze_whole_book" &&
+    job.type !== "analyze_casting" &&
+    job.type !== "generate_audition"
+  ) {
     throw new ValidationError("Job type is invalid.");
   }
   if (

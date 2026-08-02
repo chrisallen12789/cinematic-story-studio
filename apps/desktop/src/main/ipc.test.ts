@@ -37,11 +37,119 @@ import type { ServiceManager } from "./service-manager";
 
 beforeEach(() => {
   electronMocks.handlers.clear();
+  electronMocks.dialog.showOpenDialog.mockReset();
   electronMocks.ipcMain.handle.mockClear();
   electronMocks.ipcMain.removeHandler.mockClear();
 });
 
 describe("desktop main active project session", () => {
+  it("keeps the selected model ZIP path in main and forwards only a bounded upload", async () => {
+    const applySelectedLocalModelPackage = vi.fn(async () => ({
+      correlationId: "correlation-model-install",
+      installation: { modelPackageId: "kokoro-package-1" },
+      verification: null
+    }));
+    const api = {
+      openProject: vi.fn(async () =>
+        projectDetail("project-a", "job-project-a")
+      ),
+      applySelectedLocalModelPackage
+    } as unknown as BackendApiClient;
+    const harness = registerHarness(api, preferenceStore());
+    const request = {
+      projectId: "project-a",
+      modelPackageId: "kokoro-package-1",
+      expectedManifestFingerprint: "a".repeat(64),
+      expectedInstallationRevision: null,
+      operation: "install",
+      acknowledgeRestrictedLocalUse: true,
+      reason: "Install exact local bytes for restricted audition use only.",
+      idempotencyKey: "model-install-1"
+    } as const;
+    electronMocks.dialog.showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ["C:\\private\\kokoro-package.zip"]
+    });
+
+    try {
+      await harness.invoke(IPC_CHANNELS.projectsOpen, {
+        projectId: "project-a"
+      });
+      await expect(
+        harness.invoke(
+          IPC_CHANNELS.auditionsSelectLocalModelPackage,
+          request
+        )
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { correlationId: "correlation-model-install" }
+      });
+      expect(applySelectedLocalModelPackage).toHaveBeenCalledWith(
+        request,
+        "C:\\private\\kokoro-package.zip"
+      );
+      expect(electronMocks.dialog.showOpenDialog).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          properties: ["openFile", "dontAddToRecent"],
+          filters: [{ name: "Model package ZIP", extensions: ["zip"] }]
+        })
+      );
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("routes a bounded review-history request only for the active project", async () => {
+    const listAuditionReviewDecisions = vi.fn(async () => ({
+      correlationId: "correlation-review-history",
+      projectId: "project-a",
+      gateId: "per_role_audition_review",
+      roleId: "role-1",
+      items: [],
+      pageSize: 0,
+      total: 0
+    }));
+    const api = {
+      openProject: vi.fn(async () =>
+        projectDetail("project-a", "job-project-a")
+      ),
+      listAuditionReviewDecisions
+    } as unknown as BackendApiClient;
+    const harness = registerHarness(api, preferenceStore());
+    const request = {
+      projectId: "project-a",
+      gateId: "per_role_audition_review",
+      roleId: "role-1",
+      cursor: "opaque-page-2",
+      limit: 25
+    } as const;
+
+    try {
+      await harness.invoke(IPC_CHANNELS.projectsOpen, {
+        projectId: "project-a"
+      });
+      await expect(
+        harness.invoke(IPC_CHANNELS.auditionsListReviewDecisions, request)
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { correlationId: "correlation-review-history" }
+      });
+      expect(listAuditionReviewDecisions).toHaveBeenCalledWith(request);
+      await expect(
+        harness.invoke(IPC_CHANNELS.auditionsListReviewDecisions, {
+          ...request,
+          projectId: "project-b"
+        })
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: "PROJECT_CONTEXT_MISMATCH" }
+      });
+    } finally {
+      harness.dispose();
+    }
+  });
+
   it("isolates project and job ownership and rejects a stale selection", () => {
     const session = new ActiveProjectSession();
     const projectASelection = session.beginSelection();

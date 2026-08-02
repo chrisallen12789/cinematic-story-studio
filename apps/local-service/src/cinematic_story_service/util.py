@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
@@ -17,6 +18,7 @@ ANALYZER_VERSION = "1.0.0"
 CHECKPOINT_SCHEMA_VERSION = 1
 
 _UNSAFE_FILENAME_CHARS = re.compile(r'[\x00-\x1f<>:"|?*;&`$]')
+_WINDOWS_REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
 def utc_now() -> str:
@@ -83,7 +85,29 @@ def resolve_beneath(root: Path, relative: str | Path) -> Path:
 
 
 def ensure_private_directory(path: Path) -> Path:
+    try:
+        existing = path.lstat()
+    except FileNotFoundError:
+        existing = None
+    if existing is not None and (
+        stat.S_ISLNK(existing.st_mode)
+        or bool(
+            int(getattr(existing, "st_file_attributes", 0))
+            & _WINDOWS_REPARSE_POINT_ATTRIBUTE
+        )
+    ):
+        raise ValueError("Private storage directories must not be links or reparse points.")
     path.mkdir(parents=True, exist_ok=True)
+    created = path.lstat()
+    if (
+        not stat.S_ISDIR(created.st_mode)
+        or stat.S_ISLNK(created.st_mode)
+        or bool(
+            int(getattr(created, "st_file_attributes", 0))
+            & _WINDOWS_REPARSE_POINT_ATTRIBUTE
+        )
+    ):
+        raise ValueError("Private storage directories must be ordinary directories.")
     try:
         os.chmod(path, 0o700)
     except OSError:

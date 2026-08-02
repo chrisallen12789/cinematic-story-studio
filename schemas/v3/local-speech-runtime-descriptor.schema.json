@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/local-speech-runtime-descriptor.schema.json",
+  "title": "LocalSpeechRuntimeDescriptor",
+  "$ref": "local-speech-auditions.schema.json#/$defs/LocalSpeechRuntimeDescriptor"
+}

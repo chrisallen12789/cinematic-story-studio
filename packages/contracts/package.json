@@ -28,6 +28,10 @@
       "types": "./dist/voice-casting.d.ts",
       "default": "./dist/voice-casting.js"
     },
+    "./local-speech-auditions": {
+      "types": "./dist/local-speech-auditions.d.ts",
+      "default": "./dist/local-speech-auditions.js"
+    },
     "./api": {
       "types": "./dist/api.d.ts",
       "default": "./dist/api.js"

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cinematic-story-studio.dev/v3/voice-runtime-binding.schema.json",
+  "title": "VoiceRuntimeBinding",
+  "$ref": "local-speech-auditions.schema.json#/$defs/VoiceRuntimeBinding"
+}

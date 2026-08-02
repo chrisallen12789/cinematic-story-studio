@@ -32,8 +32,14 @@ import {
 } from "../shared/desktop-api";
 import { AnalysisWorkspace } from "./AnalysisWorkspace";
 import { CastingWorkspace } from "./CastingWorkspace";
+import { AuditionsWorkspace } from "./AuditionsWorkspace";
 
-type WorkspaceView = "studio" | "analysis" | "casting" | "systems";
+type WorkspaceView =
+  | "studio"
+  | "analysis"
+  | "casting"
+  | "auditions"
+  | "systems";
 
 interface DialogueDraft {
   readonly characterId: string;
@@ -857,6 +863,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
                 ["studio", "Story"],
                 ["analysis", "Analysis"],
                 ["casting", "Casting"],
+                ["auditions", "Auditions"],
                 ["systems", "Systems"]
               ] as const
             ).map(([value, label]) => (
@@ -984,6 +991,15 @@ export function App({ api = window.cinematicStory }: AppProps) {
           />
         ) : view === "casting" ? (
           <CastingWorkspace
+            key={project.project.projectId}
+            project={project}
+            api={api}
+            connected={connected}
+            onNotice={setNotice}
+            onError={setError}
+          />
+        ) : view === "auditions" ? (
+          <AuditionsWorkspace
             key={project.project.projectId}
             project={project}
             api={api}

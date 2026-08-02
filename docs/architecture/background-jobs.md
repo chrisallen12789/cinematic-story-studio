@@ -163,3 +163,20 @@ only states, stages, counts, progress, IDs, and redacted codes—never manuscrip
 text, candidate rationale, correction values, rights documents, provider
 payloads, or credentials. See
 [casting jobs, recovery, and scale](casting-jobs-and-recovery.md).
+
+Phase 3B adds `generate_audition`, targeted to one immutable audition-session
+revision. Its hash-only payload contains only schema version, session ID,
+script ID, and request fingerprint. The durable `speech_audition` checkpoint
+advances through prerequisite/rights/assignment validation, model/runtime
+resolution, pronunciation/normalization compilation, private cache lookup,
+synthesis or verified hit, WAV/QC validation, atomic publication, and runtime
+release. Checkpoints and events contain IDs, fingerprints, counts, stages, and
+redacted codes only—never text, pronunciation values, model paths, cache keys,
+audio bytes, or secrets.
+
+Cancellation is honored before each external or publication boundary. A
+failed, cancelled, or interrupted attempt cannot publish a successful clip.
+Retry must revalidate all frozen evidence and acquire a fresh authenticated
+runtime identity; a prior model or runtime process is never adopted by PID or
+name. See
+[audition sessions, cache, and governance](audition-sessions-cache-and-governance.md).

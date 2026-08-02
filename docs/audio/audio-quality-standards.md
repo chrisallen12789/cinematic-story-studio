@@ -73,3 +73,43 @@ An unavailable required measurement is a blocker. Listening review complements
 measurement; it never replaces missing technical evidence. No documentation,
 UI, or agent may describe an audio capability as working until an executable
 test or recorded manual verification supports it.
+
+## Phase 3B audition integrity profile
+
+Short Phase 3B auditions are source previews, not production masters, and use a
+separate `audition-pcm-wav-integrity` profile: RIFF/WAVE, uncompressed signed
+16-bit PCM, 24 kHz, mono, nonzero frames, at most 30 seconds, and at most
+24 MiB. The service records frame count, duration, byte size/SHA-256, sample
+rate/channels/width, peak dBFS, silence ratio, clipped-sample count, blocking
+codes, warning codes, tool/profile version, and provenance before atomic
+publication or cache acceptance.
+
+The version 1 profile uses deterministic, boundary-exclusive warning and
+blocking thresholds:
+
+| Measurement | Warning | Blocking |
+|---|---:|---:|
+| Duration | below 500 ms or above 20,000 ms | below 100 ms or above 30,000 ms |
+| RMS level | below -40 dBFS | all frames silent |
+| Silent-frame ratio | above 700,000 ppm (70%) | all frames silent |
+| Integer samples at either PCM limit | one or more samples | above 1,000 ppm (0.1%) |
+| Provider output profile | any channel, sample-rate, or sample-width mismatch | any such mismatch |
+
+Values exactly on the 500 ms, 20,000 ms, 70%, or 0.1% warning/blocker
+thresholds remain on the non-escalated side. The clipped-sample count is the
+exact number of interleaved integer samples equal to the signed PCM minimum or
+maximum, rather than a Boolean indicator. Silence is measured per frame using
+the inspector's fixed -60 dBFS threshold. These thresholds and the hard format,
+size, and duration limits are included in the profile fingerprint.
+
+Malformed, empty, oversized, excessive-duration, silent, excessively clipped,
+or path/hash/metadata-inconsistent output is blocking. Clipping risk, low
+level, high silence ratio, unusual in-bounds duration, and provider-profile
+mismatch remain explicit warnings; they are never silently repaired. These
+checks establish format and signal integrity only.
+They do not establish speech intelligibility, naturalness, voice likeness,
+artistic fit, consent, commercial clearance, or production readiness. A human
+must listen before an audition decision. The private Kokoro result is component-
+only evidence; the governed product has no Phase 3A voice/profile/assignment/
+rights binding for `af_heart`, so product use remains unavailable until that
+binding and separate legal/rights review exist.

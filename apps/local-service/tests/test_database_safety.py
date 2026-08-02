@@ -303,14 +303,14 @@ def test_database_holds_exclusive_lock_for_exact_data_directory(tmp_path: Path) 
     reopened.close()
 
 
-def test_database_initializes_schema_v4_with_contiguous_ledger(tmp_path: Path) -> None:
-    database_path = tmp_path / "schema-v4" / "studio.sqlite3"
+def test_database_initializes_schema_v5_with_contiguous_ledger(tmp_path: Path) -> None:
+    database_path = tmp_path / "schema-v5" / "studio.sqlite3"
     database = Database(database_path)
     database.close()
     reopened = Database(database_path)
     reopened.close()
 
-    assert _sqlite_value(database_path, "PRAGMA user_version") == 4
+    assert _sqlite_value(database_path, "PRAGMA user_version") == 5
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
             "SELECT version, service_version FROM schema_migrations ORDER BY version"
@@ -324,6 +324,7 @@ def test_database_initializes_schema_v4_with_contiguous_ledger(tmp_path: Path) -
         (2, "0.1.0"),
         (3, "0.1.0"),
         (4, "0.1.0"),
+        (5, "0.1.0"),
     ]
     assert {"document_extractions", "parser_executions", "import_reviews"} <= tables
 
@@ -384,10 +385,10 @@ def test_database_rejects_v1_without_matching_ledger(tmp_path: Path) -> None:
     assert "schema_migrations" not in tables
 
 
-def test_database_rejects_incomplete_same_version_v4_without_mutation(
+def test_database_rejects_incomplete_same_version_v5_without_mutation(
     tmp_path: Path,
 ) -> None:
-    database_path = tmp_path / "incomplete-v4" / "studio.sqlite3"
+    database_path = tmp_path / "incomplete-v5" / "studio.sqlite3"
     database = Database(database_path)
     database.close()
     with sqlite3.connect(database_path) as connection:
@@ -395,8 +396,8 @@ def test_database_rejects_incomplete_same_version_v4_without_mutation(
         connection.execute("DROP TABLE parser_executions")
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,)]
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
     before = _database_file_image(database_path)
 
     with pytest.raises(ServiceError) as raised:
@@ -406,7 +407,7 @@ def test_database_rejects_incomplete_same_version_v4_without_mutation(
     assert raised.value.message == "The project database schema is not supported by this service."
     assert _database_file_image(database_path) == before
     assert _sqlite_value(database_path, "PRAGMA journal_mode") == "delete"
-    assert _sqlite_value(database_path, "PRAGMA user_version") == 4
+    assert _sqlite_value(database_path, "PRAGMA user_version") == 5
 
 
 @pytest.mark.parametrize(
@@ -458,13 +459,13 @@ def test_database_rejects_incomplete_same_version_v4_without_mutation(
         "critical-check-constraint",
     ],
 )
-def test_database_rejects_tampered_same_version_v4_signature_without_mutation(
+def test_database_rejects_tampered_same_version_v5_signature_without_mutation(
     tmp_path: Path,
     table_name: str,
     expected_fragment: str,
     replacement_fragment: str,
 ) -> None:
-    database_path = tmp_path / f"tampered-v4-{table_name}" / "studio.sqlite3"
+    database_path = tmp_path / f"tampered-v5-{table_name}" / "studio.sqlite3"
     database = Database(database_path)
     database.close()
     _tamper_current_table_definition(
@@ -474,10 +475,10 @@ def test_database_rejects_tampered_same_version_v4_signature_without_mutation(
         replacement_fragment=replacement_fragment,
     )
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
     before = _database_file_image(database_path)
 
     with pytest.raises(ServiceError) as raised:
@@ -489,11 +490,11 @@ def test_database_rejects_tampered_same_version_v4_signature_without_mutation(
     assert str(database_path) not in raised.value.message
     assert _database_file_image(database_path) == before
     assert _sqlite_value(database_path, "PRAGMA journal_mode") == "delete"
-    assert _sqlite_value(database_path, "PRAGMA user_version") == 4
+    assert _sqlite_value(database_path, "PRAGMA user_version") == 5
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
 
 
 @pytest.mark.parametrize(
@@ -512,12 +513,12 @@ def test_database_rejects_tampered_same_version_v4_signature_without_mutation(
     ],
     ids=["trigger", "view"],
 )
-def test_database_rejects_unrecognized_v4_objects_without_mutation(
+def test_database_rejects_unrecognized_v5_objects_without_mutation(
     tmp_path: Path,
     object_name: str,
     statement: str,
 ) -> None:
-    database_path = tmp_path / f"tampered-v4-{object_name}" / "studio.sqlite3"
+    database_path = tmp_path / f"tampered-v5-{object_name}" / "studio.sqlite3"
     database = Database(database_path)
     database.close()
     with sqlite3.connect(database_path) as connection:
@@ -535,8 +536,8 @@ def test_database_rejects_unrecognized_v4_objects_without_mutation(
     assert _sqlite_value(database_path, "PRAGMA journal_mode") == "delete"
 
 
-def test_database_rejects_missing_v4_index_without_mutation(tmp_path: Path) -> None:
-    database_path = tmp_path / "tampered-v4-index" / "studio.sqlite3"
+def test_database_rejects_missing_v5_index_without_mutation(tmp_path: Path) -> None:
+    database_path = tmp_path / "tampered-v5-index" / "studio.sqlite3"
     database = Database(database_path)
     database.close()
     with sqlite3.connect(database_path) as connection:
@@ -588,7 +589,7 @@ def test_database_rejects_forged_incomplete_v1_before_backup_or_wal(
     assert _sqlite_value(database_path, "PRAGMA user_version") == 1
 
 
-def test_v1_to_v4_migration_preserves_phase0_history_and_verified_backup(
+def test_v1_to_v5_migration_preserves_phase0_history_and_verified_backups(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "phase0-upgrade" / "studio.sqlite3"
@@ -600,7 +601,7 @@ def test_v1_to_v4_migration_preserves_phase0_history_and_verified_backup(
 
     assert backup_path.exists()
     assert _sqlite_value(backup_path, "PRAGMA user_version") == 1
-    assert _sqlite_value(database_path, "PRAGMA user_version") == 4
+    assert _sqlite_value(database_path, "PRAGMA user_version") == 5
     with sqlite3.connect(backup_path) as backup:
         assert backup.execute(
             "SELECT exact_text FROM imported_stories WHERE id = 'story-2'"
@@ -613,7 +614,7 @@ def test_v1_to_v4_migration_preserves_phase0_history_and_verified_backup(
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
         assert connection.execute(
             "SELECT id, source_revision, supersedes_document_id, extraction_status "
             "FROM source_documents ORDER BY source_revision"
@@ -692,7 +693,7 @@ def test_v1_to_v4_migration_preserves_phase0_history_and_verified_backup(
         assert "sqlite_autoindex_source_documents_2" in indexes
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
-    # Reopening v4 is idempotent and does not replace the retained v1 image.
+    # Reopening v5 is idempotent and does not replace the retained v1 image.
     original_backup = backup_path.read_bytes()
     reopened = Database(database_path)
     reopened.close()
@@ -772,7 +773,7 @@ def test_v1_migration_failure_rolls_back_database_but_retains_recovery_backup(
     # A later clean launch safely reuses the already verified backup and completes.
     recovered = Database(database_path)
     recovered.close()
-    assert _sqlite_value(database_path, "PRAGMA user_version") == 4
+    assert _sqlite_value(database_path, "PRAGMA user_version") == 5
 
 
 def test_v1_migration_rejects_invalid_v2_signature_before_commit(
@@ -821,7 +822,7 @@ def test_v1_migration_rejects_invalid_v2_signature_before_commit(
 
     recovered = Database(database_path)
     recovered.close()
-    assert _sqlite_value(database_path, "PRAGMA user_version") == 4
+    assert _sqlite_value(database_path, "PRAGMA user_version") == 5
 
 
 def test_v1_migration_foreign_key_failure_is_detected_before_commit(
@@ -863,7 +864,7 @@ def test_v1_migration_foreign_key_failure_is_detected_before_commit(
 
     recovered = Database(database_path)
     recovered.close()
-    assert _sqlite_value(database_path, "PRAGMA user_version") == 4
+    assert _sqlite_value(database_path, "PRAGMA user_version") == 5
 
 
 def test_fresh_v4_signature_failure_rolls_back_schema_before_commit(

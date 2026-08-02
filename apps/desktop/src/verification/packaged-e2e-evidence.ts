@@ -151,7 +151,7 @@ export interface RedactedRelevantProcess {
 export interface MachineOwnedProcess {
   readonly pid: number;
   readonly parentPid: number;
-  readonly kind: "app" | "service";
+  readonly kind: "app" | "service" | "provider_worker";
   readonly executableName: string;
   readonly creationDate: string;
 }

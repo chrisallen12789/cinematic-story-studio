@@ -61,6 +61,41 @@ import type {
   ProductionRolesResponse,
   VoiceCatalogResponse
 } from "./casting-api.js";
+import type {
+  AppendPronunciationEntryInput,
+  AuditionAudioPayload,
+  AuditionClipsResponse,
+  AuditionReviewDecisionsResponse,
+  AuditionSessionsResponse,
+  AuditionWorkspaceResponse,
+  ClearAuditionCacheInput,
+  ClearAuditionCacheResponse,
+  CreateAuditionScriptInput,
+  CreateAuditionScriptResponse,
+  CreateAuditionSessionInput,
+  CreateAuditionSessionResponse,
+  CreatePronunciationEntryResponse,
+  DecideAuditionReviewInput,
+  DecideAuditionReviewResponse,
+  DecidePronunciationEntryInput,
+  DecidePronunciationEntryResponse,
+  GenerateAuditionInput,
+  GenerateAuditionResponse,
+  GetAuditionWorkspaceInput,
+  ListAuditionClipsInput,
+  ListAuditionReviewDecisionsInput,
+  ListAuditionSessionsInput,
+  ListModelPackagesInput,
+  ListPronunciationEntriesInput,
+  LoadAuditionAudioInput,
+  ModelPackageActionResponse,
+  ModelPackagesResponse,
+  PerformModelPackageActionInput,
+  SelectLocalModelPackageInput,
+  PreviewAuditionNormalizationInput,
+  PreviewNormalizationResponse,
+  PronunciationEntriesResponse
+} from "./audition-api.js";
 
 export type {
   AnalysisProjectInput,
@@ -101,6 +136,23 @@ export const IPC_CHANNELS = {
   castingAppendCorrection: "css:casting:append-correction",
   castingListReviews: "css:casting:list-reviews",
   castingDecideReview: "css:casting:decide-review",
+  auditionsGetWorkspace: "css:auditions:get-workspace",
+  auditionsListModelPackages: "css:auditions:list-model-packages",
+  auditionsModelPackageAction: "css:auditions:model-package-action",
+  auditionsSelectLocalModelPackage: "css:auditions:select-local-model-package",
+  auditionsListPronunciations: "css:auditions:list-pronunciations",
+  auditionsAppendPronunciation: "css:auditions:append-pronunciation",
+  auditionsDecidePronunciation: "css:auditions:decide-pronunciation",
+  auditionsClearCache: "css:auditions:clear-cache",
+  auditionsListSessions: "css:auditions:list-sessions",
+  auditionsCreateSession: "css:auditions:create-session",
+  auditionsCreateScript: "css:auditions:create-script",
+  auditionsPreviewNormalization: "css:auditions:preview-normalization",
+  auditionsGenerate: "css:auditions:generate",
+  auditionsListClips: "css:auditions:list-clips",
+  auditionsListReviewDecisions: "css:auditions:list-review-decisions",
+  auditionsLoadAudio: "css:auditions:load-audio",
+  auditionsDecideReview: "css:auditions:decide-review",
   dialogueCorrectSpeaker: "css:dialogue:correct-speaker",
   jobsCreate: "css:jobs:create",
   jobsGet: "css:jobs:get",
@@ -293,6 +345,59 @@ export interface CinematicStoryDesktopApi {
     readonly decideReview: (
       input: DecideCastingReviewInput
     ) => Promise<DesktopResult<DecideCastingReviewResponse>>;
+  };
+  readonly auditions: {
+    readonly getWorkspace: (
+      input: GetAuditionWorkspaceInput
+    ) => Promise<DesktopResult<AuditionWorkspaceResponse>>;
+    readonly listModelPackages: (
+      input: ListModelPackagesInput
+    ) => Promise<DesktopResult<ModelPackagesResponse>>;
+    readonly performModelPackageAction: (
+      input: PerformModelPackageActionInput
+    ) => Promise<DesktopResult<ModelPackageActionResponse>>;
+    readonly selectLocalModelPackage: (
+      input: SelectLocalModelPackageInput
+    ) => Promise<DesktopResult<ModelPackageActionResponse | null>>;
+    readonly listPronunciations: (
+      input: ListPronunciationEntriesInput
+    ) => Promise<DesktopResult<PronunciationEntriesResponse>>;
+    readonly appendPronunciation: (
+      input: AppendPronunciationEntryInput
+    ) => Promise<DesktopResult<CreatePronunciationEntryResponse>>;
+    readonly decidePronunciation: (
+      input: DecidePronunciationEntryInput
+    ) => Promise<DesktopResult<DecidePronunciationEntryResponse>>;
+    readonly clearCache: (
+      input: ClearAuditionCacheInput
+    ) => Promise<DesktopResult<ClearAuditionCacheResponse>>;
+    readonly listSessions: (
+      input: ListAuditionSessionsInput
+    ) => Promise<DesktopResult<AuditionSessionsResponse>>;
+    readonly createSession: (
+      input: CreateAuditionSessionInput
+    ) => Promise<DesktopResult<CreateAuditionSessionResponse>>;
+    readonly createScript: (
+      input: CreateAuditionScriptInput
+    ) => Promise<DesktopResult<CreateAuditionScriptResponse>>;
+    readonly previewNormalization: (
+      input: PreviewAuditionNormalizationInput
+    ) => Promise<DesktopResult<PreviewNormalizationResponse>>;
+    readonly generate: (
+      input: GenerateAuditionInput
+    ) => Promise<DesktopResult<GenerateAuditionResponse>>;
+    readonly listClips: (
+      input: ListAuditionClipsInput
+    ) => Promise<DesktopResult<AuditionClipsResponse>>;
+    readonly listReviewDecisions: (
+      input: ListAuditionReviewDecisionsInput
+    ) => Promise<DesktopResult<AuditionReviewDecisionsResponse>>;
+    readonly loadAudio: (
+      input: LoadAuditionAudioInput
+    ) => Promise<DesktopResult<AuditionAudioPayload>>;
+    readonly decideReview: (
+      input: DecideAuditionReviewInput
+    ) => Promise<DesktopResult<DecideAuditionReviewResponse>>;
   };
   readonly jobs: {
     readonly create: (

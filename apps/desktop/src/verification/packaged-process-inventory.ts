@@ -31,15 +31,48 @@ export type ProcessInventoryFailureCode =
   | "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY"
   | "PROCESS_INVENTORY_UNSUPPORTED_PLATFORM";
 
+export type ProcessInventoryAmbiguityReason =
+  | "NEW_CHILD_PREDATES_ROOT"
+  | "NEW_CHILD_PREDATES_PARENT"
+  | "NEW_CHILD_PATH_UNAVAILABLE"
+  | "NEW_CHILD_PATH_CONFIRMATION_LOST"
+  | "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT"
+  | "NEW_CHILD_PATH_MISMATCH";
+
+export interface PendingProcessIdentity {
+  readonly pid: number;
+  readonly parentPid: number;
+  readonly name: string;
+  readonly creationDate: string;
+}
+
 export class ProcessInventoryError extends Error {
   readonly code: ProcessInventoryFailureCode;
   readonly retryable: boolean;
+  readonly ambiguityReason: ProcessInventoryAmbiguityReason | null;
+  readonly candidate: PendingProcessIdentity | null;
 
-  constructor(code: ProcessInventoryFailureCode, retryable: boolean) {
-    super(processInventoryMessage(code));
+  constructor(
+    code: ProcessInventoryFailureCode,
+    retryable: boolean,
+    ambiguityReason: ProcessInventoryAmbiguityReason | null = null,
+    candidate: PendingProcessIdentity | null = null
+  ) {
+    const message = processInventoryMessage(code);
+    const candidateMessage =
+      candidate === null
+        ? ""
+        : ` Candidate: pid=${candidate.pid}, parentPid=${candidate.parentPid}, name=${candidate.name}, creationDate=${candidate.creationDate}.`;
+    super(
+      ambiguityReason === null
+        ? `${message}${candidateMessage}`
+        : `${message} Reason: ${ambiguityReason}.${candidateMessage}`
+    );
     this.name = "ProcessInventoryError";
     this.code = code;
     this.retryable = retryable;
+    this.ambiguityReason = ambiguityReason;
+    this.candidate = candidate === null ? null : { ...candidate };
   }
 }
 
@@ -52,7 +85,7 @@ export interface ProcessIdentity {
 }
 
 export interface OwnedProcess extends ProcessIdentity {
-  readonly kind: "app" | "service";
+  readonly kind: "app" | "service" | "provider_worker";
 }
 
 export interface PackagedProcessPaths {
@@ -63,6 +96,7 @@ export interface PackagedProcessPaths {
 export interface ProcessCommandRequest {
   readonly command: string;
   readonly arguments: readonly string[];
+  readonly environment?: NodeJS.ProcessEnv;
   readonly timeoutMs: number;
   readonly maximumOutputBytes: number;
 }
@@ -101,6 +135,30 @@ export interface AdoptProcessTreeInput {
   readonly owned: readonly OwnedProcess[];
   readonly rootPid: number;
   readonly packaged: PackagedProcessPaths;
+}
+
+export interface ConfirmedProcessTreeAdoptionInput
+  extends AdoptProcessTreeInput {
+  readonly queryCurrent: (
+    deadlineAt: number
+  ) => Promise<readonly ProcessIdentity[]>;
+  readonly deadlineAt: number;
+  readonly now?: () => number;
+  readonly delay?: (milliseconds: number) => Promise<void>;
+  readonly confirmationWindowMs?: number;
+  readonly confirmationPollMs?: number;
+}
+
+export interface ConfirmedProcessTreeAdoption {
+  readonly ownedProcesses: readonly OwnedProcess[];
+  readonly observedProcesses: readonly ProcessIdentity[];
+}
+
+export interface BindProviderWorkerProcessTreeInput {
+  readonly owned: readonly OwnedProcess[];
+  readonly rootPid: number;
+  readonly workerPid: number;
+  readonly reportedParentPid: number;
 }
 
 const processInventoryScript = [
@@ -316,12 +374,46 @@ export function adoptVerifiedProcessTree({
           false
         );
       }
+      if (item.creationDate < root.creationDate) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PREDATES_ROOT",
+          pendingProcessIdentity(item)
+        );
+      }
+      if (item.creationDate < verifiedParent.creationDate) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PREDATES_PARENT",
+          pendingProcessIdentity(item)
+        );
+      }
+      if (item.executablePath === null) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          true,
+          "NEW_CHILD_PATH_UNAVAILABLE",
+          pendingProcessIdentity(item)
+        );
+      }
+      if (!matchesPackagedProcessPath(item, packaged)) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_MISMATCH",
+          pendingProcessIdentity(item)
+        );
+      }
       if (
-        item.creationDate < root.creationDate ||
-        item.creationDate < verifiedParent.creationDate ||
-        item.executablePath === null ||
-        !matchesPackagedProcessPath(item, packaged)
+        item.name !== serviceExecutableName &&
+        verifiedParent.kind !== "app"
       ) {
+        /*
+         * Electron descendants may only descend from the Electron side of
+         * the owned tree. The service image never launches the application.
+         */
         throw new ProcessInventoryError(
           "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
           false
@@ -330,6 +422,7 @@ export function adoptVerifiedProcessTree({
       if (
         item.name === serviceExecutableName &&
         verifiedParent.kind !== "service" &&
+        verifiedParent.kind !== "provider_worker" &&
         result.some((candidate) => candidate.kind === "service")
       ) {
         /*
@@ -345,7 +438,11 @@ export function adoptVerifiedProcessTree({
       result.push({
         ...item,
         kind:
-          item.name === serviceExecutableName ? "service" : "app"
+          item.name === serviceExecutableName
+            ? verifiedParent.kind === "provider_worker"
+              ? "provider_worker"
+              : "service"
+            : "app"
       });
       adoptedInPass = true;
     }
@@ -381,6 +478,233 @@ export function adoptVerifiedProcessTree({
     );
   }
   return result.sort((left, right) => left.pid - right.pid);
+}
+
+export async function adoptVerifiedProcessTreeWithPathConfirmation({
+  current: initialCurrent,
+  baseline,
+  owned,
+  rootPid,
+  packaged,
+  queryCurrent,
+  deadlineAt,
+  now = () => performance.now(),
+  delay = boundedDelay,
+  confirmationWindowMs = 5_000,
+  confirmationPollMs = 100
+}: ConfirmedProcessTreeAdoptionInput): Promise<ConfirmedProcessTreeAdoption> {
+  if (
+    !Number.isFinite(deadlineAt) ||
+    !Number.isSafeInteger(confirmationWindowMs) ||
+    confirmationWindowMs <= 0 ||
+    confirmationWindowMs > 5_000 ||
+    !Number.isSafeInteger(confirmationPollMs) ||
+    confirmationPollMs <= 0 ||
+    confirmationPollMs > confirmationWindowMs
+  ) {
+    throw new Error("The process path-confirmation policy is invalid.");
+  }
+
+  let current = initialCurrent;
+  let pending: PendingProcessIdentity | null = null;
+  let confirmationDeadline = deadlineAt;
+  while (true) {
+    if (pending !== null) {
+      if (now() >= confirmationDeadline) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+          pending
+        );
+      }
+      const expectedPending = pending;
+      const observed = current.find((item) =>
+        samePendingProcessIdentity(item, expectedPending)
+      );
+      if (observed === undefined) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_LOST",
+          pending
+        );
+      }
+      if (observed.executablePath === null) {
+        if (now() >= confirmationDeadline) {
+          throw new ProcessInventoryError(
+            "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+            false,
+            "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+            pending
+          );
+        }
+        await delay(
+          Math.max(
+            1,
+            Math.min(confirmationPollMs, confirmationDeadline - now())
+          )
+        );
+        if (now() >= confirmationDeadline) {
+          throw new ProcessInventoryError(
+            "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+            false,
+            "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+            pending
+          );
+        }
+        current = await queryCurrent(confirmationDeadline);
+        continue;
+      }
+    }
+
+    try {
+      return {
+        ownedProcesses: adoptVerifiedProcessTree({
+          current,
+          baseline,
+          owned,
+          rootPid,
+          packaged
+        }),
+        observedProcesses: current
+      };
+    } catch (error) {
+      if (
+        !(error instanceof ProcessInventoryError) ||
+        error.code !== "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY" ||
+        error.retryable !== true ||
+        error.ambiguityReason !== "NEW_CHILD_PATH_UNAVAILABLE" ||
+        error.candidate === null
+      ) {
+        throw error;
+      }
+      pending = error.candidate;
+      confirmationDeadline = Math.min(
+        deadlineAt,
+        now() + confirmationWindowMs
+      );
+      if (now() >= confirmationDeadline) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+          pending
+        );
+      }
+      await delay(
+        Math.max(
+          1,
+          Math.min(confirmationPollMs, confirmationDeadline - now())
+        )
+      );
+      if (now() >= confirmationDeadline) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+          pending
+        );
+      }
+      current = await queryCurrent(confirmationDeadline);
+    }
+  }
+}
+
+/**
+ * Reclassify only the already-owned service-image lineage that terminates at
+ * the runtime-reported worker PID. The runtime identity is not trusted to add
+ * ownership: every PID must first have been adopted by exact executable path,
+ * creation identity, and ancestry from the Electron root.
+ */
+export function bindProviderWorkerProcessTree({
+  owned,
+  rootPid,
+  workerPid,
+  reportedParentPid
+}: BindProviderWorkerProcessTreeInput): readonly OwnedProcess[] {
+  if (
+    !Number.isSafeInteger(rootPid) ||
+    rootPid <= 0 ||
+    !Number.isSafeInteger(workerPid) ||
+    workerPid <= 0 ||
+    !Number.isSafeInteger(reportedParentPid) ||
+    reportedParentPid <= 0 ||
+    workerPid === reportedParentPid
+  ) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_INVALID_IDENTITY",
+      false
+    );
+  }
+  const byPid = new Map(owned.map((item) => [item.pid, item]));
+  if (byPid.size !== owned.length) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
+  }
+  const root = byPid.get(rootPid);
+  const parent = byPid.get(reportedParentPid);
+  const worker = byPid.get(workerPid);
+  if (
+    root?.kind !== "app" ||
+    parent?.kind !== "service" ||
+    parent.name !== serviceExecutableName ||
+    worker === undefined ||
+    worker.name !== serviceExecutableName ||
+    worker.executablePath === null ||
+    parent.executablePath === null ||
+    !samePath(worker.executablePath, parent.executablePath)
+  ) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
+  }
+
+  const workerLineage = new Set<number>();
+  const visited = new Set<number>();
+  let current = worker;
+  while (current.pid !== reportedParentPid) {
+    if (
+      visited.has(current.pid) ||
+      current.pid === rootPid ||
+      current.name !== serviceExecutableName ||
+      current.executablePath === null ||
+      !samePath(current.executablePath, parent.executablePath) ||
+      current.creationDate < parent.creationDate
+    ) {
+      throw new ProcessInventoryError(
+        "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        false
+      );
+    }
+    visited.add(current.pid);
+    workerLineage.add(current.pid);
+    const next = byPid.get(current.parentPid);
+    if (next === undefined || next.creationDate > current.creationDate) {
+      throw new ProcessInventoryError(
+        "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        false
+      );
+    }
+    current = next;
+  }
+
+  if (!isOwnedDescendant(parent, rootPid, byPid)) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
+  }
+  return owned
+    .map((item) =>
+      workerLineage.has(item.pid)
+        ? { ...item, kind: "provider_worker" as const }
+        : item
+    )
+    .sort((left, right) => left.pid - right.pid);
 }
 
 export function containsProcessIdentity(
@@ -440,6 +764,44 @@ function sameStableProcessIdentity(
   return samePath(left.executablePath, right.executablePath);
 }
 
+function samePendingProcessIdentity(
+  left: ProcessIdentity,
+  right: PendingProcessIdentity
+): boolean {
+  return (
+    left.pid === right.pid &&
+    left.parentPid === right.parentPid &&
+    left.name === right.name &&
+    left.creationDate === right.creationDate
+  );
+}
+
+function pendingProcessIdentity(
+  value: ProcessIdentity
+): PendingProcessIdentity {
+  return {
+    pid: value.pid,
+    parentPid: value.parentPid,
+    name: value.name,
+    creationDate: value.creationDate
+  };
+}
+
+function isOwnedDescendant(
+  value: OwnedProcess,
+  rootPid: number,
+  byPid: ReadonlyMap<number, OwnedProcess>
+): boolean {
+  const visited = new Set<number>();
+  let current: OwnedProcess | undefined = value;
+  while (current !== undefined && current.pid !== rootPid) {
+    if (visited.has(current.pid)) return false;
+    visited.add(current.pid);
+    current = byPid.get(current.parentPid);
+  }
+  return current?.pid === rootPid;
+}
+
 export function matchesPackagedProcessPath(
   candidate: ProcessIdentity,
   packaged: PackagedProcessPaths
@@ -482,6 +844,7 @@ export async function runBoundedProcess(
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(request.command, [...request.arguments], {
+      env: request.environment,
       shell: false,
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true

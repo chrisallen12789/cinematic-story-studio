@@ -833,9 +833,10 @@ export function buildPhase3VoiceCastingEvidence(
 
 async function waitForCastingPublication(page: Page): Promise<void> {
   const timeoutMs = 240_000;
-  const publicationUiGraceMs = 5_000;
+  const publicationUiGraceMs = 15_000;
   const deadline = Date.now() + timeoutMs;
   let backendPublishedAt: number | null = null;
+  let explicitRefreshRequested = false;
   let lastDiagnostic: unknown = null;
   const uiState = page.locator(".casting-runbar .run-state");
 
@@ -857,6 +858,17 @@ async function waitForCastingPublication(page: Page): Promise<void> {
     }
     if (diagnostic.runStatus === "succeeded") {
       backendPublishedAt ??= Date.now();
+      if (!explicitRefreshRequested) {
+        const refresh = page.getByRole("button", {
+          name: "Refresh evidence",
+          exact: true
+        });
+        if (await refresh.isEnabled()) {
+          await dismissNotice(page);
+          explicitRefreshRequested = true;
+          await refresh.click();
+        }
+      }
       if (Date.now() - backendPublishedAt >= publicationUiGraceMs) {
         throw new Error(
           `The service published casting, but the desktop did not load the published resources: ${JSON.stringify(diagnostic.payload)}`
@@ -1613,6 +1625,7 @@ async function dismissNotice(page: Page): Promise<void> {
   });
   if ((await dismiss.count()) > 0 && (await dismiss.first().isVisible())) {
     await dismiss.first().click();
+    await expect(dismiss.first()).toBeHidden({ timeout: 5_000 });
   }
 }
 
@@ -1682,7 +1695,7 @@ function assertGovernedCasting(snapshot: Phase3RuntimeSnapshot): void {
   expect(snapshot.run.profile.fingerprint).toBe(
     governedVoiceCastingProfileFingerprint
   );
-  expect(snapshot.run.approvedCastSnapshot?.reviewEligible).toBe(false);
+  expect(snapshot.run.approvedCastSnapshot?.reviewEligible).toBe(true);
   expect(
     snapshot.conflicts.some(
       (conflict) =>

@@ -41,6 +41,25 @@ import type {
   ListProductionRolesInput,
   ListVoiceCatalogInput
 } from "../shared/casting-api.js";
+import type {
+  AppendPronunciationEntryInput,
+  ClearAuditionCacheInput,
+  CreateAuditionScriptInput,
+  CreateAuditionSessionInput,
+  DecideAuditionReviewInput,
+  DecidePronunciationEntryInput,
+  GenerateAuditionInput,
+  GetAuditionWorkspaceInput,
+  ListAuditionClipsInput,
+  ListAuditionReviewDecisionsInput,
+  ListAuditionSessionsInput,
+  ListModelPackagesInput,
+  ListPronunciationEntriesInput,
+  LoadAuditionAudioInput,
+  PerformModelPackageActionInput,
+  SelectLocalModelPackageInput,
+  PreviewAuditionNormalizationInput
+} from "../shared/audition-api.js";
 
 const projectScopedChannels = new Set<string>([
   IPC_CHANNELS.projectsImportSelectedFile,
@@ -68,6 +87,23 @@ const projectScopedChannels = new Set<string>([
   IPC_CHANNELS.castingAppendCorrection,
   IPC_CHANNELS.castingListReviews,
   IPC_CHANNELS.castingDecideReview,
+  IPC_CHANNELS.auditionsGetWorkspace,
+  IPC_CHANNELS.auditionsListModelPackages,
+  IPC_CHANNELS.auditionsModelPackageAction,
+  IPC_CHANNELS.auditionsSelectLocalModelPackage,
+  IPC_CHANNELS.auditionsListPronunciations,
+  IPC_CHANNELS.auditionsAppendPronunciation,
+  IPC_CHANNELS.auditionsClearCache,
+  IPC_CHANNELS.auditionsDecidePronunciation,
+  IPC_CHANNELS.auditionsListSessions,
+  IPC_CHANNELS.auditionsCreateSession,
+  IPC_CHANNELS.auditionsCreateScript,
+  IPC_CHANNELS.auditionsPreviewNormalization,
+  IPC_CHANNELS.auditionsGenerate,
+  IPC_CHANNELS.auditionsListClips,
+  IPC_CHANNELS.auditionsListReviewDecisions,
+  IPC_CHANNELS.auditionsLoadAudio,
+  IPC_CHANNELS.auditionsDecideReview,
   IPC_CHANNELS.jobsCreate
 ]);
 
@@ -166,6 +202,12 @@ async function request<TPayload, TResult>(
     const run = asRecord(asRecord(responseValue).run);
     if (typeof run.jobId === "string") {
       projectSession.rememberJob(run.jobId);
+    }
+    if (
+      channel === IPC_CHANNELS.auditionsGenerate &&
+      typeof asRecord(responseValue).jobId === "string"
+    ) {
+      projectSession.rememberJob(asRecord(responseValue).jobId as string);
     }
   }
   return result as TResult;
@@ -398,6 +440,42 @@ const api: CinematicStoryDesktopApi = {
     decideReview: (input: DecideCastingReviewInput) =>
       request(IPC_CHANNELS.castingDecideReview, input)
   },
+  auditions: {
+    getWorkspace: (input: GetAuditionWorkspaceInput) =>
+      request(IPC_CHANNELS.auditionsGetWorkspace, input),
+    listModelPackages: (input: ListModelPackagesInput) =>
+      request(IPC_CHANNELS.auditionsListModelPackages, input),
+    performModelPackageAction: (input: PerformModelPackageActionInput) =>
+      request(IPC_CHANNELS.auditionsModelPackageAction, input),
+    selectLocalModelPackage: (input: SelectLocalModelPackageInput) =>
+      request(IPC_CHANNELS.auditionsSelectLocalModelPackage, input),
+    listPronunciations: (input: ListPronunciationEntriesInput) =>
+      request(IPC_CHANNELS.auditionsListPronunciations, input),
+    appendPronunciation: (input: AppendPronunciationEntryInput) =>
+      request(IPC_CHANNELS.auditionsAppendPronunciation, input),
+    decidePronunciation: (input: DecidePronunciationEntryInput) =>
+      request(IPC_CHANNELS.auditionsDecidePronunciation, input),
+    clearCache: (input: ClearAuditionCacheInput) =>
+      request(IPC_CHANNELS.auditionsClearCache, input),
+    listSessions: (input: ListAuditionSessionsInput) =>
+      request(IPC_CHANNELS.auditionsListSessions, input),
+    createSession: (input: CreateAuditionSessionInput) =>
+      request(IPC_CHANNELS.auditionsCreateSession, input),
+    createScript: (input: CreateAuditionScriptInput) =>
+      request(IPC_CHANNELS.auditionsCreateScript, input),
+    previewNormalization: (input: PreviewAuditionNormalizationInput) =>
+      request(IPC_CHANNELS.auditionsPreviewNormalization, input),
+    generate: (input: GenerateAuditionInput) =>
+      request(IPC_CHANNELS.auditionsGenerate, input),
+    listClips: (input: ListAuditionClipsInput) =>
+      request(IPC_CHANNELS.auditionsListClips, input),
+    listReviewDecisions: (input: ListAuditionReviewDecisionsInput) =>
+      request(IPC_CHANNELS.auditionsListReviewDecisions, input),
+    loadAudio: (input: LoadAuditionAudioInput) =>
+      request(IPC_CHANNELS.auditionsLoadAudio, input),
+    decideReview: (input: DecideAuditionReviewInput) =>
+      request(IPC_CHANNELS.auditionsDecideReview, input)
+  },
   jobs: {
     create: (input: CreateJobInput) =>
       request(IPC_CHANNELS.jobsCreate, input),
@@ -456,6 +534,7 @@ contextBridge.exposeInMainWorld(
     dialogue: Object.freeze(api.dialogue),
     analysis: Object.freeze(api.analysis),
     casting: Object.freeze(api.casting),
+    auditions: Object.freeze(api.auditions),
     jobs: Object.freeze(api.jobs),
     providers: Object.freeze(api.providers),
     capabilities: Object.freeze(api.capabilities)

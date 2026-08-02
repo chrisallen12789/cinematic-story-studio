@@ -23,6 +23,7 @@ export const BUILD_EVIDENCE_ENVIRONMENT = Object.freeze({
   phase3ResultPath: "CSS_PHASE3_PACKAGED_E2E_RESULT_PATH",
   phase3VoiceCastingEvidencePath:
     "CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH",
+  phase3bResultPath: "CSS_PHASE3B_PACKAGED_E2E_RESULT_PATH",
   stepOutcome: "CSS_PACKAGED_E2E_STEP_OUTCOME",
   runnerName: "CSS_BUILD_EVIDENCE_RUNNER_NAME",
   runnerOs: "CSS_BUILD_EVIDENCE_RUNNER_OS",
@@ -38,9 +39,48 @@ const APP_EXECUTABLE_NAME = "Cinematic Story Studio.exe";
 const SERVICE_EXECUTABLE_NAME = "cinematic-story-service.exe";
 const MAX_HARNESS_RESULT_BYTES = 1024 * 1024;
 const MAX_SECURITY_INPUT_BYTES = 5 * 1024 * 1024;
-const BUILD_EVIDENCE_SCHEMA_VERSION = "4.0.0";
+const BUILD_EVIDENCE_SCHEMA_VERSION = "6.0.0";
 const PACKAGED_E2E_RESULT_SCHEMA_VERSION = "4.0.0";
 const PHASE_3_PACKAGED_E2E_RESULT_SCHEMA_VERSION = "5.0.0";
+const PHASE_3B_PACKAGED_E2E_RESULT_SCHEMA_VERSION = "7.0.0";
+const PHASE_3B_EVIDENCE_CLASSIFICATION =
+  "deterministic_fixture_lifecycle_only";
+const PHASE_3B_RUNTIME_PROFILE_ID =
+  "deterministic-pcm-wav-fixture-windows-v1-0-1";
+const PHASE_3B_RUNTIME_PROFILE_FINGERPRINT =
+  "f3e5801f836ab4061eb76e52f4a3e1b4c7ba162238e0c70857e74fff705f75d6";
+const PHASE_3B_FIXTURE_PROVIDER_ID = "deterministic-pcm-wav-fixture";
+const PHASE_3B_FIXTURE_PROVIDER_VERSION = "1.0.0";
+const PHASE_3B_REAL_PROVIDER_ID = "kokoro-local-onnx";
+const PHASE_3B_REAL_PROVIDER_VERSION = "1.0.0";
+const PHASE_3B_FIXTURE_MODEL_PACKAGE_ID =
+  "deterministic-pcm-wav-fixture-package";
+const PHASE_3B_FIXTURE_MANIFEST_VERSION = "1.0.0";
+const PHASE_3B_FIXTURE_MODEL_PACKAGE_FINGERPRINT =
+  "e0352282af67ff3675fe6067a63feca5d9d4fcaeef5a3f12b80a5e4d2c9635d6";
+const PHASE_3B_ASSERTION_KEYS = Object.freeze([
+  "phase0ThroughPhase3aPrerequisitesCurrent",
+  "fixtureProviderClearlyClassified",
+  "modelVerifiedAndActivated",
+  "pronunciationDecisionApproved",
+  "narratorAndTwoCharacterAuditionsGenerated",
+  "authenticatedWavLoadsPassed",
+  "verifiedCacheHitProven",
+  "targetedInvalidationProven",
+  "fiveGateTypesApproved",
+  "restartPersistenceProven",
+  "runtimeNetworkPolicyAndOwnedPidEndpointObservationProven",
+  "electronServiceAndProviderWorkerOwnershipProven",
+  "allExactOwnedProcessesExited",
+  "noUnrelatedProcessInspectedOrTerminated",
+]);
+const PHASE_3B_GATE_IDS = Object.freeze([
+  "per_role_audition_review",
+  "narrator_audition_review",
+  "character_audition_review",
+  "pronunciation_review",
+  "voice_readiness_review",
+]);
 const VOICE_CASTING_CONTRACT_VERSION = "3.0.0";
 const GOVERNED_VOICE_CASTING_PROFILE_ID =
   "governed-voice-casting-v1@1.0.0";
@@ -329,6 +369,10 @@ export async function generateBuildEvidence({
     releaseRoot,
     "phase-3-voice-casting-evidence.json",
   );
+  const expectedPhase3bResult = path.join(
+    releaseRoot,
+    "phase-3b-packaged-e2e-result.json",
+  );
   const outputPath =
     manifestPath ?? path.join(releaseRoot, "build-evidence.json");
 
@@ -357,6 +401,11 @@ export async function generateBuildEvidence({
     expectedPhase3VoiceCastingEvidence,
     "Phase 3A voice-casting evidence",
   );
+  assertExactPath(
+    packagedE2e.phase3bResultPath,
+    expectedPhase3bResult,
+    "Phase 3B packaged E2E result",
+  );
   assertRepositoryChild(root, outputPath, "build-evidence manifest");
 
   const [
@@ -367,6 +416,7 @@ export async function generateBuildEvidence({
     resultEvidence,
     phase3ResultEvidence,
     phase3VoiceCastingEvidenceFile,
+    phase3bResultEvidence,
     secureIngestEvidence,
     storyAnalysisContractEvidence,
     voiceCatalogEvidence,
@@ -387,6 +437,12 @@ export async function generateBuildEvidence({
       root,
       expectedPhase3VoiceCastingEvidence,
       "Phase 3A voice-casting evidence",
+    ),
+    optionalFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPhase3bResult,
+      "Phase 3B packaged E2E result",
     ),
     collectSecureIngestEvidence(canonicalRoot, root),
     collectStoryAnalysisContractEvidence(canonicalRoot, root),
@@ -416,6 +472,14 @@ export async function generateBuildEvidence({
     phase3HarnessResult,
     harnessResult,
     voiceCatalogEvidence,
+  );
+  const localSpeechAuditionsContract = await inspectPhase3bEvidence(
+    expectedPhase3bResult,
+    phase3bResultEvidence,
+    screenshotEvidence,
+    harnessResult,
+    phase3HarnessResult,
+    voiceCastingContract,
   );
   const harnessResultMatchesStepOutcome =
     harnessResult.contractValid &&
@@ -525,6 +589,8 @@ export async function generateBuildEvidence({
   const phase3VoiceCastingProven =
     phase3HarnessResult.contractValid &&
     voiceCastingContract !== null;
+  const phase3bLocalSpeechAuditionsProven =
+    localSpeechAuditionsContract !== null;
   const packagedE2eEvidenceComplete =
     normalizedStepOutcome === "success" &&
     harnessResultMatchesStepOutcome &&
@@ -534,7 +600,8 @@ export async function generateBuildEvidence({
     packagedE2eOwnershipExitProven &&
     phase1DocxImportReviewProven &&
     phase2WholeBookAnalysisProven &&
-    phase3VoiceCastingProven;
+    phase3VoiceCastingProven &&
+    phase3bLocalSpeechAuditionsProven;
   const normalizedWorkflowHeadSha = normalizeHeadSha(workflowHeadSha);
   const normalizedTestedCheckoutSha = normalizeHeadSha(
     testedCheckoutSha,
@@ -572,6 +639,7 @@ export async function generateBuildEvidence({
       phase2DecisionRecordsPersisted,
       phase2RestartDurabilityProven,
       phase2WholeBookAnalysisProven,
+      phase3bLocalSpeechAuditionsProven,
       packagedE2eEvidenceComplete,
     },
     secureIngest: secureIngestEvidence,
@@ -598,6 +666,7 @@ export async function generateBuildEvidence({
       launches: harnessResult.launches,
     },
     voiceCastingContract,
+    localSpeechAuditionsContract,
     testTimestamp:
       phase3HarnessResult.completedAt ??
       harnessResult.completedAt ??
@@ -606,6 +675,7 @@ export async function generateBuildEvidence({
   };
 
   await assertNoSyntheticStoryTextLeak(root, manifest);
+  assertSafeCacheKeyEvidence(manifest);
   const serializedManifest = `${JSON.stringify(manifest, null, 2)}\n`;
   await mkdir(path.dirname(outputPath), { recursive: true });
   await writeFile(outputPath, serializedManifest, "utf8");
@@ -619,7 +689,8 @@ export async function generateBuildEvidence({
     normalizedStepOutcome === "success" &&
     (!harnessResultMatchesStepOutcome ||
       !packagedE2eEvidenceComplete ||
-      voiceCastingContract === null)
+      voiceCastingContract === null ||
+      localSpeechAuditionsContract === null)
   ) {
     throw new Error(
       "The packaged E2E step reported success without complete, valid machine evidence.",
@@ -682,6 +753,7 @@ export async function validateBuildEvidenceManifest({
     "storyAnalysisContract",
     "packagedE2e",
     "voiceCastingContract",
+    "localSpeechAuditionsContract",
     "testTimestamp",
     "runner",
   ];
@@ -706,6 +778,7 @@ export async function validateBuildEvidenceManifest({
     );
   }
   await assertNoSyntheticStoryTextLeak(root, manifest);
+  assertSafeCacheKeyEvidence(manifest);
   const appVersion = await readAppVersion(root);
   if (manifest.appVersion !== appVersion) {
     throw new Error(
@@ -750,6 +823,10 @@ export async function validateBuildEvidenceManifest({
       releaseRoot,
       "phase-3-voice-casting-evidence.json",
     ),
+    phase3bResult: path.join(
+      releaseRoot,
+      "phase-3b-packaged-e2e-result.json",
+    ),
   };
   if (
     !isPlainObject(manifest.artifacts) ||
@@ -771,6 +848,7 @@ export async function validateBuildEvidenceManifest({
     resultEvidence,
     phase3ResultEvidence,
     phase3VoiceCastingEvidenceFile,
+    phase3bResultEvidence,
     secureIngest,
     storyAnalysisContract,
     voiceCatalogEvidence,
@@ -817,6 +895,12 @@ export async function validateBuildEvidenceManifest({
       expectedPaths.phase3VoiceCastingEvidence,
       "Phase 3A voice-casting evidence",
     ),
+    optionalFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.phase3bResult,
+      "Phase 3B packaged E2E result",
+    ),
     collectSecureIngestEvidence(canonicalRoot, root),
     collectStoryAnalysisContractEvidence(canonicalRoot, root),
     collectSyntheticVoiceCatalogEvidence(canonicalRoot, root),
@@ -853,6 +937,7 @@ export async function validateBuildEvidenceManifest({
     "phase2DecisionRecordsPersisted",
     "phase2RestartDurabilityProven",
     "phase2WholeBookAnalysisProven",
+    "phase3bLocalSpeechAuditionsProven",
     "packagedE2eEvidenceComplete",
   ];
   if (
@@ -1023,17 +1108,31 @@ export async function validateBuildEvidenceManifest({
     harnessResult,
     voiceCatalogEvidence,
   );
+  const localSpeechAuditionsContract = await inspectPhase3bEvidence(
+    expectedPaths.phase3bResult,
+    phase3bResultEvidence,
+    screenshot,
+    harnessResult,
+    phase3HarnessResult,
+    voiceCastingContract,
+  );
   if (
     !phase3HarnessResult.contractValid ||
     voiceCastingContract === null ||
+    localSpeechAuditionsContract === null ||
     !jsonValuesEqual(
       manifest.voiceCastingContract,
       voiceCastingContract,
     ) ||
+    !jsonValuesEqual(
+      manifest.localSpeechAuditionsContract,
+      localSpeechAuditionsContract,
+    ) ||
+    localSpeechAuditionsContract.completedAt !== manifest.testTimestamp ||
     phase3HarnessResult.completedAt !== manifest.testTimestamp
   ) {
     throw new Error(
-      "The Phase 3A voice-casting evidence is invalid or stale.",
+      "The Phase 3A voice-casting or Phase 3B local-speech evidence is invalid or stale.",
     );
   }
   if (
@@ -1530,6 +1629,39 @@ async function assertNoSyntheticStoryTextLeak(root, manifest) {
     throw new Error(
       "The build-evidence manifest contains private story text.",
     );
+  }
+}
+
+const CACHE_KEY_HASH_FIELDS = new Set([
+  "cacheKey",
+  "originalCacheKey",
+  "repeatedCacheKey",
+  "priorCacheKey",
+  "regeneratedCacheKey",
+]);
+
+function assertSafeCacheKeyEvidence(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) assertSafeCacheKeyEvidence(item);
+    return;
+  }
+  if (!isPlainObject(value)) return;
+  for (const [key, item] of Object.entries(value)) {
+    if (CACHE_KEY_HASH_FIELDS.has(key) && !isSha256(item)) {
+      throw new Error(
+        "The build-evidence manifest contains an unhashed cache-key value.",
+      );
+    }
+    if (
+      /cache[_-]?key/iu.test(key) &&
+      !CACHE_KEY_HASH_FIELDS.has(key) &&
+      key !== "identicalCacheKeyInputsProven"
+    ) {
+      throw new Error(
+        "The build-evidence manifest contains an unknown cache-key field.",
+      );
+    }
+    assertSafeCacheKeyEvidence(item);
   }
 }
 
@@ -2082,6 +2214,894 @@ async function collectSyntheticVoiceCatalogEvidence(
     rightsPolicyId: catalog.catalogRevision.rightsPolicyId,
     assignmentEvidenceByVoiceId,
   };
+}
+
+async function inspectPhase3bEvidence(
+  resultPath,
+  resultEvidence,
+  screenshotEvidence,
+  harnessResult,
+  phase3HarnessResult,
+  voiceCastingContract,
+) {
+  if (
+    !resultEvidence.exists ||
+    typeof resultEvidence.sizeBytes !== "number" ||
+    resultEvidence.sizeBytes <= 0 ||
+    resultEvidence.sizeBytes > MAX_HARNESS_RESULT_BYTES ||
+    !screenshotEvidence.exists ||
+    !harnessResult.contractValid ||
+    harnessResult.reportedStatus !== "passed" ||
+    !phase3HarnessResult.contractValid
+  ) {
+    return null;
+  }
+  try {
+    const value = JSON.parse(await readFile(resultPath, "utf8"));
+    const topKeys = [
+      "schemaVersion",
+      "completedAt",
+      "status",
+      "evidenceClassification",
+      "fixtureClaims",
+      "runtime",
+      "fixtureProvider",
+      "realProviderAdapter",
+      "model",
+      "pronunciation",
+      "auditions",
+      "cacheHit",
+      "targetedInvalidation",
+      "gateDecisions",
+      "restart",
+      "process",
+      "screenshot",
+      "assertions",
+    ];
+    const completedAt =
+      typeof value?.completedAt === "string"
+        ? normalizeUtcTimestamp(value.completedAt)
+        : null;
+    if (
+      !isPlainObject(value) ||
+      !hasExactKeys(value, topKeys) ||
+      value.schemaVersion !==
+        PHASE_3B_PACKAGED_E2E_RESULT_SCHEMA_VERSION ||
+      value.status !== "passed" ||
+      value.evidenceClassification !==
+        PHASE_3B_EVIDENCE_CLASSIFICATION ||
+      completedAt === null ||
+      completedAt !== harnessResult.completedAt ||
+      completedAt !== phase3HarnessResult.completedAt ||
+      !validPhase3bFixtureClaims(value.fixtureClaims) ||
+      !validPhase3bRuntime(value.runtime) ||
+      !validPhase3bProvider(
+        value.fixtureProvider,
+        PHASE_3B_FIXTURE_PROVIDER_ID,
+        PHASE_3B_FIXTURE_PROVIDER_VERSION,
+      ) ||
+      !validPhase3bProvider(
+        value.realProviderAdapter,
+        PHASE_3B_REAL_PROVIDER_ID,
+        PHASE_3B_REAL_PROVIDER_VERSION,
+      ) ||
+      !validPhase3bModel(value.model) ||
+      !validPhase3bPronunciation(value.pronunciation) ||
+      !validPhase3bRestart(value.restart) ||
+      !validPhase3bScreenshot(value.screenshot, screenshotEvidence) ||
+      !isAllTrueRecord(value.assertions, PHASE_3B_ASSERTION_KEYS) ||
+      containsPrivatePhase3bEvidence(value)
+    ) {
+      return null;
+    }
+    const auditions = sanitizePhase3bAuditions(value.auditions);
+    if (
+      auditions === null ||
+      !phase3bAuditionsMatchCastingProof(
+        auditions,
+        voiceCastingContract?.assignments,
+      ) ||
+      !validPhase3bCacheHit(value.cacheHit, auditions) ||
+      !validPhase3bTargetedInvalidation(
+        value.targetedInvalidation,
+        auditions,
+        value.pronunciation,
+      ) ||
+      !validPhase3bGateDecisions(value.gateDecisions, auditions) ||
+      !validPhase3bProcessProof(
+        value.process,
+        harnessResult.launches,
+        value.restart.priorLaunchRuntimeExit,
+        value.runtime.runtimeInstanceIds,
+      )
+    ) {
+      return null;
+    }
+    return {
+      evidenceFile: resultEvidence,
+      schemaVersion: value.schemaVersion,
+      completedAt,
+      evidenceClassification: value.evidenceClassification,
+      fixtureClaims: structuredClone(value.fixtureClaims),
+      runtime: structuredClone(value.runtime),
+      fixtureProvider: structuredClone(value.fixtureProvider),
+      realProviderAdapter: structuredClone(value.realProviderAdapter),
+      model: structuredClone(value.model),
+      pronunciation: structuredClone(value.pronunciation),
+      auditions,
+      cacheHit: structuredClone(value.cacheHit),
+      targetedInvalidation: structuredClone(value.targetedInvalidation),
+      gateDecisions: structuredClone(value.gateDecisions),
+      restart: structuredClone(value.restart),
+      process: structuredClone(value.process),
+      screenshot: structuredClone(value.screenshot),
+      assertions: structuredClone(value.assertions),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function validPhase3bFixtureClaims(value) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, [
+      "lifecycleEvidenceOnly",
+      "naturalSpeechQualityProven",
+      "productionExportEligible",
+      "humanListeningClaimed",
+    ]) &&
+    value.lifecycleEvidenceOnly === true &&
+    value.naturalSpeechQualityProven === false &&
+    value.productionExportEligible === false &&
+    value.humanListeningClaimed === false
+  );
+}
+
+function validPhase3bRuntime(value) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, [
+      "profileId",
+      "profileFingerprint",
+      "protocolVersion",
+      "runtimeInstanceIds",
+      "networkPolicy",
+      "observedNetworkRequestCount",
+      "externalNetworkObservation",
+    ]) &&
+    value.profileId === PHASE_3B_RUNTIME_PROFILE_ID &&
+    value.profileFingerprint === PHASE_3B_RUNTIME_PROFILE_FINGERPRINT &&
+    value.protocolVersion === "1.0.0" &&
+    isUniquePhase3IdArray(value.runtimeInstanceIds, 1, 10) &&
+    value.networkPolicy === "python_socket_api_denied" &&
+    value.observedNetworkRequestCount === null &&
+    isPlainObject(value.externalNetworkObservation) &&
+    hasExactKeys(value.externalNetworkObservation, [
+      "method",
+      "ownedPidsOnly",
+      "observedNonLoopbackEndpointCount",
+    ]) &&
+    value.externalNetworkObservation.method ===
+      "owned_pid_tcp_endpoint_inventory" &&
+    value.externalNetworkObservation.ownedPidsOnly === true &&
+    value.externalNetworkObservation.observedNonLoopbackEndpointCount === 0
+  );
+}
+
+function validPhase3bProvider(value, expectedProviderId, expectedProviderVersion) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, ["providerId", "providerVersion"]) &&
+    value.providerId === expectedProviderId &&
+    value.providerVersion === expectedProviderVersion
+  );
+}
+
+function validPhase3bModel(value) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, [
+      "modelPackageId",
+      "manifestVersion",
+      "modelPackageFingerprint",
+      "installationRevision",
+      "verificationId",
+      "verificationFingerprint",
+      "verified",
+      "active",
+    ]) &&
+    value.modelPackageId === PHASE_3B_FIXTURE_MODEL_PACKAGE_ID &&
+    value.manifestVersion === PHASE_3B_FIXTURE_MANIFEST_VERSION &&
+    value.modelPackageFingerprint ===
+      PHASE_3B_FIXTURE_MODEL_PACKAGE_FINGERPRINT &&
+    isBoundedPositiveInteger(value.installationRevision) &&
+    isPhase3Id(value.verificationId) &&
+    isSha256(value.verificationFingerprint) &&
+    value.verified === true &&
+    value.active === true
+  );
+}
+
+function validPhase3bPronunciation(value) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, [
+      "dictionaryId",
+      "initialRevision",
+      "initialFingerprint",
+      "initialEntryId",
+      "initialEntryFingerprint",
+      "initialDecision",
+      "supersedingEntryId",
+      "supersedingEntryFingerprint",
+      "supersedesEntryId",
+      "supersedingDecision",
+      "finalRevision",
+      "finalFingerprint",
+    ]) &&
+    isPhase3Id(value.dictionaryId) &&
+    isBoundedPositiveInteger(value.initialRevision) &&
+    isSha256(value.initialFingerprint) &&
+    isPhase3Id(value.initialEntryId) &&
+    isSha256(value.initialEntryFingerprint) &&
+    value.initialDecision === "approved" &&
+    isPhase3Id(value.supersedingEntryId) &&
+    value.supersedingEntryId !== value.initialEntryId &&
+    isSha256(value.supersedingEntryFingerprint) &&
+    value.supersedesEntryId === value.initialEntryId &&
+    value.supersedingDecision === "approved" &&
+    isBoundedPositiveInteger(value.finalRevision) &&
+    value.finalRevision > value.initialRevision &&
+    isSha256(value.finalFingerprint) &&
+    value.finalFingerprint !== value.initialFingerprint
+  );
+}
+
+function sanitizePhase3bAuditions(value) {
+  if (!Array.isArray(value) || value.length < 3 || value.length > 20) {
+    return null;
+  }
+  const auditions = [];
+  const narratorRoles = new Set();
+  const characterRoles = new Set();
+  const seenClipIds = new Set();
+  for (const item of value) {
+    if (
+      !isPlainObject(item) ||
+      !hasExactKeys(item, [
+        "roleId",
+        "roleType",
+        "assignmentId",
+        "assignmentRevision",
+        "voiceRuntimeBindingId",
+        "voiceRuntimeBindingFingerprint",
+        "providerVoiceId",
+        "auditionSessionId",
+        "providerRequestId",
+        "requestFingerprint",
+        "executionClassification",
+        "providerDispatchCount",
+        "sourceProviderRequestId",
+        "runtimeInstanceId",
+        "normalizedTextSha256",
+        "pronunciationPlanFingerprint",
+        "cacheKey",
+        "cacheStatus",
+        "auditionClipId",
+        "clipFingerprint",
+        "audioArtifactId",
+        "audio",
+        "authenticatedAudioLoaded",
+        "fixtureEvidenceOnly",
+      ]) ||
+      !isPhase3Id(item.roleId) ||
+      (item.roleType !== "narrator" && item.roleType !== "character") ||
+      !isPhase3Id(item.assignmentId) ||
+      !isBoundedPositiveInteger(item.assignmentRevision) ||
+      !isPhase3Id(item.voiceRuntimeBindingId) ||
+      !isSha256(item.voiceRuntimeBindingFingerprint) ||
+      !isPhase3Id(item.providerVoiceId) ||
+      !isPhase3Id(item.auditionSessionId) ||
+      !isPhase3Id(item.providerRequestId) ||
+      !isSha256(item.requestFingerprint) ||
+      (item.cacheStatus === "miss" &&
+        (item.executionClassification !== "provider_execution" ||
+          item.providerDispatchCount !== 1 ||
+          item.sourceProviderRequestId !== null ||
+          !isPhase3Id(item.runtimeInstanceId))) ||
+      (item.cacheStatus === "verified_hit" &&
+        (item.executionClassification !== "verified_cache_lookup" ||
+          item.providerDispatchCount !== 0 ||
+          !isPhase3Id(item.sourceProviderRequestId) ||
+          item.sourceProviderRequestId === item.providerRequestId ||
+          item.runtimeInstanceId !== null)) ||
+      !isSha256(item.normalizedTextSha256) ||
+      !isSha256(item.pronunciationPlanFingerprint) ||
+      !isSha256(item.cacheKey) ||
+      (item.cacheStatus !== "miss" &&
+        item.cacheStatus !== "verified_hit") ||
+      !isPhase3Id(item.auditionClipId) ||
+      seenClipIds.has(item.auditionClipId) ||
+      !isSha256(item.clipFingerprint) ||
+      !isPhase3Id(item.audioArtifactId) ||
+      !validPhase3bAudio(item.audio) ||
+      item.authenticatedAudioLoaded !== true ||
+      item.fixtureEvidenceOnly !== true
+    ) {
+      return null;
+    }
+    seenClipIds.add(item.auditionClipId);
+    (item.roleType === "narrator"
+      ? narratorRoles
+      : characterRoles
+    ).add(item.roleId);
+    auditions.push(structuredClone(item));
+  }
+  return narratorRoles.size >= 1 && characterRoles.size >= 2
+    ? auditions
+    : null;
+}
+
+function phase3bAuditionsMatchCastingProof(auditions, assignments) {
+  const narratorAssignment = assignments?.narratorAssignment;
+  const characterAssignments = assignments?.characterAssignments;
+  if (
+    !Array.isArray(auditions) ||
+    !isPlainObject(narratorAssignment) ||
+    !Array.isArray(characterAssignments)
+  ) {
+    return false;
+  }
+  const expectedAssignments = [
+    {
+      roleId: narratorAssignment.roleId,
+      assignmentId: narratorAssignment.assignmentId,
+      assignmentRevision: narratorAssignment.revision,
+      auditionRoleType: "narrator",
+    },
+    ...characterAssignments.map((assignment) => ({
+      roleId: assignment.roleId,
+      assignmentId: assignment.assignmentId,
+      assignmentRevision: assignment.revision,
+      auditionRoleType: "character",
+    })),
+  ];
+  const expectedByRoleId = new Map(
+    expectedAssignments.map((assignment) => [
+      assignment.roleId,
+      assignment,
+    ]),
+  );
+  if (expectedByRoleId.size !== expectedAssignments.length) {
+    return false;
+  }
+  const observedRoleIds = new Set();
+  for (const audition of auditions) {
+    const expected = expectedByRoleId.get(audition.roleId);
+    if (
+      expected === undefined ||
+      audition.assignmentId !== expected.assignmentId ||
+      audition.assignmentRevision !== expected.assignmentRevision ||
+      audition.roleType !== expected.auditionRoleType
+    ) {
+      return false;
+    }
+    observedRoleIds.add(audition.roleId);
+  }
+  return (
+    observedRoleIds.size === expectedByRoleId.size &&
+    [...expectedByRoleId.keys()].every((roleId) =>
+      observedRoleIds.has(roleId),
+    )
+  );
+}
+
+function validPhase3bAudio(value) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, [
+      "mediaType",
+      "codec",
+      "sampleRateHz",
+      "channels",
+      "sampleWidthBytes",
+      "durationMilliseconds",
+      "byteSize",
+      "sha256",
+      "nonSilencePassed",
+      "clippingPassed",
+      "blockingFindingCount",
+    ]) &&
+    value.mediaType === "audio/wav" &&
+    value.codec === "pcm_s16le" &&
+    value.sampleRateHz === 24_000 &&
+    value.channels === 1 &&
+    value.sampleWidthBytes === 2 &&
+    isBoundedPositiveInteger(value.durationMilliseconds) &&
+    value.durationMilliseconds <= 30_000 &&
+    isBoundedPositiveInteger(value.byteSize) &&
+    value.byteSize <= 24 * 1024 * 1024 &&
+    isSha256(value.sha256) &&
+    value.nonSilencePassed === true &&
+    value.clippingPassed === true &&
+    value.blockingFindingCount === 0
+  );
+}
+
+function validPhase3bCacheHit(value, auditions) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "originalClipId",
+      "repeatedClipId",
+      "originalRequestFingerprint",
+      "repeatedRequestFingerprint",
+      "originalCacheKey",
+      "repeatedCacheKey",
+      "artifactSha256",
+      "repeatedArtifactSha256",
+      "repeatedCacheStatus",
+      "identicalCacheKeyInputsProven",
+      "lookupOnlyNoProviderExecutionProven",
+    ]) ||
+    !isPhase3Id(value.originalClipId) ||
+    !isPhase3Id(value.repeatedClipId) ||
+    value.originalClipId === value.repeatedClipId ||
+    !isSha256(value.originalRequestFingerprint) ||
+    !isSha256(value.repeatedRequestFingerprint) ||
+    value.originalRequestFingerprint === value.repeatedRequestFingerprint ||
+    !isSha256(value.originalCacheKey) ||
+    value.repeatedCacheKey !== value.originalCacheKey ||
+    !isSha256(value.artifactSha256) ||
+    value.repeatedArtifactSha256 !== value.artifactSha256 ||
+    value.repeatedCacheStatus !== "verified_hit" ||
+    value.identicalCacheKeyInputsProven !== true ||
+    value.lookupOnlyNoProviderExecutionProven !== true
+  ) {
+    return false;
+  }
+  const original = auditions.find(
+    (audition) => audition.auditionClipId === value.originalClipId,
+  );
+  const repeated = auditions.find(
+    (audition) => audition.auditionClipId === value.repeatedClipId,
+  );
+  return (
+    original !== undefined &&
+    repeated !== undefined &&
+    original.roleId === repeated.roleId &&
+    original.voiceRuntimeBindingId === repeated.voiceRuntimeBindingId &&
+    original.voiceRuntimeBindingFingerprint ===
+      repeated.voiceRuntimeBindingFingerprint &&
+    original.providerVoiceId === repeated.providerVoiceId &&
+    original.requestFingerprint === value.originalRequestFingerprint &&
+    original.executionClassification === "provider_execution" &&
+    original.providerDispatchCount === 1 &&
+    original.sourceProviderRequestId === null &&
+    isPhase3Id(original.runtimeInstanceId) &&
+    original.cacheKey === value.originalCacheKey &&
+    original.audio.sha256 === value.artifactSha256 &&
+    repeated.requestFingerprint === value.repeatedRequestFingerprint &&
+    repeated.executionClassification === "verified_cache_lookup" &&
+    repeated.providerDispatchCount === 0 &&
+    repeated.sourceProviderRequestId === original.providerRequestId &&
+    repeated.runtimeInstanceId === null &&
+    repeated.cacheKey === value.repeatedCacheKey &&
+    repeated.cacheStatus === "verified_hit" &&
+    repeated.audio.sha256 === value.repeatedArtifactSha256
+  );
+}
+
+function validPhase3bRegeneratedBinding(value, auditions) {
+  if (!Array.isArray(value.invalidatedClipIds)) return false;
+  const prior = auditions.find(
+    (audition) =>
+      audition.roleId === value.impactedRoleId &&
+      value.invalidatedClipIds.includes(audition.auditionClipId) &&
+      audition.requestFingerprint === value.priorRequestFingerprint &&
+      audition.cacheKey === value.priorCacheKey &&
+      audition.audio.sha256 === value.priorArtifactSha256,
+  );
+  const regenerated = auditions.find(
+    (audition) =>
+      audition.roleId === value.impactedRoleId &&
+      !value.invalidatedClipIds.includes(audition.auditionClipId) &&
+      audition.cacheStatus === "miss" &&
+      audition.requestFingerprint === value.regeneratedRequestFingerprint &&
+      audition.cacheKey === value.regeneratedCacheKey &&
+      audition.audio.sha256 === value.regeneratedArtifactSha256,
+  );
+  return (
+    prior !== undefined &&
+    regenerated !== undefined &&
+    prior.voiceRuntimeBindingId === regenerated.voiceRuntimeBindingId &&
+    prior.voiceRuntimeBindingFingerprint ===
+      regenerated.voiceRuntimeBindingFingerprint &&
+    prior.providerVoiceId === regenerated.providerVoiceId
+  );
+}
+
+function validPhase3bTargetedInvalidation(
+  value,
+  auditions,
+  pronunciation,
+) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "supersededEntryId",
+      "supersedingEntryId",
+      "beforeDictionaryFingerprint",
+      "afterDictionaryFingerprint",
+      "impactedRoleId",
+      "priorRequestFingerprint",
+      "regeneratedRequestFingerprint",
+      "priorCacheKey",
+      "regeneratedCacheKey",
+      "priorArtifactSha256",
+      "regeneratedArtifactSha256",
+      "invalidatedClipIds",
+      "preservedClipIds",
+      "persistedInvalidatedGateStates",
+      "targetedOnly",
+    ]) ||
+    value.supersededEntryId !== pronunciation.initialEntryId ||
+    value.supersedingEntryId !== pronunciation.supersedingEntryId ||
+    value.beforeDictionaryFingerprint !==
+      pronunciation.initialFingerprint ||
+    value.afterDictionaryFingerprint !== pronunciation.finalFingerprint ||
+    !validPhase3bRegeneratedBinding(value, auditions) ||
+    !isSha256(value.priorRequestFingerprint) ||
+    !isSha256(value.regeneratedRequestFingerprint) ||
+    value.priorRequestFingerprint ===
+      value.regeneratedRequestFingerprint ||
+    !isSha256(value.priorCacheKey) ||
+    !isSha256(value.regeneratedCacheKey) ||
+    value.priorCacheKey === value.regeneratedCacheKey ||
+    !isSha256(value.priorArtifactSha256) ||
+    !isSha256(value.regeneratedArtifactSha256) ||
+    value.priorArtifactSha256 === value.regeneratedArtifactSha256 ||
+    !isUniquePhase3IdArray(value.invalidatedClipIds, 1, 2_000) ||
+    !isUniquePhase3IdArray(value.preservedClipIds, 1, 2_000) ||
+    !validPersistedInvalidatedGateStates(
+      value.persistedInvalidatedGateStates,
+    ) ||
+    value.invalidatedClipIds.some((id) =>
+      value.preservedClipIds.includes(id),
+    ) ||
+    value.invalidatedClipIds.some(
+      (clipId) =>
+        !auditions.some(
+          (audition) =>
+            audition.auditionClipId === clipId &&
+            audition.roleId === value.impactedRoleId,
+        ),
+    ) ||
+    value.preservedClipIds.some(
+      (clipId) =>
+        !auditions.some(
+          (audition) => audition.auditionClipId === clipId,
+        ),
+    ) ||
+    auditions.some(
+      (audition) =>
+        audition.requestFingerprint === value.regeneratedRequestFingerprint &&
+        value.preservedClipIds.includes(audition.auditionClipId),
+    ) ||
+    value.targetedOnly !== true
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function validPersistedInvalidatedGateStates(value) {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return false;
+  }
+  const expectedGateIds = new Set([
+    "pronunciation_review",
+    "voice_readiness_review",
+  ]);
+  const observedGateIds = new Set();
+  for (const item of value) {
+    if (
+      !isPlainObject(item) ||
+      !hasExactKeys(item, [
+        "gateId",
+        "reviewId",
+        "state",
+        "evidenceFingerprint",
+      ]) ||
+      !expectedGateIds.has(item.gateId) ||
+      observedGateIds.has(item.gateId) ||
+      !isPhase3Id(item.reviewId) ||
+      !["blocked", "pending", "invalidated"].includes(item.state) ||
+      !isSha256(item.evidenceFingerprint)
+    ) {
+      return false;
+    }
+    observedGateIds.add(item.gateId);
+  }
+  return [...expectedGateIds].every((gateId) =>
+    observedGateIds.has(gateId)
+  );
+}
+
+function validPhase3bGateDecisions(value, auditions) {
+  if (!Array.isArray(auditions)) {
+    return false;
+  }
+  const auditionRoleIds = new Set(
+    auditions.map((audition) => audition.roleId),
+  );
+  const aggregateGateIds = new Set(PHASE_3B_GATE_IDS.slice(1));
+  if (
+    !Array.isArray(value) ||
+    value.length !== auditionRoleIds.size + aggregateGateIds.size
+  ) {
+    return false;
+  }
+  const observedRoleIds = new Set();
+  const observedAggregateGateIds = new Set();
+  const reviewIds = new Set();
+  const decisionIds = new Set();
+  for (const item of value) {
+    if (
+      !isPlainObject(item) ||
+      !hasExactKeys(item, [
+        "gateId",
+        "reviewId",
+        "decisionId",
+        "roleId",
+        "evidenceFingerprint",
+        "decision",
+        "immutable",
+      ]) ||
+      !PHASE_3B_GATE_IDS.includes(item.gateId) ||
+      !isPhase3Id(item.reviewId) ||
+      reviewIds.has(item.reviewId) ||
+      !isPhase3Id(item.decisionId) ||
+      decisionIds.has(item.decisionId) ||
+      !isSha256(item.evidenceFingerprint) ||
+      item.decision !== "approved" ||
+      item.immutable !== true
+    ) {
+      return false;
+    }
+    if (item.gateId === "per_role_audition_review") {
+      if (
+        !isPhase3Id(item.roleId) ||
+        !auditionRoleIds.has(item.roleId) ||
+        observedRoleIds.has(item.roleId)
+      ) {
+        return false;
+      }
+      observedRoleIds.add(item.roleId);
+    } else {
+      if (
+        item.roleId !== null ||
+        !aggregateGateIds.has(item.gateId) ||
+        observedAggregateGateIds.has(item.gateId)
+      ) {
+        return false;
+      }
+      observedAggregateGateIds.add(item.gateId);
+    }
+    reviewIds.add(item.reviewId);
+    decisionIds.add(item.decisionId);
+  }
+  return (
+    observedRoleIds.size === auditionRoleIds.size &&
+    observedAggregateGateIds.size === aggregateGateIds.size
+  );
+}
+
+function validPhase3bRestart(value) {
+  const trueKeys = [
+    "runtimeProfilePersisted",
+    "modelVerificationPersisted",
+    "pronunciationDictionaryPersisted",
+    "pronunciationDecisionsPersisted",
+    "auditionSessionsPersisted",
+    "auditionScriptsPersisted",
+    "auditionClipsPersisted",
+    "cacheRecordsPersisted",
+    "audioQualityRecordsPersisted",
+    "auditionDecisionsPersisted",
+    "voiceReadinessDecisionPersisted",
+    "authenticatedRestoredAudioLoaded",
+  ];
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, [...trueKeys, "priorLaunchRuntimeExit"]) &&
+    trueKeys.every((key) => value[key] === true) &&
+    validPhase3bRuntimeExit(value.priorLaunchRuntimeExit)
+  );
+}
+
+function validPhase3bRuntimeExit(value) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, [
+      "runtimeInstanceId",
+      "workerPid",
+      "parentPid",
+      "state",
+      "stoppedAt",
+      "stopReasonCode",
+      "handshakeAuthenticated",
+      "shutdownAcknowledged",
+      "gracefulShutdownConfirmed",
+      "exitCode",
+      "terminatedByParent",
+      "ownershipConfirmed",
+      "confirmedExited",
+      "ownedProcessesConfirmedExited",
+      "jobObjectAssigned",
+      "deniedNetworkAttemptCount",
+    ]) &&
+    isPhase3Id(value.runtimeInstanceId) &&
+    isBoundedPositiveInteger(value.workerPid) &&
+    isBoundedPositiveInteger(value.parentPid) &&
+    value.workerPid !== value.parentPid &&
+    value.state === "stopped" &&
+    normalizeUtcTimestamp(value.stoppedAt) !== null &&
+    value.stopReasonCode === "clean" &&
+    value.handshakeAuthenticated === true &&
+    value.shutdownAcknowledged === true &&
+    value.gracefulShutdownConfirmed === true &&
+    value.exitCode === 0 &&
+    value.terminatedByParent === false &&
+    value.ownershipConfirmed === true &&
+    value.confirmedExited === true &&
+    value.ownedProcessesConfirmedExited === true &&
+    value.jobObjectAssigned === true &&
+    value.deniedNetworkAttemptCount === 0
+  );
+}
+
+function validPhase3bProcessProof(
+  value,
+  launches,
+  priorLaunchRuntimeExit,
+  runtimeInstanceIds,
+) {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, ["launches"]) ||
+    !Array.isArray(value.launches) ||
+    value.launches.length !== 2 ||
+    !Array.isArray(launches) ||
+    launches.length !== 2
+  ) {
+    return false;
+  }
+  const exitInstanceIds = new Set();
+  return value.launches.every((item, index) => {
+    const base = launches[index];
+    if (
+      !isPlainObject(item) ||
+      !hasExactKeys(item, [
+        "launch",
+        "ownedProcesses",
+        "providerRuntimeExit",
+        "forcedPids",
+        "remainingPids",
+        "unrelatedProcessesInspected",
+        "unrelatedProcessesTerminated",
+      ]) ||
+      item.launch !== index + 1 ||
+      !Array.isArray(item.ownedProcesses) ||
+      !Array.isArray(item.forcedPids) ||
+      item.forcedPids.length !== 0 ||
+      !Array.isArray(item.remainingPids) ||
+      item.remainingPids.length !== 0 ||
+      item.unrelatedProcessesInspected !== false ||
+      item.unrelatedProcessesTerminated !== false ||
+      base === undefined ||
+      base.exitProof.graceful !== true ||
+      base.exitProof.forcedPids.length !== 0 ||
+      base.exitProof.remainingPids.length !== 0
+    ) {
+      return false;
+    }
+    const expected = base.ownership.processes.map((process) => ({
+      pid: process.pid,
+      parentPid: process.parentPid,
+      kind: process.kind === "app" ? "electron" : process.kind,
+      executableName: process.executableName,
+      creationIdentity: process.creationDate,
+      goneAfterShutdown: true,
+    }));
+    const runtimeExit = item.providerRuntimeExit;
+    if (
+      !validPhase3bRuntimeExit(runtimeExit) ||
+      !Array.isArray(runtimeInstanceIds) ||
+      !runtimeInstanceIds.includes(runtimeExit.runtimeInstanceId) ||
+      exitInstanceIds.has(runtimeExit.runtimeInstanceId) ||
+      !validPhase3bProviderWorkerLineage(expected, runtimeExit) ||
+      (index === 0 &&
+        !jsonValuesEqual(runtimeExit, priorLaunchRuntimeExit))
+    ) {
+      return false;
+    }
+    exitInstanceIds.add(runtimeExit.runtimeInstanceId);
+    return (
+      expected.some((process) => process.kind === "electron") &&
+      expected.some((process) => process.kind === "service") &&
+      expected.some((process) => process.kind === "provider_worker") &&
+      jsonValuesEqual(item.ownedProcesses, expected)
+    );
+  });
+}
+
+function validPhase3bProviderWorkerLineage(processes, runtimeExit) {
+  const byPid = new Map(processes.map((process) => [process.pid, process]));
+  const logicalParent = byPid.get(runtimeExit.parentPid);
+  const worker = byPid.get(runtimeExit.workerPid);
+  const providerBoundaries = processes.filter((process) => {
+    const parent = byPid.get(process.parentPid);
+    return process.kind === "provider_worker" && parent?.kind === "service";
+  });
+  if (
+    byPid.size !== processes.length ||
+    logicalParent?.kind !== "service" ||
+    worker?.kind !== "provider_worker" ||
+    providerBoundaries.length !== 1 ||
+    providerBoundaries[0]?.parentPid !== runtimeExit.parentPid
+  ) {
+    return false;
+  }
+  if (worker.parentPid === runtimeExit.parentPid) {
+    return worker.creationIdentity >= logicalParent.creationIdentity;
+  }
+  const intermediary = byPid.get(worker.parentPid);
+  return (
+    intermediary?.kind === "provider_worker" &&
+    intermediary.parentPid === runtimeExit.parentPid &&
+    intermediary.creationIdentity >= logicalParent.creationIdentity &&
+    worker.creationIdentity >= intermediary.creationIdentity
+  );
+}
+
+function validPhase3bScreenshot(value, screenshotEvidence) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, ["artifactId", "captured"]) &&
+    value.artifactId === "packaged-ui-screenshot" &&
+    value.captured === true &&
+    screenshotEvidence.exists === true &&
+    typeof screenshotEvidence.sizeBytes === "number" &&
+    screenshotEvidence.sizeBytes > 0
+  );
+}
+
+function isAllTrueRecord(value, keys) {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, keys) &&
+    keys.every((key) => value[key] === true)
+  );
+}
+
+function isBoundedPositiveInteger(value) {
+  return (
+    Number.isSafeInteger(value) &&
+    value >= 1 &&
+    value <= 1_000_000_000
+  );
+}
+
+function containsPrivatePhase3bEvidence(value) {
+  const serialized = JSON.stringify(value);
+  return (
+    /(?:[A-Za-z]:\\\\|\\\\\\\\|\/Users\/|\/home\/)/u.test(serialized) ||
+    /"(?:text|script|manuscript|absolutePath|filePath|token|credential)"\s*:/iu.test(
+      serialized,
+    )
+  );
 }
 
 async function inspectPhase3HarnessResult(
@@ -3737,11 +4757,15 @@ function sanitizeLaunchProof(value) {
         seenProcessPids.has(process.pid) ||
         !Number.isSafeInteger(process.parentPid) ||
         process.parentPid < 0 ||
-        (process.kind !== "app" && process.kind !== "service") ||
+        (process.kind !== "app" &&
+          process.kind !== "service" &&
+          process.kind !== "provider_worker") ||
         typeof process.executableName !== "string" ||
         (process.kind === "app" &&
           process.executableName !== APP_EXECUTABLE_NAME) ||
         (process.kind === "service" &&
+          process.executableName !== SERVICE_EXECUTABLE_NAME) ||
+        (process.kind === "provider_worker" &&
           process.executableName !== SERVICE_EXECUTABLE_NAME) ||
         typeof process.creationDate !== "string"
       ) {
@@ -3916,6 +4940,14 @@ function validRootedProcessTree(processes, launcherPid, rootPid) {
     return false;
   }
 
+  const serviceBoundaries = processes.filter((process) => {
+    const parent = byPid.get(process.parentPid);
+    return process.kind === "service" && parent?.kind === "app";
+  });
+  if (serviceBoundaries.length !== 1) {
+    return false;
+  }
+
   for (const process of processes) {
     if (process.pid === rootPid) {
       continue;
@@ -3927,6 +4959,7 @@ function validRootedProcessTree(processes, launcherPid, rootPid) {
       if (
         parent === undefined ||
         visited.has(parent.pid) ||
+        !validOwnedProcessKindTransition(parent.kind, child.kind) ||
         parent.creationDate > child.creationDate
       ) {
         return false;
@@ -3936,6 +4969,16 @@ function validRootedProcessTree(processes, launcherPid, rootPid) {
     }
   }
   return true;
+}
+
+function validOwnedProcessKindTransition(parentKind, childKind) {
+  return (
+    (parentKind === "app" &&
+      (childKind === "app" || childKind === "service")) ||
+    (parentKind === "service" &&
+      (childKind === "service" || childKind === "provider_worker")) ||
+    (parentKind === "provider_worker" && childKind === "provider_worker")
+  );
 }
 
 function sortedUniquePids(value) {
@@ -4172,11 +5215,11 @@ function normalizeRunner(value) {
     runner.os !== "Windows" ||
     runner.architecture !== "X64" ||
     runner.environment !== "github-hosted" ||
-    runner.workflow !== "Phase 3A Windows CI" ||
+    runner.workflow !== "Phase 3B Windows CI" ||
     runner.job !== "verify-and-build"
   ) {
     throw new Error(
-      "The build-evidence runner does not match the Phase 3A Windows CI job.",
+      "The build-evidence runner does not match the Phase 3B Windows CI job.",
     );
   }
   return runner;
@@ -4372,6 +5415,9 @@ async function main() {
       phase3VoiceCastingEvidencePath: environmentValue(
         BUILD_EVIDENCE_ENVIRONMENT
           .phase3VoiceCastingEvidencePath,
+      ),
+      phase3bResultPath: environmentValue(
+        BUILD_EVIDENCE_ENVIRONMENT.phase3bResultPath,
       ),
       stepOutcome: environmentValue(
         BUILD_EVIDENCE_ENVIRONMENT.stepOutcome,

@@ -308,7 +308,7 @@ def _populate_phase2_records(path: Path) -> None:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_frozen_v3_to_v4_preserves_all_history_and_creates_no_casting_evidence(
+def test_frozen_v3_reaches_v5_preserving_history_without_fabricated_casting(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "upgrade" / "studio.sqlite3"
@@ -320,13 +320,15 @@ def test_frozen_v3_to_v4_preserves_all_history_and_creates_no_casting_evidence(
 
     database = Database(path)
     backup = database.v3_backup_path
+    v4_backup = database.v4_backup_path
     database.close()
 
-    assert _value(path, "PRAGMA user_version") == 4
+    assert _value(path, "PRAGMA user_version") == 5
     assert _value(backup, "PRAGMA user_version") == 3
     assert Database._verified_v3_digest(backup) == source_digest
     assert _logical_digest(backup) == source_logical_digest
     assert _table_snapshots(backup) == before
+    assert _value(v4_backup, "PRAGMA user_version") == 4
     after = _table_snapshots(path)
     assert {table: after[table] for table in before} == before
     for table in _PHASE3A_TABLES:
@@ -335,13 +337,13 @@ def test_frozen_v3_to_v4_preserves_all_history_and_creates_no_casting_evidence(
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 @pytest.mark.parametrize("origin", ["v1", "v2", "v3"])
-def test_supported_historical_chain_reaches_exact_v4(
+def test_supported_historical_chain_reaches_exact_v5(
     tmp_path: Path,
     origin: str,
 ) -> None:
@@ -358,30 +360,32 @@ def test_supported_historical_chain_reaches_exact_v4(
         "v1": database.v1_backup_path,
         "v2": database.v2_backup_path,
         "v3": database.v3_backup_path,
+        "v4": database.v4_backup_path,
     }
     database.close()
 
-    assert _value(path, "PRAGMA user_version") == 4
+    assert _value(path, "PRAGMA user_version") == 5
     assert _value(backup_paths[origin], "PRAGMA user_version") == int(origin[1:])
     if origin == "v1":
         assert backup_paths["v2"].exists()
         assert backup_paths["v3"].exists()
     if origin == "v2":
         assert backup_paths["v3"].exists()
+    assert _value(backup_paths["v4"], "PRAGMA user_version") == 4
     reopened = Database(path)
     reopened.close()
 
 
-def test_fresh_v4_is_frozen_reopenable_and_empty(tmp_path: Path) -> None:
+def test_fresh_v5_is_frozen_reopenable_and_empty(tmp_path: Path) -> None:
     path = tmp_path / "fresh" / "studio.sqlite3"
     database = Database(path)
     database.close()
 
-    assert _value(path, "PRAGMA user_version") == 4
+    assert _value(path, "PRAGMA user_version") == 5
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
         for table in _PHASE3A_TABLES:
             assert connection.execute(
                 f'SELECT count(*) FROM "{table}"'  # noqa: S608
@@ -496,7 +500,7 @@ def test_v3_precondition_drift_is_rejected_without_backup_or_mutation(
         elif drift == "ledger_gap":
             connection.execute("DELETE FROM schema_migrations WHERE version = 3")
         else:
-            connection.execute("PRAGMA user_version = 5")
+            connection.execute("PRAGMA user_version = 6")
     before = path.read_bytes()
 
     with pytest.raises(ServiceError) as raised:
@@ -514,7 +518,7 @@ def test_v3_precondition_drift_is_rejected_without_backup_or_mutation(
         ("missing-index", "DROP INDEX ix_casting_candidate_project_run_role_order"),
     ],
 )
-def test_same_version_v4_drift_is_rejected_without_repair(
+def test_same_version_v5_drift_is_rejected_without_repair(
     tmp_path: Path,
     drift: str,
     statement: str,
@@ -532,7 +536,7 @@ def test_same_version_v4_drift_is_rejected_without_repair(
 
     assert raised.value.code == "DATABASE_SCHEMA_UNSUPPORTED"
     assert path.read_bytes() == before
-    assert _value(path, "PRAGMA user_version") == 4
+    assert _value(path, "PRAGMA user_version") == 5
 
 
 def test_recovery_is_backup_only_and_forged_in_place_downgrade_fails_closed(

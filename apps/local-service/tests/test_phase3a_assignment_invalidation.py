@@ -18,6 +18,7 @@ from cinematic_story_service.casting import (
 from cinematic_story_service.models import (
     CastAssignmentInvalidationRow,
     CastingGateDecisionRow,
+    CastingGateReviewRow,
 )
 from cinematic_story_service.util import request_fingerprint
 from tests.conftest import collect_concurrent_database_results
@@ -881,32 +882,53 @@ def test_parallel_reads_latch_one_assignment_and_gate_invalidation(
                 for value in original_catalog.voices
             ),
         )
-        start = threading.Barrier(3)
+        start = threading.Barrier(5)
 
-        def read_project() -> tuple[int, dict[str, Any]]:
+        def read_project() -> tuple[str, int, dict[str, Any]]:
             start.wait()
             response = client.get(
                 f"/api/v1/projects/{run['projectId']}",
                 headers=auth_headers,
             )
-            return response.status_code, response.json()
+            return "project", response.status_code, response.json()
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(read_project)
-            second = pool.submit(read_project)
+        def read_reviews() -> tuple[str, int, dict[str, Any]]:
             start.wait()
-            outcomes = collect_concurrent_database_results([first, second])
-
-        assert all(status == 200 for status, _body in outcomes)
-        for _status, body in outcomes:
-            _assert_gate_states(
-                body["voiceCasting"],
-                {
-                    _NARRATOR_GATE: "invalidated",
-                    _CHARACTER_GATE: "approved",
-                    _COMPLETE_GATE: "invalidated",
+            snapshot = run["approvedCastSnapshot"]
+            response = client.get(
+                (f"/api/v1/projects/{run['projectId']}/casting-runs/{run['castingRunId']}/reviews"),
+                headers=auth_headers,
+                params={
+                    **_evidence(run),
+                    "expectedApprovedCastSnapshotId": snapshot["snapshotId"],
+                    "expectedApprovedCastSnapshotRevision": snapshot["revision"],
                 },
             )
+            return "reviews", response.status_code, response.json()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [
+                pool.submit(read_project),
+                pool.submit(read_project),
+                pool.submit(read_reviews),
+                pool.submit(read_reviews),
+            ]
+            start.wait()
+            outcomes = collect_concurrent_database_results(futures)
+
+        assert all(status == 200 for _kind, status, _body in outcomes)
+        expected_states = {
+            _NARRATOR_GATE: "invalidated",
+            _CHARACTER_GATE: "approved",
+            _COMPLETE_GATE: "invalidated",
+        }
+        for kind, _status, body in outcomes:
+            if kind == "project":
+                _assert_gate_states(body["voiceCasting"], expected_states)
+            else:
+                assert {
+                    value["gateId"]: value["state"] for value in body["items"]
+                } == expected_states
         invalidations = _invalidation_records(
             app,
             run_id=run["castingRunId"],
@@ -926,5 +948,15 @@ def test_parallel_reads_latch_one_assignment_and_gate_invalidation(
             _COMPLETE_GATE,
             _NARRATOR_GATE,
         ]
+        with app.state.database.session() as session:
+            review_rows = list(
+                session.scalars(
+                    select(CastingGateReviewRow).where(
+                        CastingGateReviewRow.casting_run_id == run["castingRunId"]
+                    )
+                )
+            )
+        review_revisions = [(value.gate_id, value.revision) for value in review_rows]
+        assert len(review_revisions) == len(set(review_revisions))
     finally:
         app.state.casting.catalog = original_catalog

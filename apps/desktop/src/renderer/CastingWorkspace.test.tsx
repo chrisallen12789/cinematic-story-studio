@@ -234,6 +234,41 @@ describe("CastingWorkspace", () => {
       screen.queryByRole("button", { name: "Approve planned reuse" })
     ).not.toBeInTheDocument();
   });
+
+  it("retries a transient run refresh until published casting resources load", async () => {
+    const api = createApi();
+    const queuedRun = {
+      ...castingRun(),
+      status: "running",
+      currentStage: "generate_bounded_candidates",
+      progress: 0.56,
+      outputFingerprint: null,
+      approvedCastSnapshot: null
+    } as unknown as CastingRun;
+    vi.mocked(api.casting.listRuns).mockResolvedValue(
+      ok({
+        correlationId: "correlation-runs",
+        pageSize: 1,
+        total: 1,
+        items: [queuedRun]
+      } as never)
+    );
+    vi.mocked(api.casting.getRun)
+      .mockResolvedValueOnce(
+        ok({ correlationId: "correlation-run", run: queuedRun } as never)
+      )
+      .mockRejectedValueOnce(new Error("transient publication race"))
+      .mockResolvedValue(
+        ok({ correlationId: "correlation-run", run: castingRun() } as never)
+      );
+
+    renderWorkspace(api);
+
+    expect(await screen.findByText("Running")).toBeVisible();
+    expect(await screen.findByText("Succeeded", {}, { timeout: 5_500 }))
+      .toBeVisible();
+    expect(api.casting.getRun).toHaveBeenCalledTimes(3);
+  }, 8_000);
 });
 
 function renderWorkspace(api: CinematicStoryDesktopApi) {

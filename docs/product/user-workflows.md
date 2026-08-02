@@ -130,6 +130,56 @@ This workflow uses fictional metadata only and produces no audio. There is no
 audition, playback, waveform, provider credential, model download, cloud
 transmission, or synthesis control in the Phase 3A workspace.
 
+## 4C. Audition the governed cast locally
+
+1. With Import Review, all four Phase 2 reviews, and all three Phase 3A reviews
+   approved, the user opens Auditions. The service accepts only the latest
+   succeeded casting run and its exact current validated immutable cast-snapshot
+   manifest. It uses only that manifest's selected assignment revisions and
+   their lock state, exact current leaf provider/model/profile/rights evidence,
+   temporally applicable rights, and the latest eligible Phase 3A reviews with
+   their exact approved human decision provenance, supersession chain, and
+   warning acknowledgements.
+2. The workspace shows each prerequisite, selected role/voice/right, local
+   provider, runtime profile, exact model manifest, installation, and
+   verification state. The deterministic provider is visibly fixture-only.
+3. The user verifies and activates an installed package, creates one role-bound
+   session from server-issued evidence, and saves the bounded repository-owned
+   synthetic script exposed by the Phase 3B desktop. The service contract also
+   accepts exact source-linked scripts, but desktop authoring for those kinds is
+   deferred until a typed source-span selector exists. No model is downloaded
+   implicitly.
+4. The user appends or supersedes a pronunciation entry, records its human
+   decision, and inspects the exact normalization and effective pronunciation
+   plan before generation.
+5. A durable job revalidates every Phase 2/3A decision, assignment, rights,
+   catalog, model, runtime, dictionary, script, and request fingerprint. It
+   never mixes evidence across cast snapshots. A newer current snapshot removes
+   older-snapshot work from the current workspace, and a new same-snapshot
+   Phase 3A decision tuple invalidates dependent Phase 3B authority even when
+   the selected cast is unchanged. The job either
+   verifies a project-private cache hit or publishes a bounded 24 kHz mono
+   PCM16 WAV through atomic private storage.
+6. Audio is loaded only by authenticated project/session/clip/artifact identity
+   through Electron main. Playback never uses `file://`, absolute paths, or
+   autoplay; pause, seek, replay, and stop remain explicit.
+7. The user records per-role, narrator, character, pronunciation, and voice-
+   readiness decisions in prerequisite order. Automated QC and cache evidence
+   never count as human approval.
+8. Assignment, rights, model/runtime, or applicable pronunciation changes
+   append targeted invalidation. Unrelated entries preserve unaffected clips
+   and approvals. Regeneration produces new evidence and never reapproves it.
+9. Restart restores the dictionary, sessions, jobs, clips, cache/QC records,
+   decisions, runtime history, and readiness projection. Phase 3B does not
+   render or export a book.
+
+The installed/activated Kokoro package is not currently a usable governed
+product voice. The retained real-provider evidence is a private component-only
+command using provider-internal voice `af_heart`; no Phase 3A voice profile,
+snapshot-selected cast assignment, or rights record binds that voice. Product
+use remains unavailable until an explicit governed binding exists and the
+separate legal, consent, likeness, provenance, and rights review is complete.
+
 ## 5. Observe, cancel, retry, and resume work
 
 1. Creating analysis or render work returns a durable job before execution begins.

@@ -28,6 +28,7 @@ class ServiceSettings:
     kokoro_development_url: str = "http://127.0.0.1:8880/health"
     kokoro_probe_timeout_seconds: float = 0.25
     docs_enabled: bool = False
+    runtime_shutdown_evidence_enabled: bool = False
 
     def validated(self) -> ServiceSettings:
         data_dir = self.data_dir.expanduser().resolve(strict=False)
@@ -78,6 +79,7 @@ class ServiceSettings:
             kokoro_development_url=self.kokoro_development_url,
             kokoro_probe_timeout_seconds=self.kokoro_probe_timeout_seconds,
             docs_enabled=self.docs_enabled,
+            runtime_shutdown_evidence_enabled=self.runtime_shutdown_evidence_enabled,
         )
 
     @property

@@ -30,3 +30,25 @@
 5a0820314128664672b51d93991950004c124dbf:apps/local-service/tests/test_phase3a_casting.py:generic-api-key:1570
 5a0820314128664672b51d93991950004c124dbf:apps/local-service/tests/test_phase3a_casting.py:generic-api-key:1585
 5a0820314128664672b51d93991950004c124dbf:apps/local-service/tests/test_phase3a_casting.py:generic-api-key:1603
+
+# Audited synthetic idempotency labels from the initial Phase 3B test commits.
+# Each suppression is commit-, path-, rule-, and line-specific; unrelated
+# findings in the same files or later commits continue to fail the scan.
+4cbddf1ff14d777ef18db5f0657aa327a319e437:apps/desktop/src/main/audition-validation.test.ts:generic-api-key:190
+4cbddf1ff14d777ef18db5f0657aa327a319e437:apps/desktop/src/main/audition-api-client.test.ts:generic-api-key:251
+4cbddf1ff14d777ef18db5f0657aa327a319e437:apps/desktop/src/main/audition-api-client.test.ts:generic-api-key:261
+0ccdcdb0292595f5ce43a56f007246324c17911a:apps/desktop/tests/e2e/phase3b-local-speech-auditions.ts:generic-api-key:154
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_api.py:generic-api-key:356
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_invalidation_reconciliation.py:generic-api-key:147
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_invalidation_reconciliation.py:generic-api-key:153
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_invalidation_reconciliation.py:generic-api-key:245
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_atomic_publication.py:generic-api-key:484
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_generation_idempotency.py:generic-api-key:108
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_generation_idempotency.py:generic-api-key:114
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_generation_idempotency.py:generic-api-key:128
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_generation_idempotency.py:generic-api-key:217
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_generation_idempotency.py:generic-api-key:282
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_speech_providers.py:generic-api-key:52
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_scale.py:generic-api-key:999
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:1301
+249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:1308

@@ -62,7 +62,7 @@ const RUNNER = Object.freeze({
   environment: "github-hosted",
   runId: "30478862847",
   runAttempt: "2",
-  workflow: "Phase 3A Windows CI",
+  workflow: "Phase 3B Windows CI",
   job: "verify-and-build",
 });
 const PACKAGED_FIXTURE =
@@ -588,6 +588,312 @@ function phase3VoiceCastingEvidence(packagedResult) {
   };
 }
 
+function phase3bPackagedResult(launches) {
+  const hash = (label) => fingerprint(`phase3b-${label}`);
+  const assignmentIdByRoleId = Object.freeze({
+    "role-primary-narrator": "assignment-narrator-1",
+    "role-character-1": "assignment-character-1",
+    "role-character-2": "assignment-character-2",
+  });
+  const audition = (roleType, roleId, clipId, artifactId, artifactHash) => ({
+    roleId,
+    roleType,
+    assignmentId: assignmentIdByRoleId[roleId],
+    assignmentRevision: 3,
+    voiceRuntimeBindingId: `binding-${roleId}`,
+    voiceRuntimeBindingFingerprint: hash(`binding-${roleId}`),
+    providerVoiceId: `fixture-voice-${roleId}`,
+    auditionSessionId: `session-${roleId}`,
+    providerRequestId: `provider-request-${roleId}`,
+    requestFingerprint: hash(`request-${roleId}`),
+    executionClassification: "provider_execution",
+    providerDispatchCount: 1,
+    sourceProviderRequestId: null,
+    runtimeInstanceId: "runtime-instance-1",
+    normalizedTextSha256: hash(`normalized-${roleId}`),
+    pronunciationPlanFingerprint: hash(`pronunciation-plan-${roleId}`),
+    cacheKey: hash(`cache-${roleId}`),
+    cacheStatus: "miss",
+    auditionClipId: clipId,
+    clipFingerprint: hash(`clip-${roleId}`),
+    audioArtifactId: artifactId,
+    audio: {
+      mediaType: "audio/wav",
+      codec: "pcm_s16le",
+      sampleRateHz: 24_000,
+      channels: 1,
+      sampleWidthBytes: 2,
+      durationMilliseconds: 1_000,
+      byteSize: 48_044,
+      sha256: artifactHash,
+      nonSilencePassed: true,
+      clippingPassed: true,
+      blockingFindingCount: 0,
+    },
+    authenticatedAudioLoaded: true,
+    fixtureEvidenceOnly: true,
+  });
+  const auditions = [
+    audition(
+      "narrator",
+      "role-primary-narrator",
+      "audition-clip-narrator",
+      "audio-artifact-narrator",
+      hash("audio-narrator"),
+    ),
+    audition(
+      "character",
+      "role-character-1",
+      "audition-clip-character-1",
+      "audio-artifact-character-1",
+      hash("audio-character-1"),
+    ),
+    audition(
+      "character",
+      "role-character-2",
+      "audition-clip-character-2",
+      "audio-artifact-character-2",
+      hash("audio-character-2"),
+    ),
+  ];
+  auditions.push(
+    {
+      ...audition(
+        "narrator",
+        "role-primary-narrator",
+        "audition-clip-narrator-cache-hit",
+        "audio-artifact-narrator-cache-hit",
+        auditions[0].audio.sha256,
+      ),
+      providerRequestId: "provider-request-role-primary-narrator-cache-hit",
+      requestFingerprint: hash("request-narrator-cache-hit"),
+      executionClassification: "verified_cache_lookup",
+      providerDispatchCount: 0,
+      sourceProviderRequestId: auditions[0].providerRequestId,
+      runtimeInstanceId: null,
+      cacheKey: auditions[0].cacheKey,
+      cacheStatus: "verified_hit",
+    },
+    {
+      ...audition(
+        "character",
+        "role-character-1",
+        "audition-clip-character-1-regenerated",
+        "audio-artifact-character-1-regenerated",
+        hash("audio-character-1-regenerated"),
+      ),
+      requestFingerprint: hash("request-character-1-regenerated"),
+      cacheKey: hash("cache-character-1-regenerated"),
+    },
+  );
+  const gate = (gateId, roleId, index) => ({
+    gateId,
+    reviewId: `audition-review-${index}`,
+    decisionId: `audition-decision-${index}`,
+    roleId,
+    evidenceFingerprint: hash(`gate-evidence-${index}`),
+    decision: "approved",
+    immutable: true,
+  });
+  const runtimeExits = launches.map((launch, index) => {
+    const worker = launch.ownership.processes.find(
+      (process) => process.kind === "provider_worker",
+    );
+    const service = launch.ownership.processes.find(
+      (process) => process.kind === "service",
+    );
+    if (worker === undefined || service === undefined) {
+      throw new Error("The fixture runtime process tree was incomplete.");
+    }
+    return {
+      runtimeInstanceId: `runtime-instance-${index + 1}`,
+      workerPid: worker.pid,
+      parentPid: service.pid,
+      state: "stopped",
+      stoppedAt: COMPLETED_AT,
+      stopReasonCode: "clean",
+      handshakeAuthenticated: true,
+      shutdownAcknowledged: true,
+      gracefulShutdownConfirmed: true,
+      exitCode: 0,
+      terminatedByParent: false,
+      ownershipConfirmed: true,
+      confirmedExited: true,
+      ownedProcessesConfirmedExited: true,
+      jobObjectAssigned: true,
+      deniedNetworkAttemptCount: 0,
+    };
+  });
+  return {
+    schemaVersion: "7.0.0",
+    completedAt: COMPLETED_AT,
+    status: "passed",
+    evidenceClassification: "deterministic_fixture_lifecycle_only",
+    fixtureClaims: {
+      lifecycleEvidenceOnly: true,
+      naturalSpeechQualityProven: false,
+      productionExportEligible: false,
+      humanListeningClaimed: false,
+    },
+    runtime: {
+      profileId: "deterministic-pcm-wav-fixture-windows-v1-0-1",
+      profileFingerprint:
+        "f3e5801f836ab4061eb76e52f4a3e1b4c7ba162238e0c70857e74fff705f75d6",
+      protocolVersion: "1.0.0",
+      runtimeInstanceIds: ["runtime-instance-1", "runtime-instance-2"],
+      networkPolicy: "python_socket_api_denied",
+      observedNetworkRequestCount: null,
+      externalNetworkObservation: {
+        method: "owned_pid_tcp_endpoint_inventory",
+        ownedPidsOnly: true,
+        observedNonLoopbackEndpointCount: 0,
+      },
+    },
+    fixtureProvider: {
+      providerId: "deterministic-pcm-wav-fixture",
+      providerVersion: "1.0.0",
+    },
+    realProviderAdapter: {
+      providerId: "kokoro-local-onnx",
+      providerVersion: "1.0.0",
+    },
+    model: {
+      modelPackageId: "deterministic-pcm-wav-fixture-package",
+      manifestVersion: "1.0.0",
+      modelPackageFingerprint:
+        "e0352282af67ff3675fe6067a63feca5d9d4fcaeef5a3f12b80a5e4d2c9635d6",
+      installationRevision: 2,
+      verificationId: "model-verification-1",
+      verificationFingerprint: hash("model-verification"),
+      verified: true,
+      active: true,
+    },
+    pronunciation: {
+      dictionaryId: "pronunciation-dictionary-1",
+      initialRevision: 2,
+      initialFingerprint: hash("dictionary-initial"),
+      initialEntryId: "pronunciation-entry-1",
+      initialEntryFingerprint: hash("pronunciation-entry-1"),
+      initialDecision: "approved",
+      supersedingEntryId: "pronunciation-entry-2",
+      supersedingEntryFingerprint: hash("pronunciation-entry-2"),
+      supersedesEntryId: "pronunciation-entry-1",
+      supersedingDecision: "approved",
+      finalRevision: 4,
+      finalFingerprint: hash("dictionary-final"),
+    },
+    auditions,
+    cacheHit: {
+      originalClipId: auditions[0].auditionClipId,
+      repeatedClipId: "audition-clip-narrator-cache-hit",
+      originalRequestFingerprint: auditions[0].requestFingerprint,
+      repeatedRequestFingerprint: hash("request-narrator-cache-hit"),
+      originalCacheKey: auditions[0].cacheKey,
+      repeatedCacheKey: auditions[0].cacheKey,
+      artifactSha256: auditions[0].audio.sha256,
+      repeatedArtifactSha256: auditions[0].audio.sha256,
+      repeatedCacheStatus: "verified_hit",
+      identicalCacheKeyInputsProven: true,
+      lookupOnlyNoProviderExecutionProven: true,
+    },
+    targetedInvalidation: {
+      supersededEntryId: "pronunciation-entry-1",
+      supersedingEntryId: "pronunciation-entry-2",
+      beforeDictionaryFingerprint: hash("dictionary-initial"),
+      afterDictionaryFingerprint: hash("dictionary-final"),
+      impactedRoleId: "role-character-1",
+      priorRequestFingerprint: auditions[1].requestFingerprint,
+      regeneratedRequestFingerprint: hash("request-character-1-regenerated"),
+      priorCacheKey: auditions[1].cacheKey,
+      regeneratedCacheKey: hash("cache-character-1-regenerated"),
+      priorArtifactSha256: auditions[1].audio.sha256,
+      regeneratedArtifactSha256: hash("audio-character-1-regenerated"),
+      invalidatedClipIds: [auditions[1].auditionClipId],
+      preservedClipIds: [
+        auditions[0].auditionClipId,
+        auditions[2].auditionClipId,
+      ],
+      persistedInvalidatedGateStates: [
+        {
+          gateId: "pronunciation_review",
+          reviewId: "audition-review-pronunciation-invalidated",
+          state: "pending",
+          evidenceFingerprint: hash("pronunciation-invalidated-evidence"),
+        },
+        {
+          gateId: "voice_readiness_review",
+          reviewId: "audition-review-readiness-invalidated",
+          state: "blocked",
+          evidenceFingerprint: hash("readiness-invalidated-evidence"),
+        },
+      ],
+      targetedOnly: true,
+    },
+    gateDecisions: [
+      gate("per_role_audition_review", "role-primary-narrator", 1),
+      gate("per_role_audition_review", "role-character-1", 2),
+      gate("per_role_audition_review", "role-character-2", 3),
+      gate("narrator_audition_review", null, 4),
+      gate("character_audition_review", null, 5),
+      gate("pronunciation_review", null, 6),
+      gate("voice_readiness_review", null, 7),
+    ],
+    restart: {
+      runtimeProfilePersisted: true,
+      modelVerificationPersisted: true,
+      pronunciationDictionaryPersisted: true,
+      pronunciationDecisionsPersisted: true,
+      auditionSessionsPersisted: true,
+      auditionScriptsPersisted: true,
+      auditionClipsPersisted: true,
+      cacheRecordsPersisted: true,
+      audioQualityRecordsPersisted: true,
+      auditionDecisionsPersisted: true,
+      voiceReadinessDecisionPersisted: true,
+      authenticatedRestoredAudioLoaded: true,
+      priorLaunchRuntimeExit: runtimeExits[0],
+    },
+    process: {
+      launches: launches.map((launch, index) => ({
+        launch: launch.launch,
+        ownedProcesses: launch.ownership.processes.map((process) => ({
+          pid: process.pid,
+          parentPid: process.parentPid,
+          kind: process.kind === "app" ? "electron" : process.kind,
+          executableName: process.executableName,
+          creationIdentity: process.creationDate,
+          goneAfterShutdown: true,
+        })),
+        providerRuntimeExit: runtimeExits[index],
+        forcedPids: [],
+        remainingPids: [],
+        unrelatedProcessesInspected: false,
+        unrelatedProcessesTerminated: false,
+      })),
+    },
+    screenshot: {
+      artifactId: "packaged-ui-screenshot",
+      captured: true,
+    },
+    assertions: {
+      phase0ThroughPhase3aPrerequisitesCurrent: true,
+      fixtureProviderClearlyClassified: true,
+      modelVerifiedAndActivated: true,
+      pronunciationDecisionApproved: true,
+      narratorAndTwoCharacterAuditionsGenerated: true,
+      authenticatedWavLoadsPassed: true,
+      verifiedCacheHitProven: true,
+      targetedInvalidationProven: true,
+      fiveGateTypesApproved: true,
+      restartPersistenceProven: true,
+      runtimeNetworkPolicyAndOwnedPidEndpointObservationProven: true,
+      electronServiceAndProviderWorkerOwnershipProven: true,
+      allExactOwnedProcessesExited: true,
+      noUnrelatedProcessInspectedOrTerminated: true,
+    },
+  };
+}
+
 test("writes stable relative-path evidence for a successful packaged gate", async (t) => {
   const fixture = await createFixture(t);
   const options = generationOptions(fixture, "success");
@@ -598,7 +904,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   const secondBytes = await readFile(second.manifestPath, "utf8");
 
   assert.equal(secondBytes, firstBytes);
-  assert.equal(first.manifest.schemaVersion, "4.0.0");
+  assert.equal(first.manifest.schemaVersion, "6.0.0");
   assert.equal(first.manifest.artifactPathScope, "repository-root");
   assert.equal(first.manifest.workflowHeadSha, WORKFLOW_HEAD_SHA);
   assert.equal(first.manifest.testedCheckoutSha, WORKFLOW_HEAD_SHA);
@@ -636,6 +942,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     phase2DecisionRecordsPersisted: true,
     phase2RestartDurabilityProven: true,
     phase2WholeBookAnalysisProven: true,
+    phase3bLocalSpeechAuditionsProven: true,
     packagedE2eEvidenceComplete: true,
   });
   assert.deepEqual(
@@ -738,66 +1045,8 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     "apps/desktop/release/0.1.0/packaged-e2e-result.json",
   );
   assert.deepEqual(first.manifest.packagedE2e.launches, [
-    {
-      launch: 1,
-      preexistingRelevantProcesses: [],
-      ownership: {
-        launcherPid: 5100,
-        rootPid: 4100,
-        processes: [
-          {
-            pid: 4100,
-            parentPid: 5100,
-            kind: "app",
-            executableName: "Cinematic Story Studio.exe",
-            creationDate: "2026-07-29T18:15:20.0000000Z",
-          },
-          {
-            pid: 4101,
-            parentPid: 4100,
-            kind: "service",
-            executableName: "cinematic-story-service.exe",
-            creationDate: "2026-07-29T18:15:21.0000000Z",
-          },
-        ],
-      },
-      exitProof: {
-        ownedPids: [4100, 4101],
-        graceful: true,
-        forcedPids: [],
-        remainingPids: [],
-      },
-    },
-    {
-      launch: 2,
-      preexistingRelevantProcesses: [],
-      ownership: {
-        launcherPid: 5200,
-        rootPid: 4200,
-        processes: [
-          {
-            pid: 4200,
-            parentPid: 5200,
-            kind: "app",
-            executableName: "Cinematic Story Studio.exe",
-            creationDate: "2026-07-29T18:15:22.0000000Z",
-          },
-          {
-            pid: 4201,
-            parentPid: 4200,
-            kind: "service",
-            executableName: "cinematic-story-service.exe",
-            creationDate: "2026-07-29T18:15:23.0000000Z",
-          },
-        ],
-      },
-      exitProof: {
-        ownedPids: [4200, 4201],
-        graceful: true,
-        forcedPids: [],
-        remainingPids: [],
-      },
-    },
+    launchEvidence(1, 4100, 4101),
+    launchEvidence(2, 4200, 4201),
   ]);
   assert.equal(
     first.manifest.voiceCastingContract.castingProfile.profileId,
@@ -947,6 +1196,14 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
       "build evidence must not contain manuscript excerpts",
     );
   }
+  assert.equal(firstBytes.includes('"cacheKey"'), true);
+  assert.equal(
+    firstBytes.includes(
+      fingerprint("phase3b-cache-role-primary-narrator"),
+    ),
+    true,
+    "build evidence must contain the deterministic hashed cache identity",
+  );
   const workflow = await readFile(
     new URL("../../.github/workflows/ci.yml", import.meta.url),
     "utf8",
@@ -1020,6 +1277,9 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     "id: development_e2e",
   );
   const buildIndex = workflow.indexOf("id: build");
+  const frozenRuntimeGateIndex = workflow.indexOf(
+    "- name: Verify exact staged frozen service runtime",
+  );
   const resolveEvidenceIndex = workflow.indexOf(
     "- name: Resolve packaged E2E evidence paths",
   );
@@ -1033,7 +1293,8 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     true,
   );
   assert.equal(buildIndex > developmentGateIndex, true);
-  assert.equal(resolveEvidenceIndex > buildIndex, true);
+  assert.equal(frozenRuntimeGateIndex > buildIndex, true);
+  assert.equal(resolveEvidenceIndex > frozenRuntimeGateIndex, true);
   assert.equal(packagedGateIndex > resolveEvidenceIndex, true);
   for (const environmentName of [
     "CSS_PACKAGED_E2E_EXECUTABLE",
@@ -1041,6 +1302,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     "CSS_PACKAGED_E2E_RESULT_PATH",
     "CSS_PHASE3_PACKAGED_E2E_RESULT_PATH",
     "CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH",
+    "CSS_PHASE3B_PACKAGED_E2E_RESULT_PATH",
   ]) {
     assert.match(workflow, new RegExp(environmentName, "u"));
     assert.match(
@@ -1057,13 +1319,14 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     /win-unpacked\/Cinematic Story Studio\.exe/u,
   );
   assert.match(workflow, /node scripts\/ci\/build-evidence\.mjs/u);
-  assert.match(workflow, /name: Phase 3A Windows CI/u);
-  assert.match(workflow, /group: phase-3a-windows-/u);
+  assert.match(workflow, /name: Phase 3B Windows CI/u);
+  assert.match(workflow, /group: phase-3b-windows-/u);
   assert.match(
     workflow,
     /--validate-manifest \$env:CSS_BUILD_EVIDENCE_MANIFEST_PATH/u,
   );
   for (const focusedTest of [
+    "test_audio_qc.py",
     "test_database_v3_migration.py",
     "test_whole_book_analysis.py",
     "test_phase2_api.py",
@@ -1078,12 +1341,34 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     "test_phase3a_governance.py",
     "test_phase3a_jobs.py",
     "test_phase3a_scale.py",
+    "test_database_v5_migration.py",
+    "test_phase3b_model_packages.py",
+    "test_phase3b_model_transaction_compensation.py",
+    "test_phase3b_api.py",
+    "test_phase3b_pronunciation.py",
+    "test_phase3b_pronunciation_lineage.py",
+    "test_phase3b_audition_jobs.py",
+    "test_phase3b_audition_repository.py",
+    "test_phase3b_auditions.py",
+    "test_phase3b_workflow.py",
+    "test_phase3b_speech_runtime.py",
+    "test_phase3b_speech_providers.py",
+    "test_phase3b_real_provider.py",
+    "test_phase3b_real_provider_command.py",
+    "test_phase3b_atomic_publication.py",
+    "test_phase3b_integrity_closure.py",
+    "test_phase3b_review_idempotency.py",
+    "test_phase3b_review_integrity.py",
+    "test_phase3b_invalidation_reconciliation.py",
+    "test_phase3b_text_normalization.py",
+    "test_phase3b_schemas.py",
+    "test_phase3b_scale.py",
   ]) {
     assert.match(workflow, new RegExp(focusedTest, "u"));
   }
   assert.match(
     workflow,
-    /cinematic-story-studio-phase-3a-windows-unpacked-/u,
+    /cinematic-story-studio-phase-3b-windows-unpacked-/u,
   );
   assert.match(
     workflow,
@@ -1093,6 +1378,13 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     workflow,
     /phase-3-voice-casting-evidence\.json/u,
   );
+  assert.match(
+    workflow,
+    /phase-3b-packaged-e2e-result\.json/u,
+  );
+  assert.match(workflow, /sys\.version_info\[:3\] == \(3, 12, 10\)/u);
+  assert.match(workflow, /piptools compile --allow-unsafe --generate-hashes --strip-extras/u);
+  assert.match(workflow, /git diff --exit-code -- apps\/local-service\/requirements\.lock/u);
   assert.match(workflow, /id: resolve_evidence/u);
   assert.match(
     workflow,
@@ -1103,16 +1395,31 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     /github\.event\.pull_request\.head\.sha \|\| github\.sha/u,
   );
   assert.match(
-    workflowStep("Run development governed voice-casting Electron E2E"),
+    workflowStep("Run development governed local-speech auditions Electron E2E"),
     /CSS_E2E: "1"/u,
   );
   assert.match(
-    workflowStep("Run development governed voice-casting Electron E2E"),
+    workflowStep("Run development governed local-speech auditions Electron E2E"),
     /playwright test tests\/e2e\/persistence\.spec\.ts/u,
+  );
+  const frozenRuntimeStep = workflowStep(
+    "Verify exact staged frozen service runtime",
+  );
+  assert.match(
+    frozenRuntimeStep,
+    /apps\/desktop\/build-resources\/service\/cinematic-story-service\.exe/u,
+  );
+  assert.match(
+    frozenRuntimeStep,
+    /CINEMATIC_STORY_TEST_FROZEN_SERVICE/u,
+  );
+  assert.match(
+    frozenRuntimeStep,
+    /test_phase3b_speech_runtime\.py -k frozen/u,
   );
   assert.match(
     workflowStep(
-      "Run exact packaged governed voice-casting persistence E2E",
+      "Run exact packaged governed local-speech auditions persistence E2E",
     ),
     /run test:e2e:packaged/u,
   );
@@ -1125,17 +1432,17 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   );
   assert.doesNotMatch(
     printEvidenceStep,
-    /CSS_(?:PACKAGED_E2E_RESULT|PHASE3_PACKAGED_E2E_RESULT|PHASE3_VOICE_CASTING_EVIDENCE)_PATH/u,
+    /CSS_(?:PACKAGED_E2E_RESULT|PHASE3_PACKAGED_E2E_RESULT|PHASE3_VOICE_CASTING_EVIDENCE|PHASE3B_PACKAGED_E2E_RESULT)_PATH/u,
     "raw packaged results must not be echoed into CI logs",
   );
   for (const [gateName, gateId, enforcementName] of [
     [
-      "Run development governed voice-casting Electron E2E",
+      "Run development governed local-speech auditions Electron E2E",
       "development_e2e",
       "Enforce development Electron E2E result",
     ],
     [
-      "Run exact packaged governed voice-casting persistence E2E",
+      "Run exact packaged governed local-speech auditions persistence E2E",
       "packaged_e2e",
       "Enforce packaged E2E result",
     ],
@@ -1145,7 +1452,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
       "Enforce build-evidence generation",
     ],
     [
-      "Validate schema-v5 Phase 3A result and schema-v4 build manifest",
+      "Validate schema-v7 Phase 3B result and schema-v6 build manifest",
       "manifest_validation",
       "Enforce build-evidence manifest validation",
     ],
@@ -1245,7 +1552,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   }
   assert.match(
     diagnosticsStep,
-    /phase-3a-ci-diagnostics-/u,
+    /phase-3b-ci-diagnostics-/u,
   );
   assert.match(
     diagnosticsStep,
@@ -1324,11 +1631,11 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
         os: "Linux",
       },
     }),
-    /runner does not match the Phase 3A Windows CI job/u,
+    /runner does not match the Phase 3B Windows CI job/u,
   );
 });
 
-test("validates a complete Phase 3A manifest and rejects tampering", async (t) => {
+test("validates a complete Phase 3B manifest and rejects tampering", async (t) => {
   const fixture = await createFixture(t);
   const generated = await generateBuildEvidence(
     generationOptions(fixture, "success"),
@@ -1340,8 +1647,180 @@ test("validates a complete Phase 3A manifest and rejects tampering", async (t) =
   });
 
   assert.equal(validated.manifestPath, generated.manifestPath);
-  assert.equal(validated.manifest.schemaVersion, "4.0.0");
+  assert.equal(validated.manifest.schemaVersion, "6.0.0");
   assert.match(validated.manifestSha256, /^[a-f0-9]{64}$/u);
+
+  const missingRepeatedAuditionTamper = structuredClone(generated.manifest);
+  missingRepeatedAuditionTamper.localSpeechAuditionsContract.auditions =
+    missingRepeatedAuditionTamper.localSpeechAuditionsContract.auditions.filter(
+      (item) =>
+        item.auditionClipId !==
+        missingRepeatedAuditionTamper.localSpeechAuditionsContract.cacheHit
+          .repeatedClipId,
+    );
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(missingRepeatedAuditionTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /Phase 3A voice-casting or Phase 3B local-speech evidence is invalid or stale/u,
+  );
+
+  const missingRegeneratedAuditionTamper = structuredClone(generated.manifest);
+  missingRegeneratedAuditionTamper.localSpeechAuditionsContract.auditions =
+    missingRegeneratedAuditionTamper.localSpeechAuditionsContract.auditions.filter(
+      (item) =>
+        item.requestFingerprint !==
+        missingRegeneratedAuditionTamper.localSpeechAuditionsContract
+          .targetedInvalidation.regeneratedRequestFingerprint,
+    );
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(missingRegeneratedAuditionTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /Phase 3A voice-casting or Phase 3B local-speech evidence is invalid or stale/u,
+  );
+
+  const cacheBindingTamper = structuredClone(generated.manifest);
+  const repeatedClipId =
+    cacheBindingTamper.localSpeechAuditionsContract.cacheHit.repeatedClipId;
+  const repeatedAudition =
+    cacheBindingTamper.localSpeechAuditionsContract.auditions.find(
+      (item) => item.auditionClipId === repeatedClipId,
+    );
+  assert.ok(repeatedAudition);
+  repeatedAudition.voiceRuntimeBindingFingerprint = "f".repeat(64);
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(cacheBindingTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /Phase 3A voice-casting or Phase 3B local-speech evidence is invalid or stale/u,
+  );
+
+  for (const executionTamper of [
+    { providerDispatchCount: 1 },
+    { runtimeInstanceId: "runtime-instance-cache-lie" },
+    { sourceProviderRequestId: "provider-request-unrelated" },
+    { executionClassification: "provider_execution" },
+  ]) {
+    const cacheExecutionTamper = structuredClone(generated.manifest);
+    const repeatedExecutionAudition =
+      cacheExecutionTamper.localSpeechAuditionsContract.auditions.find(
+        (item) =>
+          item.auditionClipId ===
+          cacheExecutionTamper.localSpeechAuditionsContract.cacheHit
+            .repeatedClipId,
+      );
+    assert.ok(repeatedExecutionAudition);
+    Object.assign(repeatedExecutionAudition, executionTamper);
+    await writeFile(
+      generated.manifestPath,
+      `${JSON.stringify(cacheExecutionTamper, null, 2)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      validateBuildEvidenceManifest({
+        repositoryRoot: fixture.root,
+        manifestPath: generated.manifestPath,
+      }),
+      /Phase 3A voice-casting or Phase 3B local-speech evidence is invalid or stale/u,
+    );
+  }
+
+  const originalExecutionTamper = structuredClone(generated.manifest);
+  const originalExecutionAudition =
+    originalExecutionTamper.localSpeechAuditionsContract.auditions.find(
+      (item) =>
+        item.auditionClipId ===
+        originalExecutionTamper.localSpeechAuditionsContract.cacheHit
+          .originalClipId,
+    );
+  assert.ok(originalExecutionAudition);
+  originalExecutionAudition.providerDispatchCount = 0;
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(originalExecutionTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /Phase 3A voice-casting or Phase 3B local-speech evidence is invalid or stale/u,
+  );
+
+  const cacheAssertionTamper = structuredClone(generated.manifest);
+  cacheAssertionTamper.localSpeechAuditionsContract.cacheHit
+    .lookupOnlyNoProviderExecutionProven = false;
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(cacheAssertionTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /Phase 3A voice-casting or Phase 3B local-speech evidence is invalid or stale/u,
+  );
+
+  const regeneratedBindingTamper = structuredClone(generated.manifest);
+  const regeneratedRequestFingerprint =
+    regeneratedBindingTamper.localSpeechAuditionsContract.targetedInvalidation
+      .regeneratedRequestFingerprint;
+  const regeneratedAudition =
+    regeneratedBindingTamper.localSpeechAuditionsContract.auditions.find(
+      (item) => item.requestFingerprint === regeneratedRequestFingerprint,
+    );
+  assert.ok(regeneratedAudition);
+  regeneratedAudition.providerVoiceId = "fixture-voice-drift";
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(regeneratedBindingTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /Phase 3A voice-casting or Phase 3B local-speech evidence is invalid or stale/u,
+  );
+
+  const cacheKeyLeakTamper = structuredClone(generated.manifest);
+  cacheKeyLeakTamper.localSpeechAuditionsContract.cacheHit.originalCacheKey =
+    "private manuscript cache material";
+  await writeFile(
+    generated.manifestPath,
+    `${JSON.stringify(cacheKeyLeakTamper, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /unhashed cache-key value/u,
+  );
 
   const leakTamper = structuredClone(generated.manifest);
   leakTamper.runner.name =
@@ -1548,6 +2027,223 @@ test("rejects stale or contradictory Phase 3A packaged evidence", async (t) => {
   );
 });
 
+test("rejects noncanonical Phase 3B runtime provenance", async (t) => {
+  const fixture = await createFixture(t);
+  const original = JSON.parse(
+    await readFile(fixture.phase3bResultPath, "utf8"),
+  );
+  const mutations = [
+    ["legacy runtime profile ID", (value) => {
+      value.runtime.profileId = "deterministic-pcm-wav-fixture-windows";
+    }],
+    ["arbitrary runtime profile fingerprint", (value) => {
+      value.runtime.profileFingerprint = "f".repeat(64);
+    }],
+    ["arbitrary fixture provider ID", (value) => {
+      value.fixtureProvider.providerId = "deterministic-pcm-wav-fixture-drift";
+    }],
+    ["arbitrary fixture provider version", (value) => {
+      value.fixtureProvider.providerVersion = "1.0.1";
+    }],
+    ["arbitrary real provider ID", (value) => {
+      value.realProviderAdapter.providerId = "kokoro-onnx-local";
+    }],
+    ["arbitrary real provider version", (value) => {
+      value.realProviderAdapter.providerVersion = "1.0.1";
+    }],
+    ["arbitrary fixture package ID", (value) => {
+      value.model.modelPackageId = "deterministic-pcm-wav-fixture-package-drift";
+    }],
+    ["arbitrary fixture manifest version", (value) => {
+      value.model.manifestVersion = "1.0.1";
+    }],
+    ["arbitrary fixture package fingerprint", (value) => {
+      value.model.modelPackageFingerprint = "f".repeat(64);
+    }],
+  ];
+  for (const [label, mutate] of mutations) {
+    const tampered = structuredClone(original);
+    mutate(tampered);
+    await writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(tampered)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      generateBuildEvidence(generationOptions(fixture, "success")),
+      /complete, valid machine evidence/u,
+      label,
+    );
+  }
+});
+
+test("rejects Phase 3B fixture quality overclaims and stale process proof", async (t) => {
+  const fixture = await createFixture(t);
+  const original = JSON.parse(
+    await readFile(fixture.phase3bResultPath, "utf8"),
+  );
+  await writeFile(
+    fixture.phase3bResultPath,
+    `${JSON.stringify({
+      ...original,
+      fixtureClaims: {
+        ...original.fixtureClaims,
+        naturalSpeechQualityProven: true,
+      },
+    })}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  const staleProcess = structuredClone(original);
+  staleProcess.process.launches[0].ownedProcesses =
+    staleProcess.process.launches[0].ownedProcesses.filter(
+      (process) => process.kind !== "provider_worker",
+    );
+  await writeFile(
+    fixture.phase3bResultPath,
+    `${JSON.stringify(staleProcess)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  const unauthenticatedRuntimeExit = structuredClone(original);
+  unauthenticatedRuntimeExit.process.launches[0]
+    .providerRuntimeExit.shutdownAcknowledged = false;
+  await writeFile(
+    fixture.phase3bResultPath,
+    `${JSON.stringify(unauthenticatedRuntimeExit)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  const mismatchedPersistedExit = structuredClone(original);
+  mismatchedPersistedExit.restart.priorLaunchRuntimeExit.workerPid += 100;
+  await writeFile(
+    fixture.phase3bResultPath,
+    `${JSON.stringify(mismatchedPersistedExit)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  const mismatchedAssignmentRevision = structuredClone(original);
+  mismatchedAssignmentRevision.auditions[0].assignmentRevision += 1;
+  await writeFile(
+    fixture.phase3bResultPath,
+    `${JSON.stringify(mismatchedAssignmentRevision)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+});
+
+test("rejects incomplete, duplicate, and wrongly scoped Phase 3B gate topology", async (t) => {
+  const fixture = await createFixture(t);
+  const original = JSON.parse(
+    await readFile(fixture.phase3bResultPath, "utf8"),
+  );
+  const mutations = [
+    (value) => {
+      value.gateDecisions = value.gateDecisions.filter(
+        (decision) => decision.roleId !== "role-character-2",
+      );
+    },
+    (value) => {
+      value.gateDecisions.push({
+        ...value.gateDecisions[0],
+        reviewId: "audition-review-extra-per-role",
+        decisionId: "audition-decision-extra-per-role",
+      });
+    },
+    (value) => {
+      value.gateDecisions[0].roleId = "role-not-auditioned";
+    },
+    (value) => {
+      value.gateDecisions[3].roleId = "role-primary-narrator";
+    },
+    (value) => {
+      value.gateDecisions[1].reviewId =
+        value.gateDecisions[0].reviewId;
+    },
+    (value) => {
+      value.gateDecisions[1].decisionId =
+        value.gateDecisions[0].decisionId;
+    },
+  ];
+
+  for (const mutate of mutations) {
+    const invalid = structuredClone(original);
+    mutate(invalid);
+    await writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(invalid)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      generateBuildEvidence(generationOptions(fixture, "success")),
+      /complete, valid machine evidence/u,
+    );
+  }
+});
+
+test("rejects Phase 3B evidence that omits an additional Phase 3A cast role", async (t) => {
+  const fixture = await createFixture(t);
+  const phase3Result = JSON.parse(
+    await readFile(fixture.phase3ResultPath, "utf8"),
+  );
+  const additionalAssignment = {
+    ...structuredClone(
+      phase3Result.casting.characterAssignments.at(-1),
+    ),
+    assignmentId: "assignment-character-3",
+    roleId: "role-character-3",
+    ...syntheticCatalogAssignmentEvidence("synthetic-character-03"),
+    effectiveCorrectionSetFingerprint: fingerprint(
+      "casting-corrections-character-3",
+    ),
+    supersedesAssignmentId: "assignment-character-3-selection",
+  };
+  phase3Result.casting.characterAssignmentIds.push(
+    additionalAssignment.assignmentId,
+  );
+  phase3Result.casting.characterAssignments.push(additionalAssignment);
+  const castingEvidence = phase3VoiceCastingEvidence(phase3Result);
+  castingEvidence.counts.productionRoles = 4;
+  castingEvidence.counts.characterRoles = 3;
+  castingEvidence.counts.assignments = 4;
+  await Promise.all([
+    writeFile(
+      fixture.phase3ResultPath,
+      `${JSON.stringify(phase3Result)}\n`,
+      "utf8",
+    ),
+    writeFile(
+      fixture.phase3VoiceCastingEvidencePath,
+      `${JSON.stringify(castingEvidence)}\n`,
+      "utf8",
+    ),
+  ]);
+
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+});
+
 test("build evidence matches the canonical Python parser profile and fingerprint", async () => {
   const python = [
     "import json",
@@ -1620,13 +2316,13 @@ test("accepts an accumulated transient service descendant when identity and exit
   const fixture = await createFixture(t);
   const value = JSON.parse(await readFile(fixture.resultPath, "utf8"));
   value.launches[0].ownership.processes.push({
-    pid: 4102,
+    pid: 4103,
     parentPid: 4101,
     kind: "service",
     executableName: "cinematic-story-service.exe",
     creationDate: "2026-07-29T18:15:21.5000000Z",
   });
-  value.launches[0].exitProof.ownedPids.push(4102);
+  value.launches[0].exitProof.ownedPids.push(4103);
   await writeFile(
     fixture.resultPath,
     `${JSON.stringify(value)}\n`,
@@ -1635,7 +2331,7 @@ test("accepts an accumulated transient service descendant when identity and exit
   const phase3Result = JSON.parse(
     await readFile(fixture.phase3ResultPath, "utf8"),
   );
-  phase3Result.processOwnership.serviceOwnedPids.splice(1, 0, 4102);
+  phase3Result.processOwnership.serviceOwnedPids.splice(1, 0, 4103);
   await writeFile(
     fixture.phase3ResultPath,
     `${JSON.stringify(phase3Result)}\n`,
@@ -1650,6 +2346,25 @@ test("accepts an accumulated transient service descendant when identity and exit
     `${JSON.stringify(castingEvidence)}\n`,
     "utf8",
   );
+  const phase3bResult = JSON.parse(
+    await readFile(fixture.phase3bResultPath, "utf8"),
+  );
+  phase3bResult.process.launches[0].ownedProcesses.push({
+    pid: 4103,
+    parentPid: 4101,
+    kind: "service",
+    executableName: "cinematic-story-service.exe",
+    creationIdentity: "2026-07-29T18:15:21.5000000Z",
+    goneAfterShutdown: true,
+  });
+  phase3bResult.process.launches[0].ownedProcesses.sort(
+    (left, right) => left.pid - right.pid,
+  );
+  await writeFile(
+    fixture.phase3bResultPath,
+    `${JSON.stringify(phase3bResult)}\n`,
+    "utf8",
+  );
 
   const { manifest } = await generateBuildEvidence(
     generationOptions(fixture, "success"),
@@ -1661,11 +2376,221 @@ test("accepts an accumulated transient service descendant when identity and exit
   );
   assert.deepEqual(
     manifest.packagedE2e.launches[0].exitProof.ownedPids,
-    [4100, 4101, 4102],
+    [4100, 4101, 4102, 4103],
   );
   assert.equal(
     manifest.assertions.packagedE2eOwnershipExitProven,
     true,
+  );
+});
+
+test("rejects invalid machine process kinds and multiple app-service boundaries", async (t) => {
+  const fixture = await createFixture(t);
+  const original = await readFile(fixture.resultPath, "utf8");
+  const machineResult = JSON.parse(original);
+  const firstLaunch = machineResult.launches[0];
+  firstLaunch.ownership.processes.push({
+    pid: 4103,
+    parentPid: 4101,
+    kind: "app",
+    executableName: "Cinematic Story Studio.exe",
+    creationDate: "2026-07-29T18:15:21.7500000Z",
+  });
+  firstLaunch.exitProof.ownedPids.push(4103);
+  await writeFile(
+    fixture.resultPath,
+    `${JSON.stringify(machineResult)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  const secondBoundaryResult = JSON.parse(original);
+  const secondBoundaryLaunch = secondBoundaryResult.launches[0];
+  secondBoundaryLaunch.ownership.processes.push({
+    pid: 4103,
+    parentPid: 4100,
+    kind: "service",
+    executableName: "cinematic-story-service.exe",
+    creationDate: "2026-07-29T18:15:21.7500000Z",
+  });
+  secondBoundaryLaunch.exitProof.ownedPids.push(4103);
+  await writeFile(
+    fixture.resultPath,
+    `${JSON.stringify(secondBoundaryResult)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+});
+
+test("accepts a Windows provider-worker intermediary and rejects broken ancestry", async (t) => {
+  const fixture = await createFixture(t);
+  const machineResult = JSON.parse(
+    await readFile(fixture.resultPath, "utf8"),
+  );
+  const phase3bResult = JSON.parse(
+    await readFile(fixture.phase3bResultPath, "utf8"),
+  );
+  const machineLaunch = machineResult.launches[0];
+  const phase3bLaunch = phase3bResult.process.launches[0];
+  const runtimeExit = phase3bLaunch.providerRuntimeExit;
+  const worker = machineLaunch.ownership.processes.find(
+    (process) => process.pid === runtimeExit.workerPid,
+  );
+  const service = machineLaunch.ownership.processes.find(
+    (process) => process.pid === runtimeExit.parentPid,
+  );
+  assert.notEqual(worker, undefined);
+  assert.notEqual(service, undefined);
+  const intermediary = {
+    pid: 4103,
+    parentPid: service.pid,
+    kind: "provider_worker",
+    executableName: "cinematic-story-service.exe",
+    creationDate: "2026-07-29T18:15:21.2500000Z",
+  };
+  worker.parentPid = intermediary.pid;
+  machineLaunch.ownership.processes.push(intermediary);
+  machineLaunch.exitProof.ownedPids.push(intermediary.pid);
+  phase3bLaunch.ownedProcesses = machineLaunch.ownership.processes.map(
+    (process) => ({
+      pid: process.pid,
+      parentPid: process.parentPid,
+      kind: process.kind === "app" ? "electron" : process.kind,
+      executableName: process.executableName,
+      creationIdentity: process.creationDate,
+      goneAfterShutdown: true,
+    }),
+  );
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+
+  await assert.doesNotReject(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+  );
+
+  intermediary.creationDate = "2026-07-29T18:15:21.5000001Z";
+  phase3bLaunch.ownedProcesses.find(
+    (process) => process.pid === intermediary.pid,
+  ).creationIdentity = intermediary.creationDate;
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  intermediary.creationDate = "2026-07-29T18:15:21.2500000Z";
+  phase3bLaunch.ownedProcesses.find(
+    (process) => process.pid === intermediary.pid,
+  ).creationIdentity = intermediary.creationDate;
+
+  intermediary.kind = "service";
+  phase3bLaunch.ownedProcesses.find(
+    (process) => process.pid === intermediary.pid,
+  ).kind = "service";
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  intermediary.kind = "provider_worker";
+  const phase3bIntermediary = phase3bLaunch.ownedProcesses.find(
+    (process) => process.pid === intermediary.pid,
+  );
+  phase3bIntermediary.kind = "provider_worker";
+  const secondIntermediary = {
+    ...intermediary,
+    pid: 4104,
+    parentPid: service.pid,
+    creationDate: "2026-07-29T18:15:21.1250000Z",
+  };
+  intermediary.parentPid = secondIntermediary.pid;
+  machineLaunch.ownership.processes.push(secondIntermediary);
+  machineLaunch.exitProof.ownedPids.push(secondIntermediary.pid);
+  phase3bLaunch.ownedProcesses = machineLaunch.ownership.processes.map(
+    (process) => ({
+      pid: process.pid,
+      parentPid: process.parentPid,
+      kind: process.kind === "app" ? "electron" : process.kind,
+      executableName: process.executableName,
+      creationIdentity: process.creationDate,
+      goneAfterShutdown: true,
+    }),
+  );
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
+  );
+
+  machineLaunch.ownership.processes = machineLaunch.ownership.processes.filter(
+    (process) => process.pid !== secondIntermediary.pid,
+  );
+  machineLaunch.exitProof.ownedPids = machineLaunch.exitProof.ownedPids.filter(
+    (pid) => pid !== secondIntermediary.pid,
+  );
+  intermediary.parentPid = service.pid;
+  machineLaunch.ownership.processes.push({
+    ...intermediary,
+    pid: 4105,
+    parentPid: service.pid,
+    creationDate: "2026-07-29T18:15:21.3750000Z",
+  });
+  machineLaunch.exitProof.ownedPids.push(4105);
+  phase3bLaunch.ownedProcesses = machineLaunch.ownership.processes.map(
+    (process) => ({
+      pid: process.pid,
+      parentPid: process.parentPid,
+      kind: process.kind === "app" ? "electron" : process.kind,
+      executableName: process.executableName,
+      creationIdentity: process.creationDate,
+      goneAfterShutdown: true,
+    }),
+  );
+  await Promise.all([
+    writeFile(fixture.resultPath, `${JSON.stringify(machineResult)}\n`, "utf8"),
+    writeFile(
+      fixture.phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
+      "utf8",
+    ),
+  ]);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /complete, valid machine evidence/u,
   );
 });
 
@@ -2264,6 +3189,10 @@ async function createFixture(t) {
     releaseRoot,
     "phase-3-voice-casting-evidence.json",
   );
+  const phase3bResultPath = path.join(
+    releaseRoot,
+    "phase-3b-packaged-e2e-result.json",
+  );
   const manifestPath = path.join(releaseRoot, "build-evidence.json");
   const requirementsDirectory = path.join(
     root,
@@ -2287,6 +3216,11 @@ async function createFixture(t) {
   const serviceBytes = Buffer.from("packaged-service", "utf8");
   const screenshotBytes = Buffer.from("png-evidence", "utf8");
   const phase3Result = phase3PackagedResult(screenshotBytes);
+  const launches = [
+    launchEvidence(1, 4100, 4101),
+    launchEvidence(2, 4200, 4201),
+  ];
+  const phase3bResult = phase3bPackagedResult(launches);
 
   await Promise.all([
     mkdir(path.dirname(executablePath), { recursive: true }),
@@ -2377,10 +3311,7 @@ async function createFixture(t) {
         },
         importReview: IMPORT_REVIEW,
         storyAnalysis: storyAnalysisEvidence(),
-        launches: [
-          launchEvidence(1, 4100, 4101),
-          launchEvidence(2, 4200, 4201),
-        ],
+        launches,
       })}\n`,
       "utf8",
     ),
@@ -2394,6 +3325,11 @@ async function createFixture(t) {
       `${JSON.stringify(
         phase3VoiceCastingEvidence(phase3Result),
       )}\n`,
+      "utf8",
+    ),
+    writeFile(
+      phase3bResultPath,
+      `${JSON.stringify(phase3bResult)}\n`,
       "utf8",
     ),
     writeFile(
@@ -2416,6 +3352,7 @@ async function createFixture(t) {
     resultPath,
     phase3ResultPath,
     phase3VoiceCastingEvidencePath,
+    phase3bResultPath,
     manifestPath,
   };
 }
@@ -2435,6 +3372,7 @@ function generationOptions(fixture, stepOutcome) {
       phase3ResultPath: fixture.phase3ResultPath,
       phase3VoiceCastingEvidencePath:
         fixture.phase3VoiceCastingEvidencePath,
+      phase3bResultPath: fixture.phase3bResultPath,
       stepOutcome,
     },
     manifestPath: fixture.manifestPath,
@@ -2537,6 +3475,7 @@ function objectContainsString(value, expected) {
 
 function launchEvidence(launch, appPid, servicePid) {
   const launcherPid = appPid + 1000;
+  const providerWorkerPid = servicePid + 1;
   const rootCreationDate =
     launch === 1
       ? "2026-07-29T18:15:20.0000000Z"
@@ -2545,6 +3484,10 @@ function launchEvidence(launch, appPid, servicePid) {
     launch === 1
       ? "2026-07-29T18:15:21.0000000Z"
       : "2026-07-29T18:15:23.0000000Z";
+  const providerWorkerCreationDate =
+    launch === 1
+      ? "2026-07-29T18:15:21.5000000Z"
+      : "2026-07-29T18:15:23.5000000Z";
   return {
     launch,
     preexistingRelevantProcesses: [],
@@ -2566,10 +3509,17 @@ function launchEvidence(launch, appPid, servicePid) {
           executableName: "cinematic-story-service.exe",
           creationDate: serviceCreationDate,
         },
+        {
+          pid: providerWorkerPid,
+          parentPid: servicePid,
+          kind: "provider_worker",
+          executableName: "cinematic-story-service.exe",
+          creationDate: providerWorkerCreationDate,
+        },
       ],
     },
     exitProof: {
-      ownedPids: [appPid, servicePid],
+      ownedPids: [appPid, servicePid, providerWorkerPid],
       graceful: true,
       forcedPids: [],
       remainingPids: [],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Sequence
+from threading import RLock
 from typing import Any
 
 from sqlalchemy import func, select
@@ -302,6 +303,7 @@ class CastingRepository:
         self.projects = projects
         self.story_intelligence = story_intelligence
         self.catalog = load_synthetic_catalog()
+        self._review_refresh_lock = RLock()
 
     @staticmethod
     def require_run(
@@ -1223,6 +1225,62 @@ class CastingRepository:
         )
 
     @staticmethod
+    def _stored_provider_material(row: VoiceProviderDescriptorRow) -> dict[str, Any]:
+        return {
+            "contractVersion": CASTING_CONTRACT_VERSION,
+            "providerId": row.provider_id,
+            "providerVersion": row.provider_version,
+            "providerType": row.provider_type,
+            "runtimeAvailability": row.runtime_availability,
+            "catalogAvailability": row.catalog_availability,
+            "synthesisImplemented": row.synthesis_implemented,
+            "networkUseRequired": row.network_required,
+            "credentialsRequired": row.credentials_required,
+            "supportedOperatingSystems": parse_json(
+                row.supported_operating_systems_json,
+                None,
+            ),
+            "supportedLanguages": parse_json(row.supported_languages_json, None),
+            "outputCapability": parse_json(row.output_capabilities_json, None),
+            "rightsMetadataCapabilities": parse_json(
+                row.rights_metadata_capabilities_json,
+                None,
+            ),
+            "healthStatus": row.health_status,
+            "provenance": parse_json(row.provenance_json, None),
+        }
+
+    @staticmethod
+    def _stored_model_material(
+        row: VoiceModelDescriptorRow,
+        provider: VoiceProviderDescriptorRow,
+    ) -> dict[str, Any]:
+        pitch_style = parse_json(row.pitch_style_controls_json, {})
+        return {
+            "contractVersion": CASTING_CONTRACT_VERSION,
+            "providerId": provider.provider_id,
+            "modelId": row.model_id,
+            "modelName": row.model_name,
+            "modelVersion": row.model_version,
+            "capability": {
+                "supportedLanguages": parse_json(row.supported_languages_json, None),
+                "supportedLocales": parse_json(row.supported_locales_json, None),
+                "expressiveControls": parse_json(row.expressive_controls_json, None),
+                "speakingRateRange": parse_json(row.speaking_rate_controls_json, None),
+                "pitchControl": pitch_style.get("pitchControl"),
+                "styleControl": pitch_style.get("styleControl"),
+                "outputCapability": parse_json(row.output_capabilities_json, None),
+            },
+            "executionLocation": (
+                "local" if row.execution_classification == "fixture" else "remote"
+            ),
+            "licenseClassification": row.rights_classification,
+            "availability": row.availability,
+            "deprecated": row.deprecated,
+            "provenance": parse_json(row.provenance_json, None),
+        }
+
+    @staticmethod
     def _stored_voice_material(voice: VoiceProfileRow) -> dict[str, Any]:
         vocal_metadata = parse_json(voice.vocal_weight_texture_json, {})
         role_suitability = parse_json(voice.character_role_suitability_json, {})
@@ -2076,9 +2134,7 @@ class CastingRepository:
                     "correctionId": row.id,
                     "kind": row.kind,
                     "revision": row.revision,
-                    "correctionFingerprint": (
-                        self._validated_correction_fingerprint(row)
-                    ),
+                    "correctionFingerprint": (self._validated_correction_fingerprint(row)),
                     "supersedesCorrectionId": row.supersedes_correction_id,
                 }
                 for row in rows
@@ -2090,23 +2146,34 @@ class CastingRepository:
         session: Session,
         run_id: str,
     ) -> list[CastAssignmentRow]:
-        roles = list(
+        latest_revisions = (
+            select(
+                CastAssignmentRow.role_id.label("role_id"),
+                func.max(CastAssignmentRow.revision).label("revision"),
+            )
+            .where(
+                CastAssignmentRow.casting_run_id == run_id,
+                CastAssignmentRow.authority.in_(("human_selection", "human_locked")),
+            )
+            .group_by(CastAssignmentRow.role_id)
+            .subquery()
+        )
+        return list(
             session.scalars(
-                select(ProductionRoleRow)
-                .where(ProductionRoleRow.casting_run_id == run_id)
+                select(CastAssignmentRow)
+                .join(
+                    latest_revisions,
+                    (CastAssignmentRow.role_id == latest_revisions.c.role_id)
+                    & (CastAssignmentRow.revision == latest_revisions.c.revision),
+                )
+                .join(ProductionRoleRow, ProductionRoleRow.id == CastAssignmentRow.role_id)
+                .where(
+                    CastAssignmentRow.casting_run_id == run_id,
+                    ProductionRoleRow.casting_run_id == run_id,
+                )
                 .order_by(ProductionRoleRow.ordinal, ProductionRoleRow.id)
             )
         )
-        result: list[CastAssignmentRow] = []
-        for role in roles:
-            assignment = self._latest_assignment(
-                session,
-                role_id=role.id,
-                include_proposal=False,
-            )
-            if assignment is not None:
-                result.append(assignment)
-        return result
 
     @staticmethod
     def _set_conflict_overflow_warning(
@@ -2764,9 +2831,7 @@ class CastingRepository:
             else:
                 static_rows.append(conflict)
 
-        active_static_count = sum(
-            value.status in {"open", "acknowledged"} for value in static_rows
-        )
+        active_static_count = sum(value.status in {"open", "acknowledged"} for value in static_rows)
         active_dynamic_capacity = max(
             0,
             MAX_CASTING_CONFLICTS - active_static_count,
@@ -2828,8 +2893,7 @@ class CastingRepository:
                 expected_details_json = canonical_json(spec["details"])
                 if (
                     existing.primary_role_id != role_ids[0]
-                    or existing.secondary_role_id
-                    != (role_ids[1] if len(role_ids) > 1 else None)
+                    or existing.secondary_role_id != (role_ids[1] if len(role_ids) > 1 else None)
                     or existing.voice_profile_record_id != voice.id
                     or existing.category != str(spec["category"])
                     or existing.severity != "warning"
@@ -2844,10 +2908,7 @@ class CastingRepository:
                     )
 
         for conflict in dynamic_rows:
-            if (
-                conflict.id not in active_ids
-                and conflict.status in {"open", "acknowledged"}
-            ):
+            if conflict.id not in active_ids and conflict.status in {"open", "acknowledged"}:
                 conflict.status = "superseded"
         self._set_conflict_overflow_warning(
             run,
@@ -2861,6 +2922,8 @@ class CastingRepository:
         *,
         run: CastingRunRow,
         gate_id: str,
+        include_gate_prerequisites: bool = True,
+        validate_current_cast_snapshot: bool = True,
     ) -> tuple[list[str], list[str]]:
         roles = list(
             session.scalars(
@@ -2878,19 +2941,38 @@ class CastingRepository:
         blockers: list[str] = []
         warnings: list[str] = []
         try:
-            self.assert_evidence(session, run=run)
+            self.assert_evidence(
+                session,
+                run=run,
+                validate_current_cast_snapshot=validate_current_cast_snapshot,
+            )
         except ServiceError as exc:
             blockers.append(f"phase-2-evidence-stale:{exc.code}")
         if gate_id == "complete_cast_review":
             selected_roles = roles
-            for upstream in CASTING_GATE_IDS[:2]:
-                decision = self._latest_decision(
-                    session,
-                    run_id=run.id,
-                    gate_id=upstream,
-                )
-                if decision is None or decision.decision != "approved":
-                    blockers.append(f"upstream-gate:{upstream}")
+            if include_gate_prerequisites:
+                snapshot = self._latest_snapshot(session, run.id)
+                for upstream in CASTING_GATE_IDS[:2]:
+                    upstream_review = self._latest_review(
+                        session,
+                        run_id=run.id,
+                        gate_id=upstream,
+                    )
+                    decision = self._latest_decision(
+                        session,
+                        run_id=run.id,
+                        gate_id=upstream,
+                    )
+                    if (
+                        snapshot is None
+                        or upstream_review is None
+                        or upstream_review.cast_snapshot_id != snapshot.id
+                        or decision is None
+                        or decision.gate_review_id != upstream_review.id
+                        or decision.cast_snapshot_id != snapshot.id
+                        or decision.decision != "approved"
+                    ):
+                        blockers.append(f"upstream-gate:{upstream}")
         selected_role_ids = {role.id for role in selected_roles}
         selected_voice_by_role: dict[str, str] = {}
         rights_by_voice = {
@@ -2977,9 +3059,7 @@ class CastingRepository:
             rights = rights_by_voice.get(assignment.voice_profile_record_id)
             if rights is None or rights.rights_state in {"unknown", "prohibited"}:
                 blockers.append(f"ineligible-rights:{role.id}")
-            elif not rights_record_is_current(
-                self._stored_rights_material(rights)
-            ):
+            elif not rights_record_is_current(self._stored_rights_material(rights)):
                 blockers.append(f"rights-not-current:{role.id}")
             elif rights.rights_state == "restricted":
                 acknowledged = self._current_restricted_rights_acknowledgement(
@@ -3182,9 +3262,7 @@ class CastingRepository:
             "correctionId": assignment.correction_id,
             "voiceProfileId": voice.profile_id if voice is not None else None,
             "voiceProfileVersion": voice.profile_version if voice is not None else None,
-            "voiceEvidenceFingerprint": (
-                voice.profile_fingerprint if voice is not None else None
-            ),
+            "voiceEvidenceFingerprint": (voice.profile_fingerprint if voice is not None else None),
             "rightsRecordId": rights.rights_record_id if rights is not None else None,
             "rightsRecordRevision": rights.revision if rights is not None else None,
             "rightsEvidenceFingerprint": (
@@ -3193,9 +3271,7 @@ class CastingRepository:
             "catalogRevisionId": catalog.catalog_id,
             "castingProfileFingerprint": assignment.casting_profile_fingerprint,
             "phase2SnapshotFingerprint": assignment.phase2_snapshot_fingerprint,
-            "effectiveCorrectionSetFingerprint": (
-                assignment.effective_correction_set_fingerprint
-            ),
+            "effectiveCorrectionSetFingerprint": (assignment.effective_correction_set_fingerprint),
             "authority": assignment.authority,
             "assignmentState": assignment.assignment_state,
             "rationale": assignment.rationale,
@@ -3287,15 +3363,12 @@ class CastingRepository:
         if (
             not isinstance(manifest, dict)
             or frozenset(manifest) != expected_manifest_fields
-            or self._snapshot_fingerprint(snapshot, manifest)
-            != snapshot.snapshot_fingerprint
+            or self._snapshot_fingerprint(snapshot, manifest) != snapshot.snapshot_fingerprint
             or snapshot.project_id != run.project_id
             or snapshot.catalog_revision_id != run.catalog_revision_id
-            or snapshot.phase2_snapshot_fingerprint
-            != run.analysis_snapshot_fingerprint
+            or snapshot.phase2_snapshot_fingerprint != run.analysis_snapshot_fingerprint
             or snapshot.catalog_fingerprint != run.catalog_fingerprint
-            or snapshot.casting_profile_fingerprint
-            != run.casting_profile_fingerprint
+            or snapshot.casting_profile_fingerprint != run.casting_profile_fingerprint
             or not isinstance(manifest.get("reviewEligibleAtPublication"), bool)
         ):
             raise self._snapshot_manifest_error()
@@ -3359,6 +3432,7 @@ class CastingRepository:
             exact_fields=frozenset({"conflictId", "evidenceFingerprint"}),
         )
 
+        validated_role_rows: dict[str, ProductionRoleRow] = {}
         for role_id, evidence in roles.items():
             role_row = session.get(ProductionRoleRow, role_id)
             if (
@@ -3372,6 +3446,7 @@ class CastingRepository:
                 session,
                 role_row,
             )
+            validated_role_rows[role_id] = role_row
         for candidate_id, evidence in candidates.items():
             candidate_row = session.get(CastingCandidateRow, candidate_id)
             candidate_voice = (
@@ -3387,8 +3462,7 @@ class CastingRepository:
                 or candidate_voice is None
                 or candidate_row.casting_run_id != run.id
                 or evidence.get("roleId") != candidate_row.role_id
-                or evidence.get("outputFingerprint")
-                != candidate_row.output_fingerprint
+                or evidence.get("outputFingerprint") != candidate_row.output_fingerprint
             ):
                 raise self._snapshot_manifest_error()
             self._candidate_machine_evidence(
@@ -3423,6 +3497,7 @@ class CastingRepository:
                 }
             if evidence != expected:
                 raise self._snapshot_manifest_error()
+        validated_correction_rows: dict[str, CastingCorrectionRow] = {}
         for correction_id, evidence in corrections.items():
             correction_row = session.get(CastingCorrectionRow, correction_id)
             if (
@@ -3432,13 +3507,13 @@ class CastingRepository:
                 != self._validated_correction_fingerprint(correction_row)
             ):
                 raise self._snapshot_manifest_error()
+            validated_correction_rows[correction_id] = correction_row
         for conflict_id, evidence in conflicts.items():
             conflict_row = session.get(CastingConflictRow, conflict_id)
             if (
                 conflict_row is None
                 or conflict_row.casting_run_id != run.id
-                or evidence.get("evidenceFingerprint")
-                != conflict_row.evidence_fingerprint
+                or evidence.get("evidenceFingerprint") != conflict_row.evidence_fingerprint
             ):
                 raise self._snapshot_manifest_error()
             self._conflict_wire(
@@ -3446,64 +3521,41 @@ class CastingRepository:
                 conflict_row,
             )
 
-        for role_id, evidence in roles.items():
-            persisted_role = session.get(
-                ProductionRoleRow,
-                role_id,
-            )
-            if persisted_role is None:
+        assignment_evidence_by_role: dict[str, dict[str, Any]] = {}
+        for assignment_evidence in assignments.values():
+            assignment_role_id = str(assignment_evidence["roleId"])
+            if assignment_role_id in assignment_evidence_by_role:
                 raise self._snapshot_manifest_error()
-            assignment_evidence = next(
-                (
-                    value
-                    for value in assignments.values()
-                    if value["roleId"] == role_id
-                ),
-                None,
-            )
-            role_corrections = sorted(
-                (
-                    row
-                    for correction_id in corrections
-                    if (
-                        row := session.get(
-                            CastingCorrectionRow,
-                            correction_id,
-                        )
-                    )
-                    is not None
-                    and row.role_id == role_id
-                ),
-                key=lambda value: (
-                    value.revision,
-                    value.id,
-                ),
-            )
+            assignment_evidence_by_role[assignment_role_id] = assignment_evidence
+        correction_rows_by_role: dict[str, list[CastingCorrectionRow]] = {}
+        for correction_row in validated_correction_rows.values():
+            correction_rows_by_role.setdefault(correction_row.role_id, []).append(correction_row)
+        for role_corrections in correction_rows_by_role.values():
+            role_corrections.sort(key=lambda value: (value.revision, value.id))
+
+        for role_id, evidence in roles.items():
+            persisted_role = validated_role_rows[role_id]
+            selected_assignment_evidence = assignment_evidence_by_role.get(role_id)
+            role_corrections = correction_rows_by_role.get(role_id, [])
             historical_effective_fingerprint = request_fingerprint(
                 {
-                    "roleFingerprint": (
-                        persisted_role.role_fingerprint
-                    ),
+                    "roleFingerprint": (persisted_role.role_fingerprint),
                     "assignmentId": (
-                        assignment_evidence["assignmentId"]
-                        if assignment_evidence is not None
+                        selected_assignment_evidence["assignmentId"]
+                        if selected_assignment_evidence is not None
                         else None
                     ),
                     "assignmentState": (
-                        assignment_evidence["assignmentState"]
-                        if assignment_evidence is not None
+                        selected_assignment_evidence["assignmentState"]
+                        if selected_assignment_evidence is not None
                         else None
                     ),
                     "correctionFingerprints": [
-                        self._validated_correction_fingerprint(value)
-                        for value in role_corrections
+                        self._validated_correction_fingerprint(value) for value in role_corrections
                     ],
                 }
             )
-            if (
-                evidence["effectiveFingerprint"]
-                != historical_effective_fingerprint
-            ):
+            if evidence["effectiveFingerprint"] != historical_effective_fingerprint:
                 raise self._snapshot_manifest_error()
 
         assignment_ids = manifest.get("assignmentIds")
@@ -3563,10 +3615,7 @@ class CastingRepository:
             if evidence["assignmentId"] in selected_assignment_ids
         )
         unresolved_count = len(roles) - len(
-            {
-                str(assignments[assignment_id]["roleId"])
-                for assignment_id in selected_assignment_ids
-            }
+            {str(assignments[assignment_id]["roleId"]) for assignment_id in selected_assignment_ids}
             | set(expected_intentionally_uncast)
         )
         if (
@@ -3587,27 +3636,7 @@ class CastingRepository:
 
         latest = self._latest_snapshot(session, run.id)
         if latest is not None and latest.id == snapshot.id:
-            current_role_fingerprints = {
-                role_id: self._effective_role_fingerprint(
-                    session,
-                    role_row,
-                )
-                for role_id in roles
-                if (
-                    role_row := session.get(
-                        ProductionRoleRow,
-                        role_id,
-                    )
-                )
-                is not None
-            }
             if (
-                any(
-                    evidence["effectiveFingerprint"]
-                    != current_role_fingerprints.get(role_id)
-                    for role_id, evidence in roles.items()
-                )
-                or
                 set(roles)
                 != set(
                     session.scalars(
@@ -3643,6 +3672,430 @@ class CastingRepository:
             ):
                 raise self._snapshot_manifest_error()
         return manifest
+
+    def validated_snapshot_manifest(
+        self,
+        session: Session,
+        *,
+        snapshot: ApprovedCastSnapshotRow,
+        run: CastingRunRow,
+    ) -> dict[str, Any]:
+        """Return an exact relationally verified snapshot manifest."""
+
+        return self._validate_snapshot_manifest(
+            session,
+            snapshot=snapshot,
+            run=run,
+        )
+
+    def validated_phase3a_gate_decisions(
+        self,
+        session: Session,
+        *,
+        snapshot: ApprovedCastSnapshotRow,
+        run: CastingRunRow,
+    ) -> dict[str, CastingGateDecisionRow] | None:
+        """Return the exact current approved gate decisions, or fail closed.
+
+        Phase 3B must not infer casting authority from mutable decision rows alone.
+        This verifier binds every approval to the latest immutable eligible gate
+        review, verifies its frozen blockers and warning acknowledgements, and
+        rechecks the current Phase 2 and catalog identities. The caller separately
+        validates the exact snapshot manifest and current assignment rights.
+        """
+
+        latest_snapshot = self._latest_snapshot(session, run.id)
+        if (
+            run.state != "succeeded"
+            or snapshot.project_id != run.project_id
+            or snapshot.casting_run_id != run.id
+            or latest_snapshot is None
+            or latest_snapshot.id != snapshot.id
+        ):
+            return None
+        try:
+            self.assert_evidence(session, run=run)
+            self._assert_current_catalog_write_evidence(run)
+        except ServiceError:
+            return None
+        validated: dict[str, CastingGateDecisionRow] = {}
+        for gate_id in CASTING_GATE_IDS:
+            review = self._latest_review(
+                session,
+                run_id=run.id,
+                gate_id=gate_id,
+            )
+            decision = self._latest_decision(
+                session,
+                run_id=run.id,
+                gate_id=gate_id,
+            )
+            if review is None or decision is None:
+                return None
+            warning_evidence = parse_json(review.warnings_json, {})
+            warning_ids = warning_evidence.get("warningIds")
+            frozen_blockers = warning_evidence.get("blockingReasonCodes")
+            acknowledgements = parse_json(
+                decision.warning_acknowledgements_json,
+                None,
+            )
+            review_provenance = parse_json(review.provenance_json, None)
+            decision_provenance = parse_json(decision.provenance_json, None)
+            if (
+                not isinstance(warning_ids, list)
+                or not all(isinstance(value, str) for value in warning_ids)
+                or not isinstance(frozen_blockers, list)
+                or not all(isinstance(value, str) for value in frozen_blockers)
+                or not isinstance(acknowledgements, list)
+                or not all(isinstance(value, str) for value in acknowledgements)
+            ):
+                return None
+            expected_required_gates = (
+                list(CASTING_GATE_IDS[:2]) if gate_id == "complete_cast_review" else []
+            )
+            expected_review_fingerprint = request_fingerprint(
+                {
+                    "castingRunId": run.id,
+                    "gateId": gate_id,
+                    "snapshotId": snapshot.id,
+                    "snapshotRevision": snapshot.revision,
+                    "snapshotFingerprint": snapshot.snapshot_fingerprint,
+                    "blockers": frozen_blockers,
+                    "warnings": warning_ids,
+                }
+            )
+            previous_decision = (
+                session.get(CastingGateDecisionRow, decision.supersedes_decision_id)
+                if decision.supersedes_decision_id is not None
+                else None
+            )
+            request_supersedes_decision_id = (
+                previous_decision.id
+                if previous_decision is not None and previous_decision.gate_review_id == review.id
+                else None
+            )
+            expected_request_fingerprint = request_fingerprint(
+                {
+                    "projectId": run.project_id,
+                    "castingRunId": run.id,
+                    "gateId": gate_id,
+                    "decision": "approved",
+                    "expectedRevision": review.revision,
+                    "expectedEvidenceFingerprint": review.evidence_fingerprint,
+                    "expectedRunFingerprint": snapshot.snapshot_fingerprint,
+                    "expectedApprovedCastSnapshotId": snapshot.id,
+                    "expectedApprovedCastSnapshotRevision": snapshot.revision,
+                    "warningAcknowledgementIds": acknowledgements,
+                    "rationale": decision.rationale,
+                    "supersedesDecisionId": request_supersedes_decision_id,
+                }
+            )
+            expected_review_provenance = {
+                "origin": "system",
+                "producerId": CASTING_PRODUCER_ID,
+                "producerVersion": CASTING_PRODUCER_VERSION,
+                "recordedAt": review.created_at,
+                "inputFingerprint": snapshot.snapshot_fingerprint,
+            }
+            expected_decision_provenance = {
+                "origin": "human",
+                "producerId": "local_user",
+                "producerVersion": "1.0.0",
+                "recordedAt": decision.decided_at,
+                "inputFingerprint": review.evidence_fingerprint,
+                "requestFingerprint": expected_request_fingerprint,
+            }
+            if (
+                review.project_id != run.project_id
+                or review.casting_run_id != run.id
+                or review.cast_snapshot_id != snapshot.id
+                or review.gate_id != gate_id
+                or not review.eligible
+                or frozen_blockers
+                or review.evidence_fingerprint != expected_review_fingerprint
+                or parse_json(review.required_gate_decision_ids_json, None)
+                != expected_required_gates
+                or review_provenance != expected_review_provenance
+                or decision.project_id != run.project_id
+                or decision.casting_run_id != run.id
+                or decision.cast_snapshot_id != snapshot.id
+                or decision.gate_review_id != review.id
+                or decision.gate_id != gate_id
+                or decision.decision != "approved"
+                or decision.evidence_fingerprint != review.evidence_fingerprint
+                or decision.actor_id != "local_user"
+                or decision.decided_at is None
+                or decision.created_at != decision.decided_at
+                or not decision.idempotency_key
+                or decision_provenance != expected_decision_provenance
+                or (
+                    previous_decision is None
+                    and (decision.revision != 1 or decision.supersedes_decision_id is not None)
+                )
+                or (
+                    previous_decision is not None
+                    and (
+                        previous_decision.project_id != run.project_id
+                        or previous_decision.casting_run_id != run.id
+                        or previous_decision.gate_id != gate_id
+                        or decision.revision != previous_decision.revision + 1
+                        or decision.supersedes_decision_id != previous_decision.id
+                    )
+                )
+                or not set(acknowledgements).issubset(warning_ids)
+                or bool(set(warning_ids) - set(acknowledgements))
+            ):
+                return None
+            validated[gate_id] = decision
+        return validated
+
+    def snapshot_assignment_evidence_is_current(
+        self,
+        session: Session,
+        *,
+        snapshot: ApprovedCastSnapshotRow,
+        assignments: Sequence[CastAssignmentRow],
+    ) -> bool:
+        """Verify selected catalog leaves and temporal rights with bounded queries."""
+
+        manifest = parse_json(snapshot.manifest_json, {})
+        raw_evidence = manifest.get("assignmentEvidence")
+        if not isinstance(raw_evidence, list):
+            return False
+        evidence_by_assignment = {
+            value.get("assignmentId"): value
+            for value in raw_evidence
+            if isinstance(value, dict) and isinstance(value.get("assignmentId"), str)
+        }
+        voice_ids = {
+            assignment.voice_profile_record_id
+            for assignment in assignments
+            if assignment.voice_profile_record_id is not None
+        }
+        voice_rows = list(
+            session.scalars(select(VoiceProfileRow).where(VoiceProfileRow.id.in_(voice_ids)))
+        )
+        voices_by_id = {voice.id: voice for voice in voice_rows}
+        provider_record_ids = {voice.provider_descriptor_id for voice in voice_rows}
+        model_record_ids = {voice.model_descriptor_id for voice in voice_rows}
+        providers_by_id = {
+            provider.id: provider
+            for provider in session.scalars(
+                select(VoiceProviderDescriptorRow).where(
+                    VoiceProviderDescriptorRow.id.in_(provider_record_ids)
+                )
+            )
+        }
+        models_by_id = {
+            model.id: model
+            for model in session.scalars(
+                select(VoiceModelDescriptorRow).where(
+                    VoiceModelDescriptorRow.id.in_(model_record_ids)
+                )
+            )
+        }
+        rights_rows = list(
+            session.scalars(
+                select(VoiceRightsRecordRow)
+                .where(VoiceRightsRecordRow.voice_profile_record_id.in_(voice_ids))
+                .order_by(
+                    VoiceRightsRecordRow.voice_profile_record_id,
+                    VoiceRightsRecordRow.revision.desc(),
+                    VoiceRightsRecordRow.id.desc(),
+                )
+            )
+        )
+        latest_by_voice: dict[str, VoiceRightsRecordRow] = {}
+        for rights in rights_rows:
+            latest_by_voice.setdefault(rights.voice_profile_record_id, rights)
+        if len(evidence_by_assignment) < len(assignments):
+            return False
+        for assignment in assignments:
+            if assignment.voice_profile_record_id is None:
+                return False
+            voice = voices_by_id.get(assignment.voice_profile_record_id)
+            current_rights = latest_by_voice.get(assignment.voice_profile_record_id)
+            evidence = evidence_by_assignment.get(assignment.id)
+            catalog_voice = next(
+                (
+                    value
+                    for value in self.catalog.voices
+                    if voice is not None and value.get("voiceProfileId") == voice.profile_id
+                ),
+                None,
+            )
+            catalog_rights = next(
+                (
+                    value
+                    for value in self.catalog.rights
+                    if voice is not None and value.get("voiceProfileId") == voice.profile_id
+                ),
+                None,
+            )
+            catalog_provider = next(
+                (
+                    value
+                    for value in self.catalog.providers
+                    if catalog_voice is not None
+                    and value.get("providerId") == catalog_voice.get("providerId")
+                ),
+                None,
+            )
+            catalog_model = next(
+                (
+                    value
+                    for value in self.catalog.models
+                    if catalog_voice is not None
+                    and value.get("providerId") == catalog_voice.get("providerId")
+                    and value.get("modelId") == catalog_voice.get("modelId")
+                ),
+                None,
+            )
+            provider = (
+                providers_by_id.get(voice.provider_descriptor_id) if voice is not None else None
+            )
+            model = models_by_id.get(voice.model_descriptor_id) if voice is not None else None
+            if (
+                voice is None
+                or current_rights is None
+                or evidence is None
+                or catalog_voice is None
+                or catalog_rights is None
+                or catalog_provider is None
+                or catalog_model is None
+                or provider is None
+                or model is None
+                or evidence.get("voiceProfileId") != voice.profile_id
+                or evidence.get("voiceProfileVersion") != voice.profile_version
+                or evidence.get("voiceEvidenceFingerprint") != voice.profile_fingerprint
+                or voice.profile_fingerprint != request_fingerprint(catalog_voice)
+                or request_fingerprint(self._stored_voice_material(voice))
+                != request_fingerprint(self._catalog_voice_material(catalog_voice))
+                or self._stored_provider_material(provider) != catalog_provider
+                or provider.descriptor_fingerprint
+                != request_fingerprint(self._stored_provider_material(provider))
+                or provider.runtime_availability != "available"
+                or provider.catalog_availability != "available"
+                or self._stored_model_material(model, provider) != catalog_model
+                or model.descriptor_fingerprint
+                != request_fingerprint(self._stored_model_material(model, provider))
+                or model.availability != "available"
+                or model.deprecated
+                or evidence.get("rightsRecordId") != current_rights.rights_record_id
+                or evidence.get("rightsRecordRevision") != current_rights.revision
+                or evidence.get("rightsEvidenceFingerprint") != current_rights.rights_fingerprint
+                or evidence.get("rightsState") != current_rights.rights_state
+                or assignment.rights_state != current_rights.rights_state
+                or current_rights.rights_fingerprint != request_fingerprint(catalog_rights)
+                or request_fingerprint(self._stored_rights_material(current_rights))
+                != request_fingerprint(self._catalog_rights_material(catalog_rights))
+                or current_rights.rights_state not in {"verified", "restricted"}
+                or current_rights.commercial_use_status in {"unknown", "prohibited"}
+                or current_rights.consent_status in {"missing", "unknown", "prohibited"}
+                or current_rights.human_verification_status
+                not in {"verified", "not_required_fixture"}
+                or not rights_record_is_current(self._stored_rights_material(current_rights))
+            ):
+                return False
+        return True
+
+    def _append_gate_review(
+        self,
+        session: Session,
+        *,
+        run: CastingRunRow,
+        snapshot: ApprovedCastSnapshotRow,
+        gate_id: str,
+        blockers: Sequence[str],
+        warnings: Sequence[str],
+        now: str,
+    ) -> CastingGateReviewRow:
+        prior_review = self._latest_review(
+            session,
+            run_id=run.id,
+            gate_id=gate_id,
+        )
+        review_revision = 1 if prior_review is None else prior_review.revision + 1
+        evidence_fingerprint = request_fingerprint(
+            {
+                "castingRunId": run.id,
+                "gateId": gate_id,
+                "snapshotId": snapshot.id,
+                "snapshotRevision": snapshot.revision,
+                "snapshotFingerprint": snapshot.snapshot_fingerprint,
+                "blockers": list(blockers),
+                "warnings": list(warnings),
+            }
+        )
+        row = CastingGateReviewRow(
+            id=new_id(),
+            project_id=run.project_id,
+            casting_run_id=run.id,
+            cast_snapshot_id=snapshot.id,
+            gate_id=gate_id,
+            revision=review_revision,
+            eligible=not blockers,
+            evidence_fingerprint=evidence_fingerprint,
+            required_gate_decision_ids_json=canonical_json(
+                list(CASTING_GATE_IDS[:2]) if gate_id == "complete_cast_review" else []
+            ),
+            warnings_json=canonical_json(
+                {
+                    "warningIds": list(warnings),
+                    "blockingReasonCodes": list(blockers),
+                }
+            ),
+            provenance_json=canonical_json(
+                {
+                    "origin": "system",
+                    "producerId": CASTING_PRODUCER_ID,
+                    "producerVersion": CASTING_PRODUCER_VERSION,
+                    "recordedAt": now,
+                    "inputFingerprint": snapshot.snapshot_fingerprint,
+                }
+            ),
+            created_at=now,
+        )
+        session.add(row)
+        session.flush()
+        return row
+
+    def _refresh_gate_review_evidence(
+        self,
+        session: Session,
+        *,
+        run: CastingRunRow,
+        gate_id: str,
+    ) -> CastingGateReviewRow | None:
+        snapshot = self._latest_snapshot(session, run.id)
+        if snapshot is None:
+            return None
+        current = self._latest_review(
+            session,
+            run_id=run.id,
+            gate_id=gate_id,
+        )
+        if (
+            current is not None
+            and current.project_id == run.project_id
+            and current.cast_snapshot_id == snapshot.id
+        ):
+            return current
+        blockers, warnings = self._review_blockers(
+            session,
+            run=run,
+            gate_id=gate_id,
+            include_gate_prerequisites=False,
+        )
+        return self._append_gate_review(
+            session,
+            run=run,
+            snapshot=snapshot,
+            gate_id=gate_id,
+            blockers=blockers,
+            warnings=warnings,
+            now=utc_now(),
+        )
 
     def _publish_cast_snapshot(
         self,
@@ -3739,6 +4192,8 @@ class CastingRepository:
                 session,
                 run=run,
                 gate_id=gate_id,
+                include_gate_prerequisites=False,
+                validate_current_cast_snapshot=False,
             )
             for gate_id in CASTING_GATE_IDS
         }
@@ -3774,9 +4229,7 @@ class CastingRepository:
             "correctionEvidence": [
                 {
                     "correctionId": value.id,
-                    "correctionFingerprint": (
-                        self._validated_correction_fingerprint(value)
-                    ),
+                    "correctionFingerprint": (self._validated_correction_fingerprint(value)),
                 }
                 for value in corrections
             ],
@@ -3828,54 +4281,15 @@ class CastingRepository:
         session.add(snapshot)
         session.flush()
         for gate_id in CASTING_GATE_IDS:
-            prior_review = self._latest_review(
-                session,
-                run_id=run.id,
-                gate_id=gate_id,
-            )
-            review_revision = 1 if prior_review is None else prior_review.revision + 1
             blockers, warnings = review_evidence[gate_id]
-            evidence_fingerprint = request_fingerprint(
-                {
-                    "castingRunId": run.id,
-                    "gateId": gate_id,
-                    "snapshotId": snapshot.id,
-                    "snapshotRevision": snapshot.revision,
-                    "snapshotFingerprint": snapshot.snapshot_fingerprint,
-                    "blockers": blockers,
-                    "warnings": warnings,
-                }
-            )
-            session.add(
-                CastingGateReviewRow(
-                    id=new_id(),
-                    project_id=run.project_id,
-                    casting_run_id=run.id,
-                    cast_snapshot_id=snapshot.id,
-                    gate_id=gate_id,
-                    revision=review_revision,
-                    eligible=not blockers,
-                    evidence_fingerprint=evidence_fingerprint,
-                    required_gate_decision_ids_json=canonical_json(
-                        list(CASTING_GATE_IDS[:2]) if gate_id == "complete_cast_review" else []
-                    ),
-                    warnings_json=canonical_json(
-                        {
-                            "warningIds": warnings,
-                            "blockingReasonCodes": blockers,
-                        }
-                    ),
-                    provenance_json=canonical_json(
-                        {
-                            "origin": "system",
-                            "producerId": CASTING_PRODUCER_ID,
-                            "producerVersion": CASTING_PRODUCER_VERSION,
-                            "recordedAt": now,
-                            "inputFingerprint": fingerprint,
-                        }
-                    ),
-                    created_at=now,
-                )
+            self._append_gate_review(
+                session,
+                run=run,
+                snapshot=snapshot,
+                gate_id=gate_id,
+                blockers=blockers,
+                warnings=warnings,
+                now=now,
             )
         return snapshot
 
@@ -3890,6 +4304,7 @@ class CastingRepository:
         expected_snapshot_id: str | None = None,
         expected_snapshot_revision: int | None = None,
         expected_snapshot_fingerprint: str | None = None,
+        validate_current_cast_snapshot: bool = True,
     ) -> None:
         catalog_row = session.get(
             VoiceCatalogRevisionRow,
@@ -3914,7 +4329,7 @@ class CastingRepository:
             expected_analysis_gate_decision_ids=expected_gate_ids,
         )
         current_cast_snapshot = self._latest_snapshot(session, run.id)
-        if current_cast_snapshot is not None:
+        if current_cast_snapshot is not None and validate_current_cast_snapshot:
             self._validate_snapshot_manifest(
                 session,
                 snapshot=current_cast_snapshot,
@@ -4341,8 +4756,7 @@ class CastingRepository:
                     assignment.assignment_state if assignment is not None else None
                 ),
                 "correctionFingerprints": [
-                    self._validated_correction_fingerprint(value)
-                    for value in corrections
+                    self._validated_correction_fingerprint(value) for value in corrections
                 ],
             }
         )
@@ -4379,11 +4793,7 @@ class CastingRepository:
                 "Production-role evidence failed integrity validation.",
             )
         fingerprint_provenance = (
-            {
-                key: value
-                for key, value in provenance.items()
-                if key != "recordedAt"
-            }
+            {key: value for key, value in provenance.items() if key != "recordedAt"}
             if role.role_type == "custom"
             else provenance
         )
@@ -4423,9 +4833,7 @@ class CastingRepository:
                 }
             )
         expected_database_status = (
-            "unresolved"
-            if role.role_type == "unresolved_speaker"
-            else "active"
+            "unresolved" if role.role_type == "unresolved_speaker" else "active"
         )
         if (
             role.status != expected_database_status
@@ -4943,10 +5351,7 @@ class CastingRepository:
             "preReductionRank": explanation["preReductionRank"],
             "ordinal": row.ordinal,
         }
-        if (
-            _deterministic_machine_fingerprint(candidate_evidence)
-            != row.output_fingerprint
-        ):
+        if _deterministic_machine_fingerprint(candidate_evidence) != row.output_fingerprint:
             raise ServiceError(
                 500,
                 "CASTING_CANDIDATE_INVALID",
@@ -5113,9 +5518,7 @@ class CastingRepository:
             "inputFingerprint": row.input_fingerprint,
             "baseEvidenceFingerprint": row.output_fingerprint,
         }
-        return candidate_values | {
-            "outputFingerprint": request_fingerprint(candidate_values)
-        }
+        return candidate_values | {"outputFingerprint": request_fingerprint(candidate_values)}
 
     def _active_candidate_rejection(
         self,
@@ -5243,9 +5646,7 @@ class CastingRepository:
         provenance = parse_json(row.provenance_json, {})
         expected_provenance = {
             "origin": (
-                "system"
-                if details.get("source") == "human_assignments"
-                else "runtime_agent"
+                "system" if details.get("source") == "human_assignments" else "runtime_agent"
             ),
             "producerId": CASTING_PRODUCER_ID,
             "producerVersion": CASTING_PRODUCER_VERSION,
@@ -5265,8 +5666,7 @@ class CastingRepository:
             or details.get("primaryRoleId") != row.primary_role_id
             or not isinstance(related_role_ids, list)
             or any(not isinstance(value, str) for value in related_role_ids)
-            or row.secondary_role_id
-            != (related_role_ids[0] if related_role_ids else None)
+            or row.secondary_role_id != (related_role_ids[0] if related_role_ids else None)
             or not isinstance(voice_profile_ids, list)
             or any(not isinstance(value, str) for value in voice_profile_ids)
             or details.get("metadataBased") is not True
@@ -5333,9 +5733,7 @@ class CastingRepository:
             ),
             "baseEvidenceFingerprint": row.evidence_fingerprint,
         }
-        return conflict_values | {
-            "outputFingerprint": request_fingerprint(conflict_values)
-        }
+        return conflict_values | {"outputFingerprint": request_fingerprint(conflict_values)}
 
     def list_conflicts(
         self,
@@ -5844,10 +6242,7 @@ class CastingRepository:
                 selected_rights = (
                     session.scalar(
                         select(VoiceRightsRecordRow)
-                        .where(
-                            VoiceRightsRecordRow.voice_profile_record_id
-                            == voice_row.id
-                        )
+                        .where(VoiceRightsRecordRow.voice_profile_record_id == voice_row.id)
                         .order_by(
                             VoiceRightsRecordRow.revision.desc(),
                             VoiceRightsRecordRow.id.desc(),
@@ -5857,11 +6252,8 @@ class CastingRepository:
                     if voice_row is not None
                     else None
                 )
-                if (
-                    selected_rights is None
-                    or not rights_record_is_current(
-                        self._stored_rights_material(selected_rights)
-                    )
+                if selected_rights is None or not rights_record_is_current(
+                    self._stored_rights_material(selected_rights)
                 ):
                     raise ServiceError(
                         409,
@@ -5876,9 +6268,7 @@ class CastingRepository:
                         "CASTING_ASSIGNMENT_REQUIRED",
                         "The role has no current human assignment to clear.",
                     )
-                expected_assignment_value = {
-                    "expectedAssignmentId": prior_assignment.id
-                }
+                expected_assignment_value = {"expectedAssignmentId": prior_assignment.id}
                 if submitted_value != expected_assignment_value:
                     raise ServiceError(
                         409,
@@ -5912,9 +6302,7 @@ class CastingRepository:
                         "CASTING_LOCK_REQUIRED",
                         "The role has no current locked assignment.",
                     )
-                expected_assignment_value = {
-                    "lockedAssignmentId": prior_assignment.id
-                }
+                expected_assignment_value = {"lockedAssignmentId": prior_assignment.id}
                 if submitted_value != expected_assignment_value:
                     raise ServiceError(
                         409,
@@ -6271,9 +6659,7 @@ class CastingRepository:
             "catalogRevisionId": catalog.catalog_id,
             "catalogFingerprint": run.catalog_fingerprint,
             "castingProfileFingerprint": (run.casting_profile_fingerprint),
-            "effectiveCorrectionSetFingerprint": (
-                snapshot.effective_correction_set_fingerprint
-            ),
+            "effectiveCorrectionSetFingerprint": (snapshot.effective_correction_set_fingerprint),
             "evidenceFingerprint": review.evidence_fingerprint,
         }
 
@@ -6324,9 +6710,7 @@ class CastingRepository:
             ),
             "rationale": row.rationale,
             "decidedAt": row.decided_at or row.created_at,
-            "provenance": self._public_provenance(
-                parse_json(row.provenance_json, {})
-            ),
+            "provenance": self._public_provenance(parse_json(row.provenance_json, {})),
             "immutable": True,
             "supersedesDecisionId": row.supersedes_decision_id,
         }
@@ -6338,10 +6722,7 @@ class CastingRepository:
         *,
         decision_override: CastingGateDecisionRow | None = None,
     ) -> dict[str, Any]:
-        if (
-            decision_override is not None
-            and decision_override.gate_review_id != row.id
-        ):
+        if decision_override is not None and decision_override.gate_review_id != row.id:
             raise ServiceError(
                 500,
                 "CASTING_DECISION_INVALID",
@@ -6354,8 +6735,7 @@ class CastingRepository:
         )
         latest = (
             latest_for_gate
-            if latest_for_gate is not None
-            and latest_for_gate.gate_review_id == row.id
+            if latest_for_gate is not None and latest_for_gate.gate_review_id == row.id
             else None
         )
         warning_values = parse_json(row.warnings_json, {})
@@ -6451,9 +6831,7 @@ class CastingRepository:
         )
         return {
             **result,
-            "effectiveCorrectionSetFingerprint": (
-                snapshot.effective_correction_set_fingerprint
-            ),
+            "effectiveCorrectionSetFingerprint": (snapshot.effective_correction_set_fingerprint),
             "outputFingerprint": snapshot.snapshot_fingerprint,
             "summary": manifest["counts"],
             "approvedCastSnapshot": self._snapshot_wire(
@@ -6476,9 +6854,9 @@ class CastingRepository:
             )
         result: list[dict[str, Any]] = []
         for gate_id in CASTING_GATE_IDS:
-            row = self._latest_review(
+            row = self._refresh_gate_review_evidence(
                 session,
-                run_id=run.id,
+                run=run,
                 gate_id=gate_id,
             )
             if row is not None:
@@ -6494,27 +6872,28 @@ class CastingRepository:
         expected_cast_snapshot_id: str,
         expected_cast_snapshot_revision: int,
     ) -> list[dict[str, Any]]:
-        self._latch_external_assignment_invalidations_for_read(
-            project_id=project_id,
-            run_id=run_id,
-            evidence=evidence,
-            expected_cast_snapshot_id=expected_cast_snapshot_id,
-            expected_cast_snapshot_revision=expected_cast_snapshot_revision,
-        )
-        with self.database.session() as session:
-            run = self._require_assignment_read_run(
-                session,
+        with self._review_refresh_lock:
+            self._latch_external_assignment_invalidations_for_read(
                 project_id=project_id,
                 run_id=run_id,
                 evidence=evidence,
                 expected_cast_snapshot_id=expected_cast_snapshot_id,
                 expected_cast_snapshot_revision=expected_cast_snapshot_revision,
             )
-            return self._reviews_wire(
-                session,
-                run,
-                synchronize_invalidations=False,
-            )
+            with self.database.immediate_session() as session:
+                run = self._require_assignment_read_run(
+                    session,
+                    project_id=project_id,
+                    run_id=run_id,
+                    evidence=evidence,
+                    expected_cast_snapshot_id=expected_cast_snapshot_id,
+                    expected_cast_snapshot_revision=expected_cast_snapshot_revision,
+                )
+                return self._reviews_wire(
+                    session,
+                    run,
+                    synchronize_invalidations=False,
+                )
 
     def decide_review(
         self,
@@ -6551,9 +6930,7 @@ class CastingRepository:
                 "expectedEvidenceFingerprint": expected_evidence_fingerprint,
                 "expectedRunFingerprint": expected_run_fingerprint,
                 "expectedApprovedCastSnapshotId": expected_approved_cast_snapshot_id,
-                "expectedApprovedCastSnapshotRevision": (
-                    expected_approved_cast_snapshot_revision
-                ),
+                "expectedApprovedCastSnapshotRevision": (expected_approved_cast_snapshot_revision),
                 "warningAcknowledgementIds": warning_acknowledgement_ids,
                 "rationale": rationale,
                 "supersedesDecisionId": supersedes_decision_id,
@@ -6593,9 +6970,7 @@ class CastingRepository:
                     or idempotent_review.revision != expected_revision
                     or idempotent_snapshot.id != expected_approved_cast_snapshot_id
                     or idempotent_snapshot.revision != expected_approved_cast_snapshot_revision
-                    or parse_json(idempotent.provenance_json, {}).get(
-                        "requestFingerprint"
-                    )
+                    or parse_json(idempotent.provenance_json, {}).get("requestFingerprint")
                     != decision_request_fingerprint
                 ):
                     raise ServiceError(
@@ -6635,9 +7010,9 @@ class CastingRepository:
                 session,
                 run=run,
             )
-            current = self._latest_review(
+            current = self._refresh_gate_review_evidence(
                 session,
-                run_id=run.id,
+                run=run,
                 gate_id=gate_id,
             )
             if current is None:
@@ -6664,16 +7039,10 @@ class CastingRepository:
                 gate_id=gate_id,
             )
             current_decision = (
-                latest
-                if latest is not None and latest.gate_review_id == current.id
-                else None
+                latest if latest is not None and latest.gate_review_id == current.id else None
             )
-            if (
-                current_decision is None
-                and supersedes_decision_id is not None
-            ) or (
-                current_decision is not None
-                and current_decision.id != supersedes_decision_id
+            if (current_decision is None and supersedes_decision_id is not None) or (
+                current_decision is not None and current_decision.id != supersedes_decision_id
             ):
                 raise ServiceError(
                     409,
@@ -6724,9 +7093,11 @@ class CastingRepository:
                         )
                         if (
                             upstream_review is None
+                            or upstream_review.cast_snapshot_id != snapshot.id
                             or upstream_decision is None
                             or upstream_decision.decision != "approved"
                             or upstream_decision.cast_snapshot_id != snapshot.id
+                            or upstream_decision.gate_review_id != upstream_review.id
                         ):
                             raise ServiceError(
                                 409,
@@ -6860,34 +7231,35 @@ class CastingRepository:
             )
 
     def project_summary(self, project_id: str) -> dict[str, Any]:
-        self._latch_project_summary_assignment_invalidations(
-            project_id=project_id,
-        )
-        with self.database.session() as session:
-            self.projects.require_project(session, project_id)
-            run = self._project_summary_run(
-                session,
+        with self._review_refresh_lock:
+            self._latch_project_summary_assignment_invalidations(
                 project_id=project_id,
             )
-            if run is None:
-                catalog = self.catalog
+            with self.database.immediate_session() as session:
+                self.projects.require_project(session, project_id)
+                run = self._project_summary_run(
+                    session,
+                    project_id=project_id,
+                )
+                if run is None:
+                    catalog = self.catalog
+                    return {
+                        "contractVersion": CASTING_CONTRACT_VERSION,
+                        "currentRun": None,
+                        "catalogRevision": catalog.revision,
+                        "catalogFingerprint": catalog.fingerprint,
+                        "profile": casting_profile(),
+                        "gateReviews": [],
+                    }
                 return {
                     "contractVersion": CASTING_CONTRACT_VERSION,
-                    "currentRun": None,
-                    "catalogRevision": catalog.revision,
-                    "catalogFingerprint": catalog.fingerprint,
+                    "currentRun": self.run_dict(session, run),
+                    "catalogRevision": self.catalog.revision,
+                    "catalogFingerprint": self.catalog.fingerprint,
                     "profile": casting_profile(),
-                    "gateReviews": [],
+                    "gateReviews": self._reviews_wire(
+                        session,
+                        run,
+                        synchronize_invalidations=False,
+                    ),
                 }
-            return {
-                "contractVersion": CASTING_CONTRACT_VERSION,
-                "currentRun": self.run_dict(session, run),
-                "catalogRevision": self.catalog.revision,
-                "catalogFingerprint": self.catalog.fingerprint,
-                "profile": casting_profile(),
-                "gateReviews": self._reviews_wire(
-                    session,
-                    run,
-                    synchronize_invalidations=False,
-                ),
-            }

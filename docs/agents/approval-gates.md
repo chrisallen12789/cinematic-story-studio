@@ -113,6 +113,37 @@ means the artifact is reviewable for approval; inserting it does not make a
 review approved. Phase 3A does not collapse these three gates back into the
 generic future-production `casting_approval` label.
 
+## Phase 3B audition and voice-readiness gates
+
+Phase 3B adds five exact gate IDs over short local audition evidence. None of
+them authorizes a full-book render, export, or production voice:
+
+| Gate ID | Current evidence reviewed | Invalidation scope |
+| --- | --- | --- |
+| `per_role_audition_review` | One role's current assignment, rights, provider/runtime/model package, effective pronunciation dependencies, clip bytes, and machine QC | Only that role and its dependent aggregate/readiness gates |
+| `narrator_audition_review` | All required current narrator per-role approvals | Narrator evidence and dependent readiness |
+| `character_audition_review` | All required current character per-role approvals | Character evidence and dependent readiness |
+| `pronunciation_review` | The current dictionary, a current drift-free audition session, and every current entry's verification state; a preview may be reviewed but is not bound as mandatory gate evidence | Changed applicable entries invalidate dependent roles; unrelated entries preserve unaffected clip evidence, while the project-wide pronunciation gate still reflects every current entry state |
+| `voice_readiness_review` | Current Phase 3A authority, verified model/runtime, eligible rights, narrator/character/pronunciation approvals, and no blocking audio-integrity finding | Any contributing evidence |
+
+Every decision is append-only and binds the exact review revision and evidence
+fingerprint. A human may approve, request changes, or reject; only the system
+may append `invalidated`. Generation, cache hits, non-silence, signal metrics,
+retry, restart, or regeneration never grant or restore approval. Voice
+Readiness Review authorizes later performance-direction work only.
+
+All five projections derive from one exact Phase 3A authority boundary: the
+latest succeeded casting run, its validated immutable current cast-snapshot
+manifest, only the assignment IDs/revisions and lock state selected by that
+manifest, exact leaf provider/model/profile/rights records with currently
+applicable rights, and the latest eligible Narrator, Character, and Complete
+Cast reviews with their exact effective approved human decisions. Decision
+identity includes actor/provenance, supersession, and required warning
+acknowledgements. Cross-snapshot evidence cannot be composed. A newer current
+snapshot suppresses old-snapshot reviews from current Phase 3B projections; a
+new same-snapshot Phase 3A decision tuple also invalidates dependent Phase 3B
+evidence even if the selected assignments did not change.
+
 ## Decision workflow
 
 1. Enumerate the candidate entity IDs and revisions in a deterministic order.

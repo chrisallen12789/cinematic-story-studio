@@ -26,6 +26,8 @@ from cinematic_story_service.util import PROTOCOL_VERSION
 _MAX_BOOTSTRAP_BYTES = 2048
 _MAX_NONCE_LENGTH = 256
 _CONTROL_PIPE_POLL_SECONDS = 0.05
+_SPEECH_RUNTIME_WORKER_FLAG = "--speech-runtime-worker"
+_RUNTIME_SHUTDOWN_EVIDENCE_ENV = "CSS_PHASE3B_RUNTIME_SHUTDOWN_EVIDENCE"
 
 
 def _fail(message: str, exit_code: int = 2) -> NoReturn:
@@ -167,7 +169,15 @@ def _wait_for_windows_control_signal(file_descriptor: int) -> None:
 
 async def _serve(data_dir: Path, token: str, nonce: str) -> int:
     listener = _prebound_loopback_socket()
-    settings = ServiceSettings(data_dir=data_dir, bearer_token=token).validated()
+    raw_shutdown_evidence = os.environ.get(_RUNTIME_SHUTDOWN_EVIDENCE_ENV)
+    if raw_shutdown_evidence not in {None, "1"}:
+        listener.close()
+        _fail("invalid_runtime_shutdown_evidence_setting")
+    settings = ServiceSettings(
+        data_dir=data_dir,
+        bearer_token=token,
+        runtime_shutdown_evidence_enabled=raw_shutdown_evidence == "1",
+    ).validated()
     app = create_app(settings)
     config = uvicorn.Config(
         app,
@@ -239,7 +249,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
+    effective_argv = sys.argv[1:] if argv is None else argv
+    if effective_argv and effective_argv[0] == _SPEECH_RUNTIME_WORKER_FLAG:
+        from cinematic_story_service.speech_runtime_worker import main as worker_main
+
+        return worker_main(effective_argv[1:])
+    args = _parse_args(effective_argv)
     token, nonce = _read_bootstrap()
     try:
         return asyncio.run(_serve(args.data_dir, token, nonce))

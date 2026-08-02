@@ -682,7 +682,7 @@ def test_rights_gates_complete_gate_idempotency_and_restart_persistence(
         )
         assert refreshed_run.status_code == 200, refreshed_run.text
         run = refreshed_run.json()["run"]
-        assert run["approvedCastSnapshot"]["reviewEligible"] is False
+        assert run["approvedCastSnapshot"]["reviewEligible"] is True
 
         complete_review = next(
             value

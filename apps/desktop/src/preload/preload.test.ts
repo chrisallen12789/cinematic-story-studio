@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectDetail } from "@cinematic-story-studio/contracts/api";
 
+import { CASTING_PROFILE_FINGERPRINT } from "../shared/casting-api";
 import {
   IPC_CHANNELS,
   type CinematicStoryDesktopApi,
@@ -112,6 +113,7 @@ describe("preload active project session", () => {
       expectedSnapshotId: "snapshot-a",
       expectedSnapshotRevision: 3,
       expectedSnapshotFingerprint: "c".repeat(64),
+      expectedCastingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
       roleId: "role-a",
       expectedRoleRevision: 2,
       limit: 12

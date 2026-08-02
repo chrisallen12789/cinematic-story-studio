@@ -2,12 +2,18 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import type { SpeechPreviewRequest } from "@cinematic-story-studio/contracts";
+import {
+  GOVERNED_PRIVATE_AUDITION_WARNING,
+  GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+  type SpeechPreviewRequest
+} from "@cinematic-story-studio/contracts";
 
 import {
   parseAppendPronunciationEntryRequest,
   parseClearAuditionCacheRequest,
+  parseCreateAuditionSessionRequest,
   parseCreateAuditionScriptRequest,
+  parseDecideAuditionReviewRequest,
   parseDecidePronunciationEntryRequest,
   parseGenerateAuditionRequest,
   parseLoadAuditionAudioRequest,
@@ -283,6 +289,147 @@ describe("Phase 3B desktop audition validation", () => {
         })
       )
     ).toThrow("unknown field");
+  });
+
+  it("keeps fixture session activation omitted and validates an exact restricted request", () => {
+    const fixture = envelope({
+      projectId: "project-1",
+      roleId: "role-1",
+      evidence: preview("project-1").evidence,
+      idempotencyKey: "fixture-session-1"
+    });
+    expect(parseCreateAuditionSessionRequest(fixture)).toEqual(fixture);
+    expect(fixture.payload).not.toHaveProperty(
+      "restrictedLocalAuditionActivation"
+    );
+
+    const restricted = envelope({
+      ...fixture.payload,
+      restrictedLocalAuditionActivation: {
+        expectedInventoryFingerprint: sha,
+        expectedWarningFingerprint:
+          GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+        reason: "Create this exact bounded private local audition."
+      },
+      idempotencyKey: "restricted-session-1"
+    });
+    expect(parseCreateAuditionSessionRequest(restricted)).toEqual(restricted);
+    expect(() =>
+      parseCreateAuditionSessionRequest(
+        envelope({
+          ...restricted.payload,
+          restrictedLocalAuditionActivation: {
+            ...restricted.payload.restrictedLocalAuditionActivation,
+            inventoryRecordId: "renderer-invented-voice"
+          }
+        })
+      )
+    ).toThrow("unknown field");
+    expect(() =>
+      parseCreateAuditionSessionRequest(
+        envelope({
+          ...restricted.payload,
+          restrictedLocalAuditionActivation: {
+            ...restricted.payload.restrictedLocalAuditionActivation,
+            expectedWarningFingerprint: sha
+          }
+        })
+      )
+    ).toThrow("warning fingerprint");
+    expect(() =>
+      parseCreateAuditionSessionRequest(
+        envelope({
+          ...restricted.payload,
+          restrictedLocalAuditionActivation: {
+            ...restricted.payload.restrictedLocalAuditionActivation,
+            reason: "<script>not content-free</script>"
+          }
+        })
+      )
+    ).toThrow("markup or control");
+  });
+
+  it("omits fixture listening evidence and enforces exact decision mapping", () => {
+    const fixture = envelope({
+      projectId: "project-1",
+      gateId: "per_role_audition_review",
+      roleId: "role-1",
+      reviewId: "review-role-1",
+      expectedReviewRevision: 1,
+      expectedEvidenceFingerprint: sha,
+      decision: "approve",
+      rationale: "Approve this deterministic fixture lifecycle evidence.",
+      supersedesDecisionId: null,
+      idempotencyKey: "fixture-decision-1"
+    } as const);
+    expect(parseDecideAuditionReviewRequest(fixture)).toEqual(fixture);
+    expect(fixture.payload).not.toHaveProperty("listeningAttestation");
+
+    const attestation = {
+      auditionClipId: "clip-1",
+      auditionClipRevision: 1,
+      auditionClipFingerprint: sha,
+      audioArtifactId: "artifact-1",
+      audioArtifactSha256: sha,
+      listened: true as const,
+      disposition: "acceptable" as const
+    };
+    const real = envelope({
+      ...fixture.payload,
+      rationale: "I listened to this exact private real-local audition.",
+      listeningAttestation: attestation,
+      idempotencyKey: "real-decision-1"
+    });
+    expect(parseDecideAuditionReviewRequest(real)).toEqual(real);
+    const undecided = envelope({
+      ...real.payload,
+      decision: "request_changes" as const,
+      listeningAttestation: {
+        ...attestation,
+        disposition: "undecided" as const
+      },
+      idempotencyKey: "real-undecided-decision-1"
+    });
+    expect(parseDecideAuditionReviewRequest(undecided)).toEqual(undecided);
+    expect(() =>
+      parseDecideAuditionReviewRequest(
+        envelope({
+          ...undecided.payload,
+          decision: "approve"
+        })
+      )
+    ).toThrow("did not match");
+    expect(() =>
+      parseDecideAuditionReviewRequest(
+        envelope({
+          ...real.payload,
+          listeningAttestation: {
+            ...attestation,
+            disposition: "needs_changes"
+          }
+        })
+      )
+    ).toThrow("did not match");
+    expect(() =>
+      parseDecideAuditionReviewRequest(
+        envelope({
+          ...real.payload,
+          listeningAttestation: {
+            ...attestation,
+            absolutePath: "C:\\private\\audition.wav"
+          }
+        })
+      )
+    ).toThrow("unknown field");
+    expect(() =>
+      parseDecideAuditionReviewRequest(
+        envelope({
+          ...real.payload,
+          gateId: "voice_readiness_review",
+          roleId: null
+        })
+      )
+    ).toThrow("per-role");
   });
 
   it("accepts only the authenticated script detail and exact compiled plans", () => {
@@ -889,6 +1036,179 @@ describe("Phase 3B desktop audition validation", () => {
       ).toThrow(/requested review|project the requested/u);
     }
   );
+
+  it("binds persisted real-local listening evidence to the exact clip and decision", () => {
+    const fixture = boundReviewDecisionResponse("per_role_audition_review");
+    const requestAttestation = {
+      auditionClipId: "clip-1",
+      auditionClipRevision: 1,
+      auditionClipFingerprint: "b".repeat(64),
+      audioArtifactId: "artifact-1",
+      audioArtifactSha256: "c".repeat(64),
+      listened: true as const,
+      disposition: "acceptable" as const
+    };
+    const persistedAttestation = {
+      ...requestAttestation,
+      attestationId: "listening-attestation-1",
+      actor: { classification: "human" as const, actorId: "local-user" },
+      recordedAt: fixture.response.decision.decidedAt,
+      rationale: fixture.request.rationale,
+      attestationFingerprint: "d".repeat(64),
+      immutable: true as const
+    };
+    const decision = {
+      ...fixture.response.decision,
+      listeningAttestation: persistedAttestation
+    };
+    const response = {
+      ...fixture.response,
+      decision,
+      review: {
+        ...fixture.response.review,
+        latestDecision: decision
+      }
+    };
+    const request = {
+      ...fixture.request,
+      listeningAttestation: requestAttestation
+    };
+
+    expect(validateDecideAuditionReviewResponse(response, request)).toBe(response);
+    const workspace = workspaceResponse();
+    const workspaceWithListeningDecision = {
+      ...workspace,
+      workspace: {
+        ...workspace.workspace,
+        reviews: [response.review]
+      }
+    };
+    expect(
+      validateAuditionWorkspaceResponse(workspaceWithListeningDecision, {
+        projectId: "project-1"
+      })
+    ).toBe(workspaceWithListeningDecision);
+
+    const undecidedRequestAttestation = {
+      ...requestAttestation,
+      disposition: "undecided" as const
+    };
+    const undecidedPersistedAttestation = {
+      ...persistedAttestation,
+      disposition: "undecided" as const
+    };
+    const undecidedDecision = {
+      ...decision,
+      decision: "changes_requested" as const,
+      listeningAttestation: undecidedPersistedAttestation
+    };
+    const undecidedRequest = {
+      ...fixture.request,
+      decision: "request_changes" as const,
+      listeningAttestation: undecidedRequestAttestation
+    };
+    const undecidedResponse = {
+      ...fixture.response,
+      decision: undecidedDecision,
+      review: {
+        ...fixture.response.review,
+        state: "changes_requested" as const,
+        latestDecision: undecidedDecision
+      },
+      voiceReadinessSnapshot: null
+    };
+    expect(
+      validateDecideAuditionReviewResponse(
+        undecidedResponse,
+        undecidedRequest
+      )
+    ).toBe(undecidedResponse);
+    expect(() =>
+      validateDecideAuditionReviewResponse(
+        {
+          ...undecidedResponse,
+          voiceReadinessSnapshot: fixture.response.voiceReadinessSnapshot
+        },
+        undecidedRequest
+      )
+    ).toThrow("cannot make voice readiness eligible");
+    const workspaceWithUndecidedListening = {
+      ...workspace,
+      workspace: {
+        ...workspace.workspace,
+        reviews: [undecidedResponse.review],
+        voiceReadinessSnapshot: null
+      }
+    };
+    expect(
+      validateAuditionWorkspaceResponse(workspaceWithUndecidedListening, {
+        projectId: "project-1"
+      })
+    ).toBe(workspaceWithUndecidedListening);
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...workspaceWithUndecidedListening,
+          workspace: {
+            ...workspaceWithUndecidedListening.workspace,
+            voiceReadinessSnapshot: fixture.response.voiceReadinessSnapshot
+          }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("cannot make voice readiness eligible");
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...workspaceWithListeningDecision,
+          workspace: {
+            ...workspaceWithListeningDecision.workspace,
+            reviews: [
+              {
+                ...response.review,
+                latestDecision: {
+                  ...decision,
+                  listeningAttestation: {
+                    ...persistedAttestation,
+                    auditionClipId: "clip-unrelated"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("exact clip evidence");
+    expect(() =>
+      validateDecideAuditionReviewResponse(
+        {
+          ...response,
+          decision: {
+            ...decision,
+            listeningAttestation: {
+              ...persistedAttestation,
+              disposition: "needs_changes"
+            }
+          }
+        },
+        request
+      )
+    ).toThrow("listening");
+    expect(() =>
+      validateDecideAuditionReviewResponse(
+        {
+          ...fixture.response,
+          decision,
+          review: {
+            ...fixture.response.review,
+            latestDecision: decision
+          }
+        },
+        fixture.request
+      )
+    ).toThrow("unrequested listening evidence");
+  });
 
   it.each([
     "per_role_audition_review",
@@ -1735,6 +2055,72 @@ describe("Phase 3B desktop audition validation", () => {
     ).toThrow("latest session");
   });
 
+  it("binds a real-local session response to the exact restricted acknowledgement", () => {
+    const inventory = governedVoiceInventory();
+    const voice = inventory.items[0];
+    if (voice === undefined) throw new Error("The governed voice fixture was empty.");
+    const evidence = realAuditionEvidence(voice);
+    const activation = governedActivation(evidence, voice, inventory);
+    const binding = realVoiceRuntimeBinding(voice);
+    const request = {
+      projectId: "project-1",
+      roleId: "role-1",
+      evidence,
+      restrictedLocalAuditionActivation: {
+        expectedInventoryFingerprint: inventory.inventoryFingerprint,
+        expectedWarningFingerprint: inventory.warningFingerprint,
+        reason: activation.acknowledgement.reason
+      },
+      idempotencyKey: "real-session-exact-activation"
+    } as const;
+    const session = {
+      ...sessionResponse(1),
+      voiceRuntimeBindingId: binding.bindingId,
+      voiceRuntimeBindingFingerprint: binding.bindingFingerprint,
+      providerVoiceId: binding.providerVoiceId,
+      voiceRuntimeBinding: binding,
+      governedLocalVoiceActivation: activation,
+      providerId: binding.providerId,
+      providerVersion: binding.providerVersion,
+      modelPackageFingerprint: binding.modelPackageFingerprint,
+      runtimeProfileFingerprint: binding.runtimeProfileFingerprint
+    };
+
+    expect(
+      validateCreateAuditionSessionResponse(
+        { correlationId: "correlation-real-session", session },
+        request
+      )
+    ).toBeTruthy();
+    expect(() =>
+      validateCreateAuditionSessionResponse(
+        {
+          correlationId: "correlation-real-session-missing-activation",
+          session: { ...session, governedLocalVoiceActivation: null }
+        },
+        request
+      )
+    ).toThrow("activation");
+    expect(() =>
+      validateCreateAuditionSessionResponse(
+        {
+          correlationId: "correlation-real-session-unsafe-activation",
+          session: {
+            ...session,
+            governedLocalVoiceActivation: {
+              ...activation,
+              acknowledgement: {
+                ...activation.acknowledgement,
+                modelPath: "C:\\private\\model.onnx"
+              }
+            }
+          }
+        },
+        request
+      )
+    ).toThrow("unknown field");
+  });
+
   it("validates hash-only runtime process identities and rejects exposed paths", () => {
     const workspace = workspaceResponse();
     const runtimeInstance = {
@@ -2050,6 +2436,184 @@ describe("Phase 3B desktop audition validation", () => {
         { projectId: "project-1" }
       )
     ).toThrow("did not match its installation");
+  });
+
+  it("validates a closed governed real-local inventory without exposing local paths", () => {
+    const workspace = workspaceResponse();
+    const fixtureProvider = workspace.workspace.providers[0];
+    if (fixtureProvider === undefined) {
+      throw new Error("The provider fixture was unavailable.");
+    }
+    const inventory = governedVoiceInventory();
+    const realProvider = {
+      ...fixtureProvider,
+      providerId: "kokoro-local-onnx",
+      providerVersion: "1.0.0",
+      adapterId: "kokoro-local-onnx-adapter",
+      providerClass: "real_local",
+      displayName: "Kokoro local ONNX",
+      deterministic: false,
+      productionExportEligible: false,
+      licenseIdentifier: "Apache-2.0",
+      commercialUseClassification: "restricted",
+      descriptorFingerprint: "b".repeat(64)
+    };
+    const response = {
+      ...workspace,
+      workspace: {
+        ...workspace.workspace,
+        providers: [fixtureProvider, realProvider],
+        voiceInventory: inventory
+      }
+    };
+    expect(
+      validateAuditionWorkspaceResponse(response, { projectId: "project-1" })
+    ).toBe(response);
+    for (const contradictoryProvider of [
+      { ...realProvider, providerClass: "deterministic_fixture" },
+      { ...realProvider, providerVersion: "2.0.0" },
+      { ...realProvider, productionExportEligible: true }
+    ]) {
+      expect(() =>
+        validateAuditionWorkspaceResponse(
+          {
+            ...response,
+            workspace: {
+              ...response.workspace,
+              providers: [fixtureProvider, contradictoryProvider]
+            }
+          },
+          { projectId: "project-1" }
+        )
+      ).toThrow("export-ineligible real-local provider");
+    }
+    const voice = inventory.items[0];
+    if (voice === undefined) throw new Error("The voice inventory was empty.");
+    const binding = realVoiceRuntimeBinding(voice);
+    const evidence = realAuditionEvidence(voice);
+    const realRole = {
+      roleId: "role-1",
+      roleType: "narrator",
+      displayLabel: "Narrator",
+      required: true,
+      assignmentId: evidence.castAssignmentId,
+      assignmentRevision: evidence.castAssignmentRevision,
+      voiceProfileId: voice.voiceProfileId,
+      voiceDisplayLabel: voice.neutralDisplayLabel,
+      governedLocalVoice: voice,
+      voiceRuntimeBinding: binding,
+      runtimeBindingStatus: "compatible",
+      runtimeBindingReasonCode: null,
+      rightsState: "restricted",
+      latestSessionId: null,
+      latestClipId: null,
+      reviewState: "pending",
+      sessionEvidence: evidence,
+      generationRequest: null,
+      productionExportEligible: false
+    } as const;
+    const responseWithRealRole = {
+      ...response,
+      workspace: {
+        ...response.workspace,
+        roles: { items: [realRole], pageSize: 1, total: 1 }
+      }
+    };
+    expect(
+      validateAuditionWorkspaceResponse(responseWithRealRole, {
+        projectId: "project-1"
+      })
+    ).toBe(responseWithRealRole);
+    const downgradedRole: Record<string, unknown> = { ...realRole };
+    delete downgradedRole.governedLocalVoice;
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...responseWithRealRole,
+          workspace: {
+            ...responseWithRealRole.workspace,
+            roles: { items: [downgradedRole], pageSize: 1, total: 1 }
+          }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("provider binding and governed voice projection");
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...response,
+          workspace: {
+            ...response.workspace,
+            voiceInventory: {
+              ...inventory,
+              warningFingerprint: sha
+            }
+          }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("inventory warning");
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...response,
+          workspace: {
+            ...response.workspace,
+            voiceInventory: {
+              ...inventory,
+              items: [
+                {
+                  ...inventory.items[0],
+                  voiceTensor: {
+                    ...inventory.items[0]?.voiceTensor,
+                    relativePath: "C:\\private\\af_heart.bin"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("unsafe relative path");
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...response,
+          workspace: {
+            ...response.workspace,
+            voiceInventory: {
+              ...inventory,
+              items: [
+                {
+                  ...inventory.items[0],
+                  rights: {
+                    ...inventory.items[0]?.rights,
+                    rightsState: "verified"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("rightsState");
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...response,
+          workspace: {
+            ...response.workspace,
+            voiceInventory: {
+              ...inventory,
+              privateModelPath: "C:\\private\\model.onnx"
+            }
+          }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("unknown field");
   });
 
   it("binds bounded immutable review history to one exact gate scope", () => {
@@ -2582,6 +3146,75 @@ function workspaceResponse() {
   };
 }
 
+function governedVoiceInventory() {
+  return {
+    inventoryId: "kokoro-local-voice-inventory-v1",
+    inventoryRevision: 1,
+    inventoryFingerprint: "c".repeat(64),
+    warningText: GOVERNED_PRIVATE_AUDITION_WARNING,
+    warningFingerprint: GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+    items: [
+      {
+        contractVersion: "1.0.0" as const,
+        inventoryRecordId: "kokoro-local-voice-001-inventory",
+        neutralDisplayLabel: "Local Voice 001",
+        providerId: "kokoro-local-onnx",
+        providerVersion: "1.0.0",
+        providerVoiceId: "af_heart",
+        modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+        modelVersion: "1.0",
+        modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart",
+        modelPackageFingerprint:
+          "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0",
+        voiceProfileId: "kokoro-local-voice-001",
+        voiceProfileVersion: "1.0.0",
+        voiceProfileFingerprint:
+          "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210",
+        catalogRevisionId: "governed-local-voice-catalog-v2@2.0.0",
+        catalogRevisionFingerprint:
+          "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc",
+        voiceTensor: {
+          relativePath: "voices/af_heart.bin",
+          byteSize: 522_240,
+          sha256:
+            "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+          scalarFormat: "float32_le" as const,
+          shape: [510, 256],
+          elementCount: 130_560
+        },
+        rights: {
+          rightsRecordId: "kokoro-local-voice-001-rights-v1",
+          rightsRecordRevision: 1,
+          rightsRecordFingerprint:
+            "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038",
+          rightsState: "restricted" as const,
+          consentStatus: "unknown" as const,
+          commercialUseClassification: "unknown" as const,
+          redistributionClassification: "prohibited" as const,
+          evidenceReferences: [
+            "https://huggingface.co/hexgrad/Kokoro-82M",
+            "official-package-metadata:kokoro-local-voice-001"
+          ]
+        },
+        language: "en",
+        locale: "en-US",
+        providerDeclaredPresentationCategory: "American / Female",
+        providerDeclaredMetadataIndependentlyVerified: false as const,
+        technicalCompatibility: "compatible" as const,
+        activationEligibility: "restricted_private_audition" as const,
+        activationReasonCode: "RESTRICTED_PRIVATE_LOCAL_AUDITION_ONLY",
+        knownLimitations: [
+          "Human listening and performer-consent evidence remain pending."
+        ],
+        unresolvedEvidenceCodes: ["PERFORMER_CONSENT_UNKNOWN"],
+        productionExportEligible: false as const,
+        inventoryFingerprint: "3".repeat(64),
+        provenance: provenance()
+      }
+    ]
+  };
+}
+
 function provenance() {
   return {
     origin: "application",
@@ -2619,6 +3252,132 @@ function voiceRuntimeBinding() {
     provenance: provenance(),
     createdAt: "2026-07-31T12:00:00Z"
   };
+}
+
+function realVoiceRuntimeBinding(
+  voice: ReturnType<typeof governedVoiceInventory>["items"][number]
+) {
+  return {
+    contractVersion: "1.0.0",
+    bindingId: "kokoro-runtime-binding-1",
+    bindingKind: "exact_provider_match",
+    voiceProfileId: voice.voiceProfileId,
+    voiceProfileVersion: voice.voiceProfileVersion,
+    voiceProfileFingerprint: voice.voiceProfileFingerprint,
+    sourceProviderId: voice.providerId,
+    sourceProviderVersion: voice.providerVersion,
+    sourceProviderFingerprint: "4".repeat(64),
+    sourceModelId: voice.modelId,
+    sourceModelVersion: voice.modelVersion,
+    sourceModelFingerprint: "5".repeat(64),
+    providerId: voice.providerId,
+    providerVersion: voice.providerVersion,
+    providerVoiceId: voice.providerVoiceId,
+    modelId: voice.modelId,
+    modelVersion: voice.modelVersion,
+    modelPackageId: voice.modelPackageId,
+    modelPackageFingerprint: voice.modelPackageFingerprint,
+    runtimeProfileId: "kokoro-runtime-profile",
+    runtimeProfileFingerprint: "6".repeat(64),
+    bindingFingerprint: "7".repeat(64),
+    active: true,
+    provenance: provenance(),
+    createdAt: "2026-07-31T12:00:00Z"
+  } as const;
+}
+
+function realAuditionEvidence(
+  voice: ReturnType<typeof governedVoiceInventory>["items"][number]
+) {
+  const binding = realVoiceRuntimeBinding(voice);
+  return {
+    ...preview("project-1").evidence,
+    voiceProfileId: voice.voiceProfileId,
+    voiceProfileVersion: voice.voiceProfileVersion,
+    voiceRuntimeBindingId: binding.bindingId,
+    voiceRuntimeBindingFingerprint: binding.bindingFingerprint,
+    providerVoiceId: voice.providerVoiceId,
+    providerId: voice.providerId,
+    providerVersion: voice.providerVersion,
+    modelId: voice.modelId,
+    modelVersion: voice.modelVersion,
+    catalogRevisionId: voice.catalogRevisionId,
+    catalogFingerprint: voice.catalogRevisionFingerprint,
+    rightsRecordId: voice.rights.rightsRecordId,
+    rightsRecordRevision: voice.rights.rightsRecordRevision,
+    rightsRecordFingerprint: voice.rights.rightsRecordFingerprint,
+    runtimeProfileId: binding.runtimeProfileId,
+    runtimeProfileFingerprint: binding.runtimeProfileFingerprint,
+    modelPackageId: voice.modelPackageId,
+    modelPackageFingerprint: voice.modelPackageFingerprint
+  };
+}
+
+function governedActivation(
+  evidence: ReturnType<typeof realAuditionEvidence>,
+  voice: ReturnType<typeof governedVoiceInventory>["items"][number],
+  inventory: ReturnType<typeof governedVoiceInventory>
+) {
+  return {
+    contractVersion: "1.0.0",
+    acknowledgement: {
+      contractVersion: "1.0.0",
+      acknowledgementId: "restricted-audition-acknowledgement-1",
+      actor: { classification: "human", actorId: "local-user" },
+      acknowledgedAt: "2026-07-31T12:00:00Z",
+      reason: "Create this exact bounded private local audition.",
+      warningText: GOVERNED_PRIVATE_AUDITION_WARNING,
+      warningFingerprint: GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+      inventoryRecordId: voice.inventoryRecordId,
+      inventoryFingerprint: inventory.inventoryFingerprint,
+      providerId: voice.providerId,
+      providerVersion: voice.providerVersion,
+      modelId: voice.modelId,
+      modelVersion: voice.modelVersion,
+      modelPackageId: voice.modelPackageId,
+      modelPackageFingerprint: voice.modelPackageFingerprint,
+      voiceProfileId: voice.voiceProfileId,
+      voiceProfileVersion: voice.voiceProfileVersion,
+      voiceProfileFingerprint: voice.voiceProfileFingerprint,
+      catalogRevisionId: voice.catalogRevisionId,
+      catalogRevisionFingerprint: voice.catalogRevisionFingerprint,
+      voiceTensorSha256: voice.voiceTensor.sha256,
+      rightsRecordId: voice.rights.rightsRecordId,
+      rightsRecordRevision: voice.rights.rightsRecordRevision,
+      rightsRecordFingerprint: voice.rights.rightsRecordFingerprint,
+      restrictedRightsCorrectionId: "restricted-rights-correction-1",
+      restrictedRightsCorrectionFingerprint: "8".repeat(64),
+      modelInstallationAcknowledgementEventId: "model-installation-event-1",
+      modelVerificationId: "model-verification-1",
+      modelVerificationFingerprint: "9".repeat(64),
+      privateLocalAuditionOnly: true,
+      productionExportAuthorized: false,
+      commercialDistributionAuthorized: false,
+      marketplaceResaleAuthorized: false,
+      cloningAuthorized: false,
+      realPersonImitationAuthorized: false,
+      acknowledgementFingerprint: "0".repeat(64),
+      immutable: true,
+      provenance: {
+        origin: "human",
+        producerId: "local-user",
+        producerVersion: "1.0.0",
+        recordedAt: "2026-07-31T12:00:00Z"
+      }
+    },
+    castAssignmentId: evidence.castAssignmentId,
+    castAssignmentRevision: evidence.castAssignmentRevision,
+    castAssignmentFingerprint: "a".repeat(64),
+    approvedCastSnapshotId: evidence.approvedCastSnapshotId,
+    approvedCastSnapshotRevision: evidence.approvedCastSnapshotRevision,
+    approvedCastSnapshotFingerprint:
+      evidence.approvedCastSnapshotFingerprint,
+    runtimeProfileId: evidence.runtimeProfileId,
+    runtimeProfileFingerprint: evidence.runtimeProfileFingerprint,
+    privateLocalAuditionOnly: true,
+    productionExportEligible: false,
+    bindingFingerprint: "b".repeat(64)
+  } as const;
 }
 
 function modelInstallationRecord(

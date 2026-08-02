@@ -843,6 +843,79 @@ class TextCodePointSpanRequest(StrictRequest):
         return self
 
 
+class HumanActorBindingRequest(StrictRequest):
+    classification: Literal["human"]
+    actor_id: str = Field(min_length=1, max_length=128)
+
+
+class HumanSpeechProvenanceBindingRequest(StrictRequest):
+    origin: Literal["human"]
+    producer_id: str = Field(min_length=1, max_length=128)
+    producer_version: str = Field(min_length=1, max_length=40)
+    recorded_at: str = Field(min_length=1, max_length=64)
+    input_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class RestrictedLocalAuditionAcknowledgementBindingRequest(StrictRequest):
+    contract_version: Literal["1.0.0"]
+    acknowledgement_id: str = Field(min_length=1, max_length=128)
+    actor: HumanActorBindingRequest
+    acknowledged_at: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=1000)
+    warning_text: str = Field(min_length=1, max_length=1000)
+    warning_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    inventory_record_id: str = Field(min_length=1, max_length=128)
+    inventory_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    provider_id: Literal["kokoro-local-onnx"]
+    provider_version: str = Field(min_length=1, max_length=40)
+    model_id: str = Field(min_length=1, max_length=128)
+    model_version: str = Field(min_length=1, max_length=40)
+    model_package_id: str = Field(min_length=1, max_length=128)
+    model_package_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    voice_profile_id: str = Field(min_length=1, max_length=128)
+    voice_profile_version: str = Field(min_length=1, max_length=40)
+    voice_profile_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    catalog_revision_id: str = Field(min_length=1, max_length=128)
+    catalog_revision_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    voice_tensor_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    rights_record_id: str = Field(min_length=1, max_length=128)
+    rights_record_revision: int = Field(ge=1)
+    rights_record_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    restricted_rights_correction_id: str = Field(min_length=1, max_length=128)
+    restricted_rights_correction_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    model_installation_acknowledgement_event_id: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+    model_verification_id: str = Field(min_length=1, max_length=128)
+    model_verification_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    private_local_audition_only: Literal[True]
+    production_export_authorized: Literal[False]
+    commercial_distribution_authorized: Literal[False]
+    marketplace_resale_authorized: Literal[False]
+    cloning_authorized: Literal[False]
+    real_person_imitation_authorized: Literal[False]
+    acknowledgement_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    immutable: Literal[True]
+    provenance: HumanSpeechProvenanceBindingRequest
+
+
+class GovernedLocalVoiceActivationBindingRequest(StrictRequest):
+    contract_version: Literal["1.0.0"]
+    acknowledgement: RestrictedLocalAuditionAcknowledgementBindingRequest
+    cast_assignment_id: str = Field(min_length=1, max_length=128)
+    cast_assignment_revision: int = Field(ge=1)
+    cast_assignment_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    approved_cast_snapshot_id: str = Field(min_length=1, max_length=128)
+    approved_cast_snapshot_revision: int = Field(ge=1)
+    approved_cast_snapshot_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    runtime_profile_id: str = Field(min_length=1, max_length=128)
+    runtime_profile_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    private_local_audition_only: Literal[True]
+    production_export_eligible: Literal[False]
+    binding_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class AuditionEvidenceBindingRequest(StrictRequest):
     project_id: str = Field(min_length=1, max_length=128)
     source_document_id: str = Field(min_length=1, max_length=128)
@@ -882,12 +955,25 @@ class AuditionEvidenceBindingRequest(StrictRequest):
     runtime_profile_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     model_package_id: str = Field(min_length=1, max_length=128)
     model_package_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    governed_local_voice_activation: GovernedLocalVoiceActivationBindingRequest | None = None
     producer_version: str = Field(min_length=1, max_length=40)
+
+
+class RestrictedLocalAuditionActivationRequest(StrictRequest):
+    expected_inventory_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expected_warning_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_activation_reason(cls, value: str) -> str:
+        return AppendAnalysisCorrectionRequest.validate_correction_reason(value)
 
 
 class CreateAuditionSessionRequest(StrictRequest):
     role_id: str = Field(min_length=1, max_length=128)
     evidence: AuditionEvidenceBindingRequest
+    restricted_local_audition_activation: RestrictedLocalAuditionActivationRequest | None = None
     idempotency_key: str = Field(min_length=1, max_length=160)
 
     @field_validator("idempotency_key")
@@ -1062,12 +1148,23 @@ class ListAuditionReviewDecisionsQuery(StrictRequest):
         return self
 
 
+class HumanListeningAttestationRequest(StrictRequest):
+    audition_clip_id: str = Field(min_length=1, max_length=128)
+    audition_clip_revision: int = Field(ge=1)
+    audition_clip_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    audio_artifact_id: str = Field(min_length=1, max_length=128)
+    audio_artifact_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    listened: Literal[True]
+    disposition: Literal["acceptable", "unacceptable", "needs_changes", "undecided"]
+
+
 class DecideAuditionReviewRequest(StrictRequest):
     expected_review_revision: int = Field(ge=1)
     expected_evidence_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     decision: Literal["approve", "request_changes", "reject"]
     rationale: str = Field(min_length=1, max_length=4000)
     supersedes_decision_id: str | None = Field(default=None, min_length=1, max_length=128)
+    listening_attestation: HumanListeningAttestationRequest | None = None
     idempotency_key: str = Field(min_length=1, max_length=160)
 
     @field_validator("rationale")

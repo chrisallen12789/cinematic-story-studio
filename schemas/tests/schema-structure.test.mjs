@@ -1598,7 +1598,7 @@ test("Phase 3A governed profile, producer, rights policy, and bounds are pinned"
 
   assert.equal(
     profile.profileId.const,
-    "governed-voice-casting-v1@1.0.0",
+    "governed-voice-casting-v1@1.0.1",
   );
   assert.equal(
     profile.producerId.const,
@@ -1633,11 +1633,12 @@ test("Phase 3A governed profile, producer, rights policy, and bounds are pinned"
       "restricted_requires_acknowledgement",
       "unknown_ineligible",
       "prohibited_ineligible",
+      "restricted_private_audition_pending_evidence",
     ],
   );
   assert.equal(
     definitions.$defs.CastingProfile.properties.fingerprint.const,
-    "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6",
+    "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97",
   );
   assert.equal(
     createHash("sha256")
@@ -2113,9 +2114,9 @@ test("Phase 3 CI proof schemas require casting, local-speech, and exact process 
   const manifest = definitions.$defs.Phase3BuildEvidenceManifest;
 
   assert.equal(packaged.properties.schemaVersion.const, "5.0.0");
-  assert.equal(phase3bPackaged.properties.schemaVersion.const, "7.0.0");
+  assert.equal(phase3bPackaged.properties.schemaVersion.const, "8.0.0");
   assert.equal(phase3bPackaged.additionalProperties, false);
-  assert.equal(manifest.properties.schemaVersion.const, "6.0.0");
+  assert.equal(manifest.properties.schemaVersion.const, "7.0.0");
   assert.equal(
     definitions.$defs.Phase3PackagedFlow.prefixItems.length,
     32,
@@ -2283,6 +2284,7 @@ test("Phase 3 CI proof schemas require casting, local-speech, and exact process 
     "packagedE2e",
     "voiceCastingContract",
     "localSpeechAuditionsContract",
+    "phase3b1AbsentPackage",
     "testTimestamp",
     "runner",
   ]);
@@ -2292,7 +2294,7 @@ test("Phase 3 CI proof schemas require casting, local-speech, and exact process 
   );
   assert.equal(
     manifest.properties.runner.properties.workflow.const,
-    "Phase 3B Windows CI",
+    "Phase 3B.1 Windows CI",
   );
   assert.equal(
     definitions.$defs.Phase3VoiceCastingEvidence.properties
@@ -2339,8 +2341,8 @@ test("Phase 3B public evidence closes cache identities and the manifest projecti
   const projected = definitions.$defs.Phase3bLocalSpeechAuditionsEvidence;
   const manifest = definitions.$defs.Phase3BuildEvidenceManifest;
 
-  assert.equal(packaged.properties.schemaVersion.const, "7.0.0");
-  assert.equal(manifest.properties.schemaVersion.const, "6.0.0");
+  assert.equal(packaged.properties.schemaVersion.const, "8.0.0");
+  assert.equal(manifest.properties.schemaVersion.const, "7.0.0");
   assert.equal(packaged.additionalProperties, false);
   assert.equal(projected.additionalProperties, false);
   assert.equal(projected.required.includes("evidenceFile"), true);
@@ -2348,7 +2350,94 @@ test("Phase 3B public evidence closes cache identities and the manifest projecti
   assert.equal(packaged.required.includes("status"), true);
   assert.equal(packaged.required.includes("evidenceFile"), false);
   assert.equal(
+    packaged.required.includes("phase3b1SyntheticMetadata"),
+    true,
+  );
+  assert.equal(
+    projected.required.includes("phase3b1SyntheticMetadata"),
+    true,
+  );
+  const phase3b1Metadata = definitions.$defs.Phase3b1SyntheticMetadata;
+  assert.equal(phase3b1Metadata.additionalProperties, false);
+  assert.equal(
+    phase3b1Metadata.properties.catalog.properties
+      .catalogRevisionFingerprint.const,
+    "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc",
+  );
+  assert.equal(
+    phase3b1Metadata.properties.catalog.properties
+      .castingProfileFingerprint.const,
+    "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97",
+  );
+  assert.equal(
+    phase3b1Metadata.properties.governedRealVoice.properties.rights
+      .properties.rightsState.const,
+    "restricted",
+  );
+  assert.equal(
+    phase3b1Metadata.properties.governedRealVoice.properties.rights
+      .properties.consentStatus.const,
+    "unknown",
+  );
+  assert.equal(
+    phase3b1Metadata.properties.restriction.properties
+      .humanListeningStatus.const,
+    "pending",
+  );
+  assert.equal(
+    phase3b1Metadata.properties.artifactBoundary.properties
+      .realModelBytesPresent.const,
+    false,
+  );
+  assert.equal(
     definitions.$defs.Phase3bEvidenceFile.properties.exists.const,
+    true,
+  );
+  assert.equal(
+    manifest.required.includes("phase3b1AbsentPackage"),
+    true,
+  );
+  assert.equal(
+    manifest.properties.phase3b1AbsentPackage.$ref,
+    "#/$defs/Phase3b1AbsentPackageEvidence",
+  );
+  const absentPackage =
+    definitions.$defs.Phase3b1AbsentPackageEvidence;
+  assert.equal(absentPackage.additionalProperties, false);
+  assert.equal(
+    absentPackage.properties.testResult.const,
+    "passed",
+  );
+  assert.equal(
+    absentPackage.properties.databaseIsolation.const,
+    "fresh_pytest_temporary_directory",
+  );
+  assert.equal(
+    absentPackage.properties.proof.properties.classification.const,
+    "verified_absent_package_fail_closed",
+  );
+  assert.equal(
+    absentPackage.properties.proof.properties.packagePresent.const,
+    false,
+  );
+  assert.equal(
+    absentPackage.properties.proof.properties.runtimeBindingStatus.const,
+    "unavailable",
+  );
+  assert.equal(
+    absentPackage.properties.proof.properties.counts.properties
+      .providerDispatches.const,
+    0,
+  );
+  assert.equal(
+    definitions.$defs.Phase3bBuildAssertions.required.includes(
+      "phase3b1RealProviderFailsClosedWithoutPackageProven",
+    ),
+    true,
+  );
+  assert.equal(
+    definitions.$defs.Phase3bBuildAssertions.properties
+      .phase3b1RealProviderFailsClosedWithoutPackageProven.const,
     true,
   );
 

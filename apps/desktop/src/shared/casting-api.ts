@@ -146,8 +146,14 @@ export interface CastingRunInput extends CastingProjectInput {
   readonly runId: string;
 }
 
+export interface CastingProfileExpectation {
+  /** Renderer-held profile identity used only to validate returned persisted
+   * evidence. The API client does not forward this field. */
+  readonly expectedCastingProfileFingerprint: string;
+}
+
 export type CastingRunEvidenceInput =
-  CastingRunInput & CastingEvidenceRequest;
+  CastingRunInput & CastingEvidenceRequest & CastingProfileExpectation;
 
 export type ListVoiceCatalogInput =
   CastingProjectInput & CastingCatalogPageRequest;
@@ -161,22 +167,22 @@ export type CreateCustomProductionRoleInput =
 export type ListCastingRunsInput = CastingPageInput;
 
 export type ListProductionRolesInput =
-  CastingRunInput & ProductionRolePageRequest;
+  CastingRunInput & ProductionRolePageRequest & CastingProfileExpectation;
 
 export type ListCastingCandidatesInput =
   CastingRunInput &
     CastingCandidatePageRequest & {
       readonly roleId: string;
-    };
+    } & CastingProfileExpectation;
 
 export type ListCastingConflictsInput =
-  CastingRunInput & CastingConflictPageRequest;
+  CastingRunInput & CastingConflictPageRequest & CastingProfileExpectation;
 
 export type ListCastAssignmentsInput =
-  CastingRunInput & CastAssignmentPageRequest;
+  CastingRunInput & CastAssignmentPageRequest & CastingProfileExpectation;
 
 export type ListCastingCorrectionsInput =
-  CastingRunInput & CastingCorrectionPageRequest;
+  CastingRunInput & CastingCorrectionPageRequest & CastingProfileExpectation;
 
 export type AppendCastingCorrectionInput =
   CastingRunInput &
@@ -187,7 +193,7 @@ export type AppendCastingCorrectionInput =
     };
 
 export type ListCastingReviewsInput =
-  CastingRunInput & CastingReviewListRequest;
+  CastingRunInput & CastingReviewListRequest & CastingProfileExpectation;
 
 export type DecideCastingReviewInput =
   CastingRunInput &

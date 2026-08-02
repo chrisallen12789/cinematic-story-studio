@@ -1,6 +1,6 @@
 import { rename, rm, writeFile } from "node:fs/promises";
 
-export const phase3bPackagedE2eSchemaVersion = "7.0.0" as const;
+export const phase3bPackagedE2eSchemaVersion = "8.0.0" as const;
 export const phase3bFixtureEvidenceClassification =
   "deterministic_fixture_lifecycle_only" as const;
 export const phase3bPackagedE2eResultEnvironment =
@@ -12,6 +12,10 @@ const ISO_TIME = /^\d{4}-\d{2}-\d{2}T/u;
 const PROCESS_CREATION_TIME =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/u;
 const maximumResultBytes = 1024 * 1024;
+const governedPrivateAuditionWarning =
+  "Private local audition only. This voice is not cleared by Cinematic Story Studio for production export, commercial distribution, marketplace resale, cloning, or real-person imitation." as const;
+const governedPrivateAuditionWarningFingerprint =
+  "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645" as const;
 
 export const phase3bAssertionKeys = Object.freeze([
   "phase0ThroughPhase3aPrerequisitesCurrent",
@@ -36,6 +40,127 @@ export interface Phase3bProviderEvidence {
   readonly providerId: string;
   readonly providerVersion: string;
 }
+
+export interface Phase3b1SyntheticMetadataEvidence {
+  readonly catalog: {
+    readonly catalogRevisionId: "governed-local-voice-catalog-v2@2.0.0";
+    readonly catalogRevisionFingerprint: "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc";
+    readonly castingProfileId: "governed-voice-casting-v1@1.0.1";
+    readonly castingProfileFingerprint: "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97";
+    readonly totalVoiceCount: 15;
+    readonly deterministicFixtureVoiceCount: 14;
+    readonly governedRealVoiceCount: 1;
+  };
+  readonly governedRealVoice: {
+    readonly neutralDisplayLabel: "Local Voice 001";
+    readonly providerId: "kokoro-local-onnx";
+    readonly providerVersion: "1.0.0";
+    readonly modelId: "onnx-community/Kokoro-82M-v1.0-ONNX";
+    readonly modelVersion: "1.0";
+    readonly modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart";
+    readonly modelPackageVersion: "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231";
+    readonly modelPackageFingerprint: "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0";
+    readonly voiceProfileId: "kokoro-local-voice-001";
+    readonly voiceProfileVersion: "1.0.0";
+    readonly voiceProfileFingerprint: "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210";
+    readonly providerVoiceId: "af_heart";
+    readonly tensor: {
+      readonly relativePath: "voices/af_heart.bin";
+      readonly byteSize: 522240;
+      readonly sha256: "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b";
+      readonly scalarFormat: "float32_le";
+      readonly shape: readonly [510, 256];
+      readonly elementCount: 130560;
+    };
+    readonly rights: {
+      readonly rightsRecordId: "kokoro-local-voice-001-rights-v1";
+      readonly rightsRecordRevision: 1;
+      readonly rightsRecordFingerprint: "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038";
+      readonly rightsState: "restricted";
+      readonly consentStatus: "unknown";
+      readonly productionExportEligible: false;
+    };
+  };
+  readonly restriction: {
+    readonly warningText: typeof governedPrivateAuditionWarning;
+    readonly warningFingerprint: typeof governedPrivateAuditionWarningFingerprint;
+    readonly activationGovernance: "restricted_audition_acknowledgement_required";
+    readonly packagePresentInCi: false;
+    readonly activationEligibleInCi: false;
+    readonly failClosedReason: "model_package_absent";
+    readonly humanListeningStatus: "pending";
+    readonly humanListeningClaimed: false;
+    readonly realSynthesisClaimed: false;
+  };
+  readonly artifactBoundary: {
+    readonly realModelBytesPresent: false;
+    readonly realProviderAudioPresent: false;
+  };
+}
+
+export const phase3b1SyntheticMetadataEvidence = {
+  catalog: {
+    catalogRevisionId: "governed-local-voice-catalog-v2@2.0.0",
+    catalogRevisionFingerprint:
+      "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc",
+    castingProfileId: "governed-voice-casting-v1@1.0.1",
+    castingProfileFingerprint:
+      "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97",
+    totalVoiceCount: 15,
+    deterministicFixtureVoiceCount: 14,
+    governedRealVoiceCount: 1
+  },
+  governedRealVoice: {
+    neutralDisplayLabel: "Local Voice 001",
+    providerId: "kokoro-local-onnx",
+    providerVersion: "1.0.0",
+    modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+    modelVersion: "1.0",
+    modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart",
+    modelPackageVersion:
+      "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+    modelPackageFingerprint:
+      "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0",
+    voiceProfileId: "kokoro-local-voice-001",
+    voiceProfileVersion: "1.0.0",
+    voiceProfileFingerprint:
+      "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210",
+    providerVoiceId: "af_heart",
+    tensor: {
+      relativePath: "voices/af_heart.bin",
+      byteSize: 522240,
+      sha256:
+        "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+      scalarFormat: "float32_le",
+      shape: [510, 256],
+      elementCount: 130560
+    },
+    rights: {
+      rightsRecordId: "kokoro-local-voice-001-rights-v1",
+      rightsRecordRevision: 1,
+      rightsRecordFingerprint:
+        "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038",
+      rightsState: "restricted",
+      consentStatus: "unknown",
+      productionExportEligible: false
+    }
+  },
+  restriction: {
+    warningText: governedPrivateAuditionWarning,
+    warningFingerprint: governedPrivateAuditionWarningFingerprint,
+    activationGovernance: "restricted_audition_acknowledgement_required",
+    packagePresentInCi: false,
+    activationEligibleInCi: false,
+    failClosedReason: "model_package_absent",
+    humanListeningStatus: "pending",
+    humanListeningClaimed: false,
+    realSynthesisClaimed: false
+  },
+  artifactBoundary: {
+    realModelBytesPresent: false,
+    realProviderAudioPresent: false
+  }
+} as const satisfies Phase3b1SyntheticMetadataEvidence;
 
 export interface Phase3bRuntimeEvidence {
   readonly profileId: string;
@@ -226,6 +351,7 @@ export interface Phase3bPackagedE2eResult {
     readonly productionExportEligible: false;
     readonly humanListeningClaimed: false;
   };
+  readonly phase3b1SyntheticMetadata: Phase3b1SyntheticMetadataEvidence;
   readonly runtime: Phase3bRuntimeEvidence;
   readonly fixtureProvider: Phase3bProviderEvidence;
   readonly realProviderAdapter: Phase3bProviderEvidence;
@@ -270,6 +396,7 @@ export function validatePhase3bPackagedE2eResult(
     "status",
     "evidenceClassification",
     "fixtureClaims",
+    "phase3b1SyntheticMetadata",
     "runtime",
     "fixtureProvider",
     "realProviderAdapter",
@@ -292,6 +419,7 @@ export function validatePhase3bPackagedE2eResult(
   ) fail("The Phase 3B result identity was invalid.");
 
   validateFixtureClaims(value.fixtureClaims);
+  validatePhase3b1SyntheticMetadata(value.phase3b1SyntheticMetadata);
   validateRuntime(value.runtime);
   validateProvider(value.fixtureProvider, "fixture provider");
   validateProvider(value.realProviderAdapter, "real provider adapter");
@@ -416,6 +544,158 @@ function validateFixtureClaims(raw: unknown): void {
     value.productionExportEligible !== false ||
     value.humanListeningClaimed !== false
   ) fail("Fixture audio was represented beyond lifecycle evidence.");
+}
+
+function validatePhase3b1SyntheticMetadata(raw: unknown): void {
+  const value = record(raw, "Phase 3B.1 synthetic metadata");
+  exactKeys(value, [
+    "catalog",
+    "governedRealVoice",
+    "restriction",
+    "artifactBoundary"
+  ]);
+
+  const catalog = record(value.catalog, "Phase 3B.1 catalog metadata");
+  exactKeys(catalog, [
+    "catalogRevisionId",
+    "catalogRevisionFingerprint",
+    "castingProfileId",
+    "castingProfileFingerprint",
+    "totalVoiceCount",
+    "deterministicFixtureVoiceCount",
+    "governedRealVoiceCount"
+  ]);
+  if (
+    catalog.catalogRevisionId !==
+      "governed-local-voice-catalog-v2@2.0.0" ||
+    catalog.catalogRevisionFingerprint !==
+      "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc" ||
+    catalog.castingProfileId !== "governed-voice-casting-v1@1.0.1" ||
+    catalog.castingProfileFingerprint !==
+      "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97" ||
+    catalog.totalVoiceCount !== 15 ||
+    catalog.deterministicFixtureVoiceCount !== 14 ||
+    catalog.governedRealVoiceCount !== 1
+  ) fail("The Phase 3B.1 catalog metadata was invalid.");
+
+  const voice = record(
+    value.governedRealVoice,
+    "Phase 3B.1 governed real-voice metadata"
+  );
+  exactKeys(voice, [
+    "neutralDisplayLabel",
+    "providerId",
+    "providerVersion",
+    "modelId",
+    "modelVersion",
+    "modelPackageId",
+    "modelPackageVersion",
+    "modelPackageFingerprint",
+    "voiceProfileId",
+    "voiceProfileVersion",
+    "voiceProfileFingerprint",
+    "providerVoiceId",
+    "tensor",
+    "rights"
+  ]);
+  if (
+    voice.neutralDisplayLabel !== "Local Voice 001" ||
+    voice.providerId !== "kokoro-local-onnx" ||
+    voice.providerVersion !== "1.0.0" ||
+    voice.modelId !== "onnx-community/Kokoro-82M-v1.0-ONNX" ||
+    voice.modelVersion !== "1.0" ||
+    voice.modelPackageId !== "kokoro-82m-v1.0-onnx-q8-af-heart" ||
+    voice.modelPackageVersion !==
+      "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231" ||
+    voice.modelPackageFingerprint !==
+      "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0" ||
+    voice.voiceProfileId !== "kokoro-local-voice-001" ||
+    voice.voiceProfileVersion !== "1.0.0" ||
+    voice.voiceProfileFingerprint !==
+      "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210" ||
+    voice.providerVoiceId !== "af_heart"
+  ) fail("The Phase 3B.1 real-voice identity was invalid.");
+
+  const tensor = record(voice.tensor, "Phase 3B.1 voice-tensor metadata");
+  exactKeys(tensor, [
+    "relativePath",
+    "byteSize",
+    "sha256",
+    "scalarFormat",
+    "shape",
+    "elementCount"
+  ]);
+  const shape = array(tensor.shape, "Phase 3B.1 voice-tensor shape", 2, 2);
+  if (
+    tensor.relativePath !== "voices/af_heart.bin" ||
+    tensor.byteSize !== 522240 ||
+    tensor.sha256 !==
+      "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b" ||
+    tensor.scalarFormat !== "float32_le" ||
+    shape[0] !== 510 ||
+    shape[1] !== 256 ||
+    tensor.elementCount !== 130560
+  ) fail("The Phase 3B.1 voice-tensor metadata was invalid.");
+
+  const rights = record(voice.rights, "Phase 3B.1 rights metadata");
+  exactKeys(rights, [
+    "rightsRecordId",
+    "rightsRecordRevision",
+    "rightsRecordFingerprint",
+    "rightsState",
+    "consentStatus",
+    "productionExportEligible"
+  ]);
+  if (
+    rights.rightsRecordId !== "kokoro-local-voice-001-rights-v1" ||
+    rights.rightsRecordRevision !== 1 ||
+    rights.rightsRecordFingerprint !==
+      "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038" ||
+    rights.rightsState !== "restricted" ||
+    rights.consentStatus !== "unknown" ||
+    rights.productionExportEligible !== false
+  ) fail("The Phase 3B.1 rights metadata was invalid.");
+
+  const restriction = record(
+    value.restriction,
+    "Phase 3B.1 restriction metadata"
+  );
+  exactKeys(restriction, [
+    "warningText",
+    "warningFingerprint",
+    "activationGovernance",
+    "packagePresentInCi",
+    "activationEligibleInCi",
+    "failClosedReason",
+    "humanListeningStatus",
+    "humanListeningClaimed",
+    "realSynthesisClaimed"
+  ]);
+  if (
+    restriction.warningText !== governedPrivateAuditionWarning ||
+    restriction.warningFingerprint !== governedPrivateAuditionWarningFingerprint ||
+    restriction.activationGovernance !==
+      "restricted_audition_acknowledgement_required" ||
+    restriction.packagePresentInCi !== false ||
+    restriction.activationEligibleInCi !== false ||
+    restriction.failClosedReason !== "model_package_absent" ||
+    restriction.humanListeningStatus !== "pending" ||
+    restriction.humanListeningClaimed !== false ||
+    restriction.realSynthesisClaimed !== false
+  ) fail("The Phase 3B.1 restriction metadata was invalid.");
+
+  const artifactBoundary = record(
+    value.artifactBoundary,
+    "Phase 3B.1 artifact boundary"
+  );
+  exactKeys(artifactBoundary, [
+    "realModelBytesPresent",
+    "realProviderAudioPresent"
+  ]);
+  if (
+    artifactBoundary.realModelBytesPresent !== false ||
+    artifactBoundary.realProviderAudioPresent !== false
+  ) fail("The Phase 3B.1 public artifact boundary was invalid.");
 }
 
 function validateRuntime(raw: unknown): void {

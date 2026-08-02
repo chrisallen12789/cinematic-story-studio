@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import {
   AUDITION_GATE_IDS,
+  GOVERNED_PRIVATE_AUDITION_WARNING,
+  GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
   MODEL_PACKAGE_ACTIONS,
   PRONUNCIATION_SCOPES,
   SPEECH_AUDITION_CONTRACT_VERSION,
@@ -12,6 +14,10 @@ import {
   type AuditionReviewDecision,
   type AuditionSession,
   type AuditionWorkspaceSnapshot,
+  type GovernedLocalVoiceActivationBinding,
+  type GovernedLocalVoiceInventoryRecord,
+  type HumanListeningAttestation,
+  type HumanListeningAttestationRequest,
   type PronunciationDictionary,
   type PronunciationEntry,
   type SpeechPreviewRequest,
@@ -89,6 +95,12 @@ const CLIP_STATES = new Set([
   "invalidated"
 ]);
 const CACHE_STATUSES = new Set(["miss", "verified_hit", "corrupt_miss"]);
+const HUMAN_LISTENING_DISPOSITIONS = new Set([
+  "acceptable",
+  "unacceptable",
+  "needs_changes",
+  "undecided"
+]);
 const MAXIMUM_NORMALIZED_TEXT_CODE_POINTS =
   SPEECH_AUDITION_LIMITS.maximumScriptCodePoints * 3;
 
@@ -338,11 +350,22 @@ export function parseCreateAuditionSessionRequest(
 ): DesktopRequest<CreateAuditionSessionInput> {
   return parseEnvelope(
     raw,
-    ["projectId", "roleId", "evidence", "idempotencyKey"],
+    [
+      "projectId",
+      "roleId",
+      "evidence",
+      "restrictedLocalAuditionActivation",
+      "idempotencyKey"
+    ],
     (payload) => {
       const projectId = identifier(payload.projectId, "projectId");
       identifier(payload.roleId, "roleId");
       validateEvidenceBinding(payload.evidence, projectId);
+      if (payload.restrictedLocalAuditionActivation !== undefined) {
+        validateRestrictedLocalAuditionActivationRequest(
+          payload.restrictedLocalAuditionActivation
+        );
+      }
       idempotencyKey(payload.idempotencyKey);
     }
   ) as DesktopRequest<CreateAuditionSessionInput>;
@@ -541,6 +564,7 @@ export function parseDecideAuditionReviewRequest(
       "decision",
       "rationale",
       "supersedesDecisionId",
+      "listeningAttestation",
       "idempotencyKey"
     ],
     (payload) => {
@@ -561,6 +585,17 @@ export function parseDecideAuditionReviewRequest(
         SPEECH_AUDITION_LIMITS.maximumReviewRationaleCodePoints
       );
       nullableIdentifier(payload.supersedesDecisionId, "supersedesDecisionId");
+      if (payload.listeningAttestation !== undefined) {
+        validateHumanListeningAttestationRequest(payload.listeningAttestation);
+        if (payload.gateId !== "per_role_audition_review") {
+          fail("Only a per-role audition review may carry listening evidence.");
+        }
+        validateListeningDispositionForDecision(
+          payload.decision,
+          record(payload.listeningAttestation, "listening attestation")
+            .disposition
+        );
+      }
       idempotencyKey(payload.idempotencyKey);
     }
   ) as DesktopRequest<DecideAuditionReviewInput>;
@@ -866,6 +901,26 @@ export function validateCreateAuditionSessionResponse(
     expected.evidence,
     "created audition session"
   );
+  const activation = session.governedLocalVoiceActivation;
+  const requestedActivation = expected.restrictedLocalAuditionActivation;
+  if (requestedActivation === undefined) {
+    if (activation !== undefined && activation !== null) {
+      fail("A fixture session returned an unrequested restricted activation.");
+    }
+  } else {
+    if (activation === undefined || activation === null) {
+      fail("The restricted real-local session omitted its activation binding.");
+    }
+    if (
+      activation.acknowledgement.inventoryFingerprint !==
+        requestedActivation.expectedInventoryFingerprint ||
+      activation.acknowledgement.warningFingerprint !==
+        requestedActivation.expectedWarningFingerprint ||
+      activation.acknowledgement.reason !== requestedActivation.reason
+    ) {
+      fail("The session activation did not match the requested acknowledgement.");
+    }
+  }
   return raw as CreateAuditionSessionResponse;
 }
 
@@ -1257,6 +1312,16 @@ export function validateDecideAuditionReviewResponse(
         : "rejected";
   const reviewEvidence = record(review.evidence, "review evidence");
   if (
+    decision.listeningAttestation !== undefined &&
+    decision.listeningAttestation !== null &&
+    (decision.listeningAttestation.auditionClipId !==
+      reviewEvidence.auditionClipId ||
+      decision.listeningAttestation.auditionClipRevision !==
+        reviewEvidence.auditionClipRevision)
+  ) {
+    fail("The listening attestation did not match the review clip evidence.");
+  }
+  if (
     review.revision !== expected.expectedReviewRevision ||
     reviewEvidence.evidenceFingerprint !== expected.expectedEvidenceFingerprint ||
     review.state !== expectedDecision ||
@@ -1276,6 +1341,34 @@ export function validateDecideAuditionReviewResponse(
   ) {
     fail("The returned review did not project the requested immutable decision.");
   }
+  const requestedAttestation = expected.listeningAttestation;
+  const returnedAttestation = decision.listeningAttestation;
+  if (requestedAttestation === undefined) {
+    if (returnedAttestation !== undefined && returnedAttestation !== null) {
+      fail("The decision returned unrequested listening evidence.");
+    }
+  } else {
+    if (returnedAttestation === undefined || returnedAttestation === null) {
+      fail("The real per-role decision omitted its listening attestation.");
+    }
+    if (
+      returnedAttestation.auditionClipId !==
+        requestedAttestation.auditionClipId ||
+      returnedAttestation.auditionClipRevision !==
+        requestedAttestation.auditionClipRevision ||
+      returnedAttestation.auditionClipFingerprint !==
+        requestedAttestation.auditionClipFingerprint ||
+      returnedAttestation.audioArtifactId !==
+        requestedAttestation.audioArtifactId ||
+      returnedAttestation.audioArtifactSha256 !==
+        requestedAttestation.audioArtifactSha256 ||
+      returnedAttestation.listened !== true ||
+      returnedAttestation.disposition !== requestedAttestation.disposition ||
+      returnedAttestation.rationale !== expected.rationale
+    ) {
+      fail("The returned listening attestation did not match the exact request.");
+    }
+  }
   const voiceReadinessSnapshot =
     response.voiceReadinessSnapshot === null
       ? null
@@ -1283,6 +1376,12 @@ export function validateDecideAuditionReviewResponse(
           response.voiceReadinessSnapshot,
           expected.projectId
         );
+  if (
+    requestedAttestation?.disposition === "undecided" &&
+    voiceReadinessSnapshot?.reviewEligible === true
+  ) {
+    fail("An undecided listening record cannot make voice readiness eligible.");
+  }
   validateDecisionResponseVoiceReadinessSnapshot(
     voiceReadinessSnapshot,
     review,
@@ -1549,12 +1648,642 @@ function validateProviderRequest(
 function validateEvidenceBinding(raw: unknown, expectedProjectId: string): void {
   const value = record(raw, "audition evidence");
   const keys = ["projectId", "sourceDocumentId", "sourceRevision", "extractionId", "extractionRevision", "extractedTextSha256", "phase2RunId", "phase2SnapshotId", "phase2SnapshotRevision", "phase2SnapshotFingerprint", "phase2CorrectionSetFingerprint", "castingRunId", "approvedCastSnapshotId", "approvedCastSnapshotRevision", "approvedCastSnapshotFingerprint", "castAssignmentId", "castAssignmentRevision", "voiceProfileId", "voiceProfileVersion", "voiceRuntimeBindingId", "voiceRuntimeBindingFingerprint", "providerVoiceId", "providerId", "providerVersion", "modelId", "modelVersion", "catalogRevisionId", "catalogFingerprint", "rightsRecordId", "rightsRecordRevision", "rightsRecordFingerprint", "pronunciationDictionaryId", "pronunciationDictionaryRevision", "pronunciationDictionaryFingerprint", "runtimeProfileId", "runtimeProfileFingerprint", "modelPackageId", "modelPackageFingerprint", "producerVersion"] as const;
-  exactKeys(value, keys, "audition evidence");
+  exactKeysWithOptional(
+    value,
+    keys,
+    ["governedLocalVoiceActivation"],
+    "audition evidence"
+  );
   ownedProject(value.projectId, expectedProjectId);
   for (const key of ["sourceDocumentId", "extractionId", "phase2RunId", "phase2SnapshotId", "castingRunId", "approvedCastSnapshotId", "castAssignmentId", "voiceProfileId", "voiceRuntimeBindingId", "catalogRevisionId", "rightsRecordId", "pronunciationDictionaryId", "runtimeProfileId", "modelPackageId"] as const) identifier(value[key], key);
   for (const key of ["sourceRevision", "extractionRevision", "phase2SnapshotRevision", "approvedCastSnapshotRevision", "castAssignmentRevision", "rightsRecordRevision", "pronunciationDictionaryRevision"] as const) positiveInteger(value[key], key);
   for (const key of ["extractedTextSha256", "phase2SnapshotFingerprint", "phase2CorrectionSetFingerprint", "approvedCastSnapshotFingerprint", "voiceRuntimeBindingFingerprint", "catalogFingerprint", "rightsRecordFingerprint", "pronunciationDictionaryFingerprint", "runtimeProfileFingerprint", "modelPackageFingerprint"] as const) sha256(value[key], key);
   for (const key of ["voiceProfileVersion", "providerVoiceId", "providerId", "providerVersion", "modelId", "modelVersion", "producerVersion"] as const) boundedText(value[key], key, 128);
+  if (
+    value.governedLocalVoiceActivation !== undefined &&
+    value.governedLocalVoiceActivation !== null
+  ) {
+    const activation = validateGovernedLocalVoiceActivationBinding(
+      value.governedLocalVoiceActivation
+    );
+    validateActivationMatchesEvidence(activation, value, "audition evidence");
+  }
+}
+
+function validateRestrictedLocalAuditionActivationRequest(raw: unknown): void {
+  const value = record(raw, "restricted local audition activation");
+  exactKeys(
+    value,
+    [
+      "expectedInventoryFingerprint",
+      "expectedWarningFingerprint",
+      "reason"
+    ],
+    "restricted local audition activation"
+  );
+  sha256(value.expectedInventoryFingerprint, "expectedInventoryFingerprint");
+  if (
+    value.expectedWarningFingerprint !==
+    GOVERNED_PRIVATE_AUDITION_WARNING_SHA256
+  ) {
+    fail("The restricted-audition warning fingerprint was invalid.");
+  }
+  const reason = boundedText(value.reason, "activation reason", 1_000);
+  if (MARKUP_OR_CONTROL.test(reason)) {
+    fail("The activation reason contained markup or control characters.");
+  }
+}
+
+function validateGovernedLocalVoiceInventory(
+  raw: unknown
+): Record<string, unknown> {
+  const value = record(raw, "governed local voice inventory");
+  exactKeys(
+    value,
+    [
+      "inventoryId",
+      "inventoryRevision",
+      "inventoryFingerprint",
+      "warningText",
+      "warningFingerprint",
+      "items"
+    ],
+    "governed local voice inventory"
+  );
+  identifier(value.inventoryId, "voice inventoryId");
+  positiveInteger(value.inventoryRevision, "voice inventoryRevision");
+  sha256(value.inventoryFingerprint, "voice inventoryFingerprint");
+  if (
+    value.warningText !== GOVERNED_PRIVATE_AUDITION_WARNING ||
+    value.warningFingerprint !== GOVERNED_PRIVATE_AUDITION_WARNING_SHA256
+  ) {
+    fail("The governed voice inventory warning was invalid.");
+  }
+  const items = boundedArray(
+    value.items,
+    "voice inventory items",
+    SPEECH_AUDITION_LIMITS.maximumVoiceInventoryRecords
+  );
+  const recordIds = new Set<string>();
+  const profileIds = new Set<string>();
+  for (const rawItem of items) {
+    const item = validateGovernedLocalVoiceInventoryRecord(rawItem);
+    if (
+      recordIds.has(item.inventoryRecordId) ||
+      profileIds.has(item.voiceProfileId)
+    ) {
+      fail("The governed voice inventory contained duplicate identities.");
+    }
+    recordIds.add(item.inventoryRecordId);
+    profileIds.add(item.voiceProfileId);
+  }
+  return value;
+}
+
+function validateGovernedLocalVoiceInventoryRecord(
+  raw: unknown
+): GovernedLocalVoiceInventoryRecord {
+  const value = record(raw, "governed local voice inventory item");
+  exactKeys(
+    value,
+    [
+      "contractVersion",
+      "inventoryRecordId",
+      "neutralDisplayLabel",
+      "providerId",
+      "providerVersion",
+      "providerVoiceId",
+      "modelId",
+      "modelVersion",
+      "modelPackageId",
+      "modelPackageFingerprint",
+      "voiceProfileId",
+      "voiceProfileVersion",
+      "voiceProfileFingerprint",
+      "catalogRevisionId",
+      "catalogRevisionFingerprint",
+      "voiceTensor",
+      "rights",
+      "language",
+      "locale",
+      "providerDeclaredPresentationCategory",
+      "providerDeclaredMetadataIndependentlyVerified",
+      "technicalCompatibility",
+      "activationEligibility",
+      "activationReasonCode",
+      "knownLimitations",
+      "unresolvedEvidenceCodes",
+      "productionExportEligible",
+      "inventoryFingerprint",
+      "provenance"
+    ],
+    "governed local voice inventory item"
+  );
+  contractVersion(value.contractVersion, "governed voice inventory item");
+  identifier(value.inventoryRecordId, "inventoryRecordId");
+  boundedText(value.neutralDisplayLabel, "neutralDisplayLabel", 120);
+  for (const key of [
+    "providerId",
+    "providerVersion",
+    "providerVoiceId",
+    "modelId",
+    "modelVersion",
+    "voiceProfileVersion"
+  ] as const) {
+    boundedText(value[key], key, 128);
+  }
+  for (const key of [
+    "modelPackageId",
+    "voiceProfileId",
+    "catalogRevisionId"
+  ] as const) {
+    identifier(value[key], key);
+  }
+  for (const key of [
+    "modelPackageFingerprint",
+    "voiceProfileFingerprint",
+    "catalogRevisionFingerprint",
+    "inventoryFingerprint"
+  ] as const) {
+    sha256(value[key], key);
+  }
+  validateGovernedVoiceTensor(value.voiceTensor);
+  const rights = validateGovernedLocalVoiceRights(value.rights);
+  boundedText(value.language, "voice language", 40);
+  nullableBoundedText(value.locale, "voice locale", 40);
+  nullableBoundedText(
+    value.providerDeclaredPresentationCategory,
+    "provider-declared presentation category",
+    80
+  );
+  if (value.providerDeclaredMetadataIndependentlyVerified !== false) {
+    fail("Provider-declared voice metadata claimed independent verification.");
+  }
+  const technicalCompatibility = enumValue(
+    value.technicalCompatibility,
+    new Set(["compatible", "incompatible", "unavailable"]),
+    "technicalCompatibility"
+  );
+  const activationEligibility = enumValue(
+    value.activationEligibility,
+    new Set([
+      "restricted_private_audition",
+      "ineligible_unknown_rights",
+      "ineligible_prohibited",
+      "ineligible_unavailable"
+    ]),
+    "activationEligibility"
+  );
+  if (
+    (activationEligibility === "restricted_private_audition" &&
+      (technicalCompatibility !== "compatible" ||
+        rights.rightsState !== "restricted")) ||
+    (activationEligibility === "ineligible_unknown_rights" &&
+      rights.rightsState !== "unknown") ||
+    (activationEligibility === "ineligible_prohibited" &&
+      rights.rightsState !== "prohibited") ||
+    (activationEligibility === "ineligible_unavailable" &&
+      technicalCompatibility === "compatible")
+  ) {
+    fail("The voice activation eligibility contradicted its technical or rights state.");
+  }
+  boundedCode(value.activationReasonCode, "activationReasonCode");
+  boundedTextArray(
+    value.knownLimitations,
+    "knownLimitations",
+    SPEECH_AUDITION_LIMITS.maximumWarningsPerEntity,
+    512
+  );
+  identifierArray(
+    value.unresolvedEvidenceCodes,
+    "unresolvedEvidenceCodes",
+    SPEECH_AUDITION_LIMITS.maximumWarningsPerEntity
+  );
+  if (value.productionExportEligible !== false) {
+    fail("A governed local voice claimed production-export eligibility.");
+  }
+  validateProvenance(value.provenance, "governed voice inventory provenance");
+  return raw as GovernedLocalVoiceInventoryRecord;
+}
+
+function validateGovernedVoiceTensor(raw: unknown): Record<string, unknown> {
+  const value = record(raw, "governed voice tensor");
+  exactKeys(
+    value,
+    ["relativePath", "byteSize", "sha256", "scalarFormat", "shape", "elementCount"],
+    "governed voice tensor"
+  );
+  const relativePath = boundedText(
+    value.relativePath,
+    "voice tensor relativePath",
+    SPEECH_AUDITION_LIMITS.maximumModelFileRelativePathCodePoints
+  );
+  if (
+    /^(?:[A-Za-z]:|[/\\])|(?:^|[/\\])\.\.(?:[/\\]|$)|\0/u.test(
+      relativePath
+    )
+  ) {
+    fail("The voice tensor contained an unsafe relative path.");
+  }
+  const byteSize = integerBetween(
+    value.byteSize,
+    4,
+    2_147_483_648,
+    "voice tensor byteSize"
+  );
+  sha256(value.sha256, "voice tensor sha256");
+  if (value.scalarFormat !== "float32_le") {
+    fail("The voice tensor scalar format was invalid.");
+  }
+  const shape = boundedArray(value.shape, "voice tensor shape", 8);
+  if (shape.length === 0) fail("The voice tensor shape was empty.");
+  let expectedElements = 1;
+  for (const dimension of shape) {
+    const size = integerBetween(
+      dimension,
+      1,
+      Number.MAX_SAFE_INTEGER,
+      "voice tensor dimension"
+    );
+    expectedElements *= size;
+    if (!Number.isSafeInteger(expectedElements)) {
+      fail("The voice tensor shape exceeded its safe bound.");
+    }
+  }
+  const elementCount = positiveInteger(
+    value.elementCount,
+    "voice tensor elementCount"
+  );
+  if (elementCount !== expectedElements || byteSize !== elementCount * 4) {
+    fail("The voice tensor size did not match its declared shape.");
+  }
+  return value;
+}
+
+function validateGovernedLocalVoiceRights(
+  raw: unknown
+): Record<string, unknown> {
+  const value = record(raw, "governed local voice rights");
+  exactKeys(
+    value,
+    [
+      "rightsRecordId",
+      "rightsRecordRevision",
+      "rightsRecordFingerprint",
+      "rightsState",
+      "consentStatus",
+      "commercialUseClassification",
+      "redistributionClassification",
+      "evidenceReferences"
+    ],
+    "governed local voice rights"
+  );
+  identifier(value.rightsRecordId, "rightsRecordId");
+  positiveInteger(value.rightsRecordRevision, "rightsRecordRevision");
+  sha256(value.rightsRecordFingerprint, "rightsRecordFingerprint");
+  enumValue(
+    value.rightsState,
+    new Set(["restricted", "unknown", "prohibited"]),
+    "rightsState"
+  );
+  enumValue(
+    value.consentStatus,
+    new Set(["restricted", "missing", "unknown", "prohibited"]),
+    "consentStatus"
+  );
+  for (const key of [
+    "commercialUseClassification",
+    "redistributionClassification"
+  ] as const) {
+    enumValue(
+      value[key],
+      new Set(["restricted", "unknown", "prohibited"]),
+      key
+    );
+  }
+  for (const reference of boundedTextArray(
+    value.evidenceReferences,
+    "rights evidenceReferences",
+    SPEECH_AUDITION_LIMITS.maximumWarningsPerEntity,
+    2_048
+  )) {
+    if (/^(?:[A-Za-z]:[\\/]|file:|\\\\)/iu.test(reference)) {
+      fail("A rights evidence reference exposed a local filesystem path.");
+    }
+  }
+  return value;
+}
+
+function validateGovernedLocalVoiceActivationBinding(
+  raw: unknown
+): GovernedLocalVoiceActivationBinding {
+  const value = record(raw, "governed local voice activation binding");
+  exactKeys(
+    value,
+    [
+      "contractVersion",
+      "acknowledgement",
+      "castAssignmentId",
+      "castAssignmentRevision",
+      "castAssignmentFingerprint",
+      "approvedCastSnapshotId",
+      "approvedCastSnapshotRevision",
+      "approvedCastSnapshotFingerprint",
+      "runtimeProfileId",
+      "runtimeProfileFingerprint",
+      "privateLocalAuditionOnly",
+      "productionExportEligible",
+      "bindingFingerprint"
+    ],
+    "governed local voice activation binding"
+  );
+  contractVersion(value.contractVersion, "governed local voice activation");
+  validateRestrictedLocalAuditionAcknowledgement(value.acknowledgement);
+  for (const key of [
+    "castAssignmentId",
+    "approvedCastSnapshotId",
+    "runtimeProfileId"
+  ] as const) {
+    identifier(value[key], key);
+  }
+  positiveInteger(value.castAssignmentRevision, "castAssignmentRevision");
+  positiveInteger(
+    value.approvedCastSnapshotRevision,
+    "approvedCastSnapshotRevision"
+  );
+  for (const key of [
+    "castAssignmentFingerprint",
+    "approvedCastSnapshotFingerprint",
+    "runtimeProfileFingerprint",
+    "bindingFingerprint"
+  ] as const) {
+    sha256(value[key], key);
+  }
+  if (
+    value.privateLocalAuditionOnly !== true ||
+    value.productionExportEligible !== false
+  ) {
+    fail("The governed local activation exceeded private-audition authority.");
+  }
+  return raw as GovernedLocalVoiceActivationBinding;
+}
+
+function validateRestrictedLocalAuditionAcknowledgement(raw: unknown): void {
+  const value = record(raw, "restricted local audition acknowledgement");
+  exactKeys(
+    value,
+    [
+      "contractVersion",
+      "acknowledgementId",
+      "actor",
+      "acknowledgedAt",
+      "reason",
+      "warningText",
+      "warningFingerprint",
+      "inventoryRecordId",
+      "inventoryFingerprint",
+      "providerId",
+      "providerVersion",
+      "modelId",
+      "modelVersion",
+      "modelPackageId",
+      "modelPackageFingerprint",
+      "voiceProfileId",
+      "voiceProfileVersion",
+      "voiceProfileFingerprint",
+      "catalogRevisionId",
+      "catalogRevisionFingerprint",
+      "voiceTensorSha256",
+      "rightsRecordId",
+      "rightsRecordRevision",
+      "rightsRecordFingerprint",
+      "restrictedRightsCorrectionId",
+      "restrictedRightsCorrectionFingerprint",
+      "modelInstallationAcknowledgementEventId",
+      "modelVerificationId",
+      "modelVerificationFingerprint",
+      "privateLocalAuditionOnly",
+      "productionExportAuthorized",
+      "commercialDistributionAuthorized",
+      "marketplaceResaleAuthorized",
+      "cloningAuthorized",
+      "realPersonImitationAuthorized",
+      "acknowledgementFingerprint",
+      "immutable",
+      "provenance"
+    ],
+    "restricted local audition acknowledgement"
+  );
+  contractVersion(value.contractVersion, "restricted audition acknowledgement");
+  for (const key of [
+    "acknowledgementId",
+    "inventoryRecordId",
+    "modelPackageId",
+    "voiceProfileId",
+    "catalogRevisionId",
+    "rightsRecordId",
+    "restrictedRightsCorrectionId",
+    "modelInstallationAcknowledgementEventId",
+    "modelVerificationId"
+  ] as const) {
+    identifier(value[key], key);
+  }
+  const actor = record(value.actor, "restricted audition actor");
+  exactKeys(actor, ["classification", "actorId"], "restricted audition actor");
+  if (actor.classification !== "human") {
+    fail("A restricted audition acknowledgement requires a human actor.");
+  }
+  identifier(actor.actorId, "restricted audition actorId");
+  timestamp(value.acknowledgedAt, "acknowledgedAt");
+  const reason = boundedText(value.reason, "acknowledgement reason", 1_000);
+  if (MARKUP_OR_CONTROL.test(reason)) {
+    fail("The acknowledgement reason contained markup or control characters.");
+  }
+  if (
+    value.warningText !== GOVERNED_PRIVATE_AUDITION_WARNING ||
+    value.warningFingerprint !== GOVERNED_PRIVATE_AUDITION_WARNING_SHA256
+  ) {
+    fail("The restricted audition acknowledgement warning was invalid.");
+  }
+  for (const key of [
+    "providerId",
+    "providerVersion",
+    "modelId",
+    "modelVersion",
+    "voiceProfileVersion"
+  ] as const) {
+    boundedText(value[key], key, 128);
+  }
+  positiveInteger(value.rightsRecordRevision, "rightsRecordRevision");
+  for (const key of [
+    "inventoryFingerprint",
+    "modelPackageFingerprint",
+    "voiceProfileFingerprint",
+    "catalogRevisionFingerprint",
+    "voiceTensorSha256",
+    "rightsRecordFingerprint",
+    "restrictedRightsCorrectionFingerprint",
+    "modelVerificationFingerprint",
+    "acknowledgementFingerprint"
+  ] as const) {
+    sha256(value[key], key);
+  }
+  if (
+    value.privateLocalAuditionOnly !== true ||
+    value.productionExportAuthorized !== false ||
+    value.commercialDistributionAuthorized !== false ||
+    value.marketplaceResaleAuthorized !== false ||
+    value.cloningAuthorized !== false ||
+    value.realPersonImitationAuthorized !== false ||
+    value.immutable !== true
+  ) {
+    fail("The restricted acknowledgement exceeded its private-audition authority.");
+  }
+  const provenance = record(
+    value.provenance,
+    "restricted audition acknowledgement provenance"
+  );
+  validateProvenance(
+    provenance,
+    "restricted audition acknowledgement provenance"
+  );
+  if (provenance.origin !== "human") {
+    fail("The restricted audition acknowledgement provenance was not human.");
+  }
+}
+
+function validateActivationMatchesEvidence(
+  activation: GovernedLocalVoiceActivationBinding,
+  evidence: Record<string, unknown>,
+  label: string
+): void {
+  const acknowledgement = activation.acknowledgement;
+  if (
+    activation.castAssignmentId !== evidence.castAssignmentId ||
+    activation.castAssignmentRevision !== evidence.castAssignmentRevision ||
+    activation.approvedCastSnapshotId !== evidence.approvedCastSnapshotId ||
+    activation.approvedCastSnapshotRevision !==
+      evidence.approvedCastSnapshotRevision ||
+    activation.approvedCastSnapshotFingerprint !==
+      evidence.approvedCastSnapshotFingerprint ||
+    activation.runtimeProfileId !== evidence.runtimeProfileId ||
+    activation.runtimeProfileFingerprint !== evidence.runtimeProfileFingerprint ||
+    acknowledgement.providerId !== evidence.providerId ||
+    acknowledgement.providerVersion !== evidence.providerVersion ||
+    acknowledgement.modelId !== evidence.modelId ||
+    acknowledgement.modelVersion !== evidence.modelVersion ||
+    acknowledgement.modelPackageId !== evidence.modelPackageId ||
+    acknowledgement.modelPackageFingerprint !== evidence.modelPackageFingerprint ||
+    acknowledgement.voiceProfileId !== evidence.voiceProfileId ||
+    acknowledgement.voiceProfileVersion !== evidence.voiceProfileVersion ||
+    acknowledgement.catalogRevisionId !== evidence.catalogRevisionId ||
+    acknowledgement.catalogRevisionFingerprint !== evidence.catalogFingerprint ||
+    acknowledgement.rightsRecordId !== evidence.rightsRecordId ||
+    acknowledgement.rightsRecordRevision !== evidence.rightsRecordRevision ||
+    acknowledgement.rightsRecordFingerprint !== evidence.rightsRecordFingerprint
+  ) {
+    fail(`The governed local activation did not match its ${label}.`);
+  }
+}
+
+function validateHumanListeningAttestationRequest(
+  raw: unknown
+): HumanListeningAttestationRequest {
+  const value = record(raw, "listening attestation");
+  exactKeys(
+    value,
+    [
+      "auditionClipId",
+      "auditionClipRevision",
+      "auditionClipFingerprint",
+      "audioArtifactId",
+      "audioArtifactSha256",
+      "listened",
+      "disposition"
+    ],
+    "listening attestation"
+  );
+  validateHumanListeningAttestationCore(value);
+  return raw as HumanListeningAttestationRequest;
+}
+
+function validateHumanListeningAttestation(
+  raw: unknown
+): HumanListeningAttestation {
+  const value = record(raw, "persisted listening attestation");
+  exactKeys(
+    value,
+    [
+      "auditionClipId",
+      "auditionClipRevision",
+      "auditionClipFingerprint",
+      "audioArtifactId",
+      "audioArtifactSha256",
+      "listened",
+      "disposition",
+      "attestationId",
+      "actor",
+      "recordedAt",
+      "rationale",
+      "attestationFingerprint",
+      "immutable"
+    ],
+    "persisted listening attestation"
+  );
+  validateHumanListeningAttestationCore(value);
+  identifier(value.attestationId, "attestationId");
+  const actor = record(value.actor, "listening attestation actor");
+  exactKeys(actor, ["classification", "actorId"], "listening attestation actor");
+  if (actor.classification !== "human") {
+    fail("A listening attestation requires a human actor.");
+  }
+  identifier(actor.actorId, "listening attestation actorId");
+  timestamp(value.recordedAt, "listening attestation recordedAt");
+  boundedText(
+    value.rationale,
+    "listening attestation rationale",
+    SPEECH_AUDITION_LIMITS.maximumReviewRationaleCodePoints
+  );
+  sha256(value.attestationFingerprint, "attestationFingerprint");
+  if (value.immutable !== true) {
+    fail("Listening attestations must be immutable.");
+  }
+  return raw as HumanListeningAttestation;
+}
+
+function validateHumanListeningAttestationCore(
+  value: Record<string, unknown>
+): void {
+  identifier(value.auditionClipId, "listening auditionClipId");
+  positiveInteger(value.auditionClipRevision, "listening auditionClipRevision");
+  sha256(value.auditionClipFingerprint, "listening auditionClipFingerprint");
+  identifier(value.audioArtifactId, "listening audioArtifactId");
+  sha256(value.audioArtifactSha256, "listening audioArtifactSha256");
+  if (value.listened !== true) {
+    fail("The exact audition clip was not explicitly marked listened.");
+  }
+  enumValue(
+    value.disposition,
+    HUMAN_LISTENING_DISPOSITIONS,
+    "listening disposition"
+  );
+}
+
+function validateListeningDispositionForDecision(
+  decision: unknown,
+  disposition: unknown
+): void {
+  const matchesDecision =
+    decision === "approve" || decision === "approved"
+      ? disposition === "acceptable"
+      : decision === "request_changes" || decision === "changes_requested"
+        ? disposition === "needs_changes" || disposition === "undecided"
+        : decision === "reject" || decision === "rejected"
+          ? disposition === "unacceptable"
+          : false;
+  if (!matchesDecision) {
+    fail("The listening disposition did not match the human review decision.");
+  }
 }
 
 function validateWorkspace(
@@ -1563,7 +2292,12 @@ function validateWorkspace(
   requestedRoleLimit?: number
 ): AuditionWorkspaceSnapshot {
   const value = record(raw, "audition workspace");
-  exactKeys(value, ["contractVersion", "projectId", "prerequisites", "approvedCastSnapshot", "providers", "runtimeProfiles", "runtimeHealth", "runtimeInstances", "modelInstallations", "modelVerifications", "currentDictionary", "roles", "reviews", "voiceReadinessSnapshot", "updatedAt"], "audition workspace");
+  exactKeysWithOptional(
+    value,
+    ["contractVersion", "projectId", "prerequisites", "approvedCastSnapshot", "providers", "runtimeProfiles", "runtimeHealth", "runtimeInstances", "modelInstallations", "modelVerifications", "currentDictionary", "roles", "reviews", "voiceReadinessSnapshot", "updatedAt"],
+    ["voiceInventory"],
+    "audition workspace"
+  );
   if (value.contractVersion !== SPEECH_AUDITION_CONTRACT_VERSION) fail("The speech audition contract version was invalid.");
   ownedProject(value.projectId, expectedProjectId);
   boundedArray(value.prerequisites, "prerequisites", 11).forEach((item) => {
@@ -1609,12 +2343,40 @@ function validateWorkspace(
     sha256(snapshot.fingerprint, "fingerprint");
   }
   const providers = boundedArray(value.providers, "providers", 32);
-  providers.forEach(validateProvider);
-  const providerIds = new Set(
-    providers.map((provider) =>
-      identifier(record(provider, "speech provider").providerId, "providerId")
-    )
-  );
+  const providersById = new Map<string, Record<string, unknown>>();
+  for (const rawProvider of providers) {
+    validateProvider(rawProvider);
+    const provider = record(rawProvider, "speech provider");
+    const providerId = identifier(provider.providerId, "providerId");
+    if (providersById.has(providerId)) {
+      fail("The audition workspace contained duplicate provider descriptors.");
+    }
+    providersById.set(providerId, provider);
+  }
+  const providerIds = new Set(providersById.keys());
+  const inventoryByRecordId = new Map<string, Record<string, unknown>>();
+  if (value.voiceInventory !== undefined) {
+    const inventory = validateGovernedLocalVoiceInventory(value.voiceInventory);
+    for (const rawItem of boundedArray(
+      inventory.items,
+      "voice inventory items",
+      SPEECH_AUDITION_LIMITS.maximumVoiceInventoryRecords
+    )) {
+      const item = record(rawItem, "governed local voice inventory item");
+      const provider = providersById.get(String(item.providerId));
+      if (
+        provider === undefined ||
+        provider.providerClass !== "real_local" ||
+        provider.providerVersion !== item.providerVersion ||
+        provider.productionExportEligible !== false
+      ) {
+        fail(
+          "The voice inventory did not match an export-ineligible real-local provider descriptor."
+        );
+      }
+      inventoryByRecordId.set(String(item.inventoryRecordId), item);
+    }
+  }
   const runtimeProfiles = boundedArray(value.runtimeProfiles, "runtimeProfiles", 32);
   runtimeProfiles.forEach(validateRuntimeProfile);
   const runtimeProfilesById = new Map(
@@ -1730,10 +2492,26 @@ function validateWorkspace(
   if (roles.pageSize !== roleItems.length || roleItems.length > Number(roles.total)) {
     fail("The audition role page metadata did not match its current page.");
   }
-  roleItems.forEach((item) => validateRole(item, expectedProjectId));
-  boundedArray(value.reviews, "reviews", SPEECH_AUDITION_LIMITS.maximumProductionRoles + 4).forEach((item) => validateReview(item, expectedProjectId));
+  roleItems.forEach((item) =>
+    validateRole(item, expectedProjectId, inventoryByRecordId)
+  );
+  const reviews = boundedArray(
+    value.reviews,
+    "reviews",
+    SPEECH_AUDITION_LIMITS.maximumProductionRoles + 4
+  );
+  reviews.forEach((item) => validateReview(item, expectedProjectId));
   if (value.voiceReadinessSnapshot !== null) {
-    validateVoiceReadinessSnapshot(value.voiceReadinessSnapshot, expectedProjectId);
+    const readiness = validateVoiceReadinessSnapshot(
+      value.voiceReadinessSnapshot,
+      expectedProjectId
+    );
+    if (
+      readiness.reviewEligible &&
+      reviews.some(hasCurrentUndecidedListeningDecision)
+    ) {
+      fail("An undecided listening record cannot make voice readiness eligible.");
+    }
   }
   timestamp(value.updatedAt, "updatedAt");
   return raw as AuditionWorkspaceSnapshot;
@@ -2568,13 +3346,13 @@ function validateVoiceRuntimeBinding(raw: unknown): Record<string, unknown> {
   boundedCode(value.sourceProviderId, "sourceProviderId");
   boundedCode(value.sourceProviderVersion, "sourceProviderVersion");
   sha256(value.sourceProviderFingerprint, "sourceProviderFingerprint");
-  boundedCode(value.sourceModelId, "sourceModelId");
+  boundedText(value.sourceModelId, "sourceModelId", 128);
   boundedCode(value.sourceModelVersion, "sourceModelVersion");
   sha256(value.sourceModelFingerprint, "sourceModelFingerprint");
   boundedCode(value.providerId, "providerId");
   boundedCode(value.providerVersion, "providerVersion");
   boundedCode(value.providerVoiceId, "providerVoiceId");
-  boundedCode(value.modelId, "modelId");
+  boundedText(value.modelId, "modelId", 128);
   boundedCode(value.modelVersion, "modelVersion");
   identifier(value.modelPackageId, "modelPackageId");
   sha256(value.modelPackageFingerprint, "modelPackageFingerprint");
@@ -2589,7 +3367,7 @@ function validateVoiceRuntimeBinding(raw: unknown): Record<string, unknown> {
 
 function validateSession(raw: unknown, expectedProjectId: string, expectedRoleId?: string): AuditionSession {
   const value = record(raw, "audition session");
-  exactKeys(
+  exactKeysWithOptional(
     value,
     [
       "contractVersion",
@@ -2622,6 +3400,7 @@ function validateSession(raw: unknown, expectedProjectId: string, expectedRoleId
       "updatedAt",
       "provenance"
     ],
+    ["governedLocalVoiceActivation"],
     "audition session"
   );
   contractVersion(value.contractVersion, "audition session");
@@ -2654,6 +3433,13 @@ function validateSession(raw: unknown, expectedProjectId: string, expectedRoleId
     128
   );
   const binding = validateVoiceRuntimeBinding(value.voiceRuntimeBinding);
+  const activation =
+    value.governedLocalVoiceActivation === undefined ||
+    value.governedLocalVoiceActivation === null
+      ? null
+      : validateGovernedLocalVoiceActivationBinding(
+          value.governedLocalVoiceActivation
+        );
   boundedCode(value.providerId, "providerId");
   boundedCode(value.providerVersion, "providerVersion");
   sha256(value.modelPackageFingerprint, "modelPackageFingerprint");
@@ -2699,6 +3485,38 @@ function validateSession(raw: unknown, expectedProjectId: string, expectedRoleId
     binding.active !== true
   ) {
     fail("The audition session voice runtime binding was inconsistent.");
+  }
+  if (
+    (binding.bindingKind === "declared_fixture_adapter" && activation !== null) ||
+    (binding.bindingKind === "exact_provider_match" && activation === null)
+  ) {
+    fail("The audition session activation did not match its provider binding.");
+  }
+  if (
+    activation !== null &&
+    (activation.castAssignmentId !== value.castAssignmentId ||
+      activation.castAssignmentRevision !== value.castAssignmentRevision ||
+      activation.approvedCastSnapshotId !== value.approvedCastSnapshotId ||
+      activation.approvedCastSnapshotRevision !==
+        value.approvedCastSnapshotRevision ||
+      activation.approvedCastSnapshotFingerprint !==
+        value.approvedCastSnapshotFingerprint ||
+      activation.runtimeProfileFingerprint !== value.runtimeProfileFingerprint ||
+      activation.acknowledgement.providerId !== value.providerId ||
+      activation.acknowledgement.providerVersion !== value.providerVersion ||
+      activation.acknowledgement.modelPackageFingerprint !==
+        value.modelPackageFingerprint ||
+      activation.acknowledgement.voiceProfileId !== binding.voiceProfileId ||
+      activation.acknowledgement.voiceProfileVersion !==
+        binding.voiceProfileVersion ||
+      activation.acknowledgement.voiceProfileFingerprint !==
+        binding.voiceProfileFingerprint ||
+      activation.acknowledgement.modelId !== binding.modelId ||
+      activation.acknowledgement.modelVersion !== binding.modelVersion ||
+      activation.acknowledgement.modelPackageId !== binding.modelPackageId ||
+      activation.runtimeProfileId !== binding.runtimeProfileId)
+  ) {
+    fail("The audition session activation was inconsistent with its frozen binding.");
   }
   return raw as AuditionSession;
 }
@@ -2746,11 +3564,19 @@ function assertSessionMatchesEvidence(
   ) {
     fail(`The ${label} did not match the exact governed evidence.`);
   }
+  if (
+    evidence.governedLocalVoiceActivation !== undefined &&
+    evidence.governedLocalVoiceActivation !== null &&
+    canonicalJsonValue(session.governedLocalVoiceActivation) !==
+      canonicalJsonValue(evidence.governedLocalVoiceActivation)
+  ) {
+    fail(`The ${label} changed its governed local activation evidence.`);
+  }
 }
 
 function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId?: string, expectedRoleId?: string): AuditionClip {
   const value = record(raw, "audition clip");
-  exactKeys(
+  exactKeysWithOptional(
     value,
     [
       "contractVersion",
@@ -2786,6 +3612,7 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
       "createdAt",
       "provenance"
     ],
+    ["governedLocalVoiceActivation", "productionExportEligible"],
     "audition clip"
   );
   contractVersion(value.contractVersion, "audition clip");
@@ -2816,8 +3643,19 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
     value.providerVoiceId,
     "providerVoiceId"
   );
-  enumValue(value.providerClass, PROVIDER_CLASSES, "providerClass");
-  boundedCode(value.modelId, "modelId");
+  const providerClass = enumValue(
+    value.providerClass,
+    PROVIDER_CLASSES,
+    "providerClass"
+  );
+  const activation =
+    value.governedLocalVoiceActivation === undefined ||
+    value.governedLocalVoiceActivation === null
+      ? null
+      : validateGovernedLocalVoiceActivationBinding(
+          value.governedLocalVoiceActivation
+        );
+  boundedText(value.modelId, "modelId", 128);
   boundedCode(value.modelVersion, "modelVersion");
   sha256(value.modelPackageFingerprint, "modelPackageFingerprint");
   sha256(value.runtimeProfileFingerprint, "runtimeProfileFingerprint");
@@ -2868,6 +3706,32 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
   sha256(value.clipFingerprint, "clipFingerprint");
   timestamp(value.createdAt, "createdAt");
   validateProvenance(value.provenance, "audition clip provenance");
+  if (
+    (providerClass === "deterministic_fixture" && activation !== null) ||
+    (providerClass === "real_local" && activation === null)
+  ) {
+    fail("The audition clip activation did not match its provider class.");
+  }
+  if (
+    activation !== null &&
+    (activation.castAssignmentId !== value.castAssignmentId ||
+      activation.castAssignmentRevision !== value.castAssignmentRevision ||
+      activation.runtimeProfileFingerprint !== value.runtimeProfileFingerprint ||
+      activation.acknowledgement.providerId !== value.providerId ||
+      activation.acknowledgement.providerVersion !== value.providerVersion ||
+      activation.acknowledgement.modelId !== value.modelId ||
+      activation.acknowledgement.modelVersion !== value.modelVersion ||
+      activation.acknowledgement.modelPackageFingerprint !==
+        value.modelPackageFingerprint)
+  ) {
+    fail("The audition clip activation did not match its exact provider evidence.");
+  }
+  if (
+    value.productionExportEligible !== undefined &&
+    value.productionExportEligible !== false
+  ) {
+    fail("An audition clip claimed production-export eligibility.");
+  }
 
   const artifact = record(value.audioArtifact, "audio artifact");
   exactKeys(
@@ -3084,6 +3948,16 @@ function validateReview(raw: unknown, expectedProjectId: string): AuditionReview
     const currentDecision =
       decision.reviewId === value.reviewId &&
       decision.evidenceFingerprint === evidence.evidenceFingerprint;
+    const listeningAttestation = decision.listeningAttestation;
+    if (
+      listeningAttestation !== undefined &&
+      listeningAttestation !== null &&
+      (listeningAttestation.auditionClipId !== evidence.auditionClipId ||
+        listeningAttestation.auditionClipRevision !==
+          evidence.auditionClipRevision)
+    ) {
+      fail("The review listening attestation did not match its exact clip evidence.");
+    }
     if (currentDecision && decision.decision !== value.state) {
       fail("The current review decision and review state did not match.");
     }
@@ -3098,6 +3972,27 @@ function validateReview(raw: unknown, expectedProjectId: string): AuditionReview
   }
   timestamp(value.updatedAt, "updatedAt");
   return raw as AuditionReview;
+}
+
+function hasCurrentUndecidedListeningDecision(raw: unknown): boolean {
+  const review = record(raw, "audition review");
+  if (review.latestDecision === null) return false;
+  const decision = record(review.latestDecision, "review decision");
+  const evidence = record(review.evidence, "review evidence");
+  if (
+    decision.reviewId !== review.reviewId ||
+    decision.evidenceFingerprint !== evidence.evidenceFingerprint ||
+    decision.listeningAttestation === undefined ||
+    decision.listeningAttestation === null
+  ) {
+    return false;
+  }
+  return (
+    record(
+      decision.listeningAttestation,
+      "persisted listening attestation"
+    ).disposition === "undecided"
+  );
 }
 
 function validateGateEvidence(
@@ -3158,7 +4053,7 @@ function validateReviewDecision(
   expectedRoleId: unknown
 ): AuditionReviewDecision {
   const value = record(raw, "review decision");
-  exactKeys(
+  exactKeysWithOptional(
     value,
     [
       "contractVersion",
@@ -3177,6 +4072,7 @@ function validateReviewDecision(
       "supersedesDecisionId",
       "provenance"
     ],
+    ["listeningAttestation"],
     "review decision"
   );
   if (value.contractVersion !== SPEECH_AUDITION_CONTRACT_VERSION) {
@@ -3205,6 +4101,26 @@ function validateReviewDecision(
   timestamp(value.decidedAt, "decidedAt");
   if (value.immutable !== true) fail("Review decisions must be immutable.");
   nullableIdentifier(value.supersedesDecisionId, "supersedesDecisionId");
+  if (
+    value.listeningAttestation !== undefined &&
+    value.listeningAttestation !== null
+  ) {
+    const attestation = validateHumanListeningAttestation(
+      value.listeningAttestation
+    );
+    if (
+      value.gateId !== "per_role_audition_review" ||
+      actor.classification !== "human" ||
+      attestation.actor.actorId !== actor.actorId ||
+      attestation.rationale !== value.rationale
+    ) {
+      fail("The listening attestation did not match its human per-role decision.");
+    }
+    validateListeningDispositionForDecision(
+      value.decision,
+      attestation.disposition
+    );
+  }
   validateProvenance(value.provenance, "review decision provenance");
   return raw as AuditionReviewDecision;
 }
@@ -3226,7 +4142,7 @@ function validateVoiceReadinessSnapshot(
   expectedProjectId: string
 ): VoiceReadinessSnapshot {
   const value = record(raw, "voiceReadinessSnapshot");
-  exactKeys(
+  exactKeysWithOptional(
     value,
     [
       "contractVersion",
@@ -3252,6 +4168,7 @@ function validateVoiceReadinessSnapshot(
       "createdAt",
       "immutable"
     ],
+    ["productionExportEligible"],
     "voiceReadinessSnapshot"
   );
   if (value.contractVersion !== SPEECH_AUDITION_CONTRACT_VERSION) {
@@ -3330,6 +4247,12 @@ function validateVoiceReadinessSnapshot(
     value.authorizesFullBookRendering !== false
   ) {
     fail("Voice readiness exceeded the Phase 3B authority boundary.");
+  }
+  if (
+    value.productionExportEligible !== undefined &&
+    value.productionExportEligible !== false
+  ) {
+    fail("Voice readiness claimed production-export eligibility.");
   }
   timestamp(value.createdAt, "createdAt");
   if (value.immutable !== true) fail("Voice readiness snapshots must be immutable.");
@@ -3747,9 +4670,13 @@ function validatePronunciationPlan(raw: unknown, expectedProjectId: string): voi
   validateProvenance(value.provenance, "pronunciation plan provenance");
 }
 
-function validateRole(raw: unknown, expectedProjectId: string): void {
+function validateRole(
+  raw: unknown,
+  expectedProjectId: string,
+  inventoryByRecordId: ReadonlyMap<string, Record<string, unknown>>
+): void {
   const value = record(raw, "audition role");
-  exactKeys(
+  exactKeysWithOptional(
     value,
     [
       "roleId",
@@ -3770,6 +4697,7 @@ function validateRole(raw: unknown, expectedProjectId: string): void {
       "sessionEvidence",
       "generationRequest"
     ],
+    ["governedLocalVoice", "productionExportEligible"],
     "audition role"
   );
   identifier(value.roleId, "roleId");
@@ -3783,6 +4711,22 @@ function validateRole(raw: unknown, expectedProjectId: string): void {
   );
   const voiceProfileId = identifier(value.voiceProfileId, "voiceProfileId");
   boundedText(value.voiceDisplayLabel, "voiceDisplayLabel", 120);
+  const governedLocalVoice =
+    value.governedLocalVoice === undefined || value.governedLocalVoice === null
+      ? null
+      : validateGovernedLocalVoiceInventoryRecord(value.governedLocalVoice);
+  if (governedLocalVoice !== null) {
+    const inventoryRecord = inventoryByRecordId.get(
+      governedLocalVoice.inventoryRecordId
+    );
+    if (
+      inventoryRecord === undefined ||
+      canonicalJsonValue(inventoryRecord) !==
+        canonicalJsonValue(governedLocalVoice)
+    ) {
+      fail("The audition role did not match the governed voice inventory.");
+    }
+  }
   const runtimeBindingStatus = enumValue(
     value.runtimeBindingStatus,
     new Set(["compatible", "incompatible", "unavailable"]),
@@ -3815,7 +4759,51 @@ function validateRole(raw: unknown, expectedProjectId: string): void {
       fail("An unavailable role exposed usable or contradictory runtime evidence.");
     }
   }
-  enumValue(value.rightsState, new Set(["verified", "restricted"]), "rightsState");
+  if (
+    voiceRuntimeBinding !== null &&
+    ((voiceRuntimeBinding.bindingKind === "exact_provider_match" &&
+      governedLocalVoice === null) ||
+      (voiceRuntimeBinding.bindingKind === "declared_fixture_adapter" &&
+        governedLocalVoice !== null))
+  ) {
+    fail("The role provider binding and governed voice projection disagreed.");
+  }
+  const rightsState = enumValue(
+    value.rightsState,
+    new Set(["verified", "restricted"]),
+    "rightsState"
+  );
+  if (
+    governedLocalVoice !== null &&
+    (rightsState !== "restricted" ||
+      governedLocalVoice.rights.rightsState !== "restricted" ||
+      governedLocalVoice.activationEligibility !==
+        "restricted_private_audition" ||
+      governedLocalVoice.voiceProfileId !== voiceProfileId ||
+      (voiceRuntimeBinding !== null &&
+        (voiceRuntimeBinding.bindingKind !== "exact_provider_match" ||
+          governedLocalVoice.providerId !== voiceRuntimeBinding.providerId ||
+          governedLocalVoice.providerVersion !==
+            voiceRuntimeBinding.providerVersion ||
+          governedLocalVoice.providerVoiceId !==
+            voiceRuntimeBinding.providerVoiceId ||
+          governedLocalVoice.modelId !== voiceRuntimeBinding.modelId ||
+          governedLocalVoice.modelVersion !== voiceRuntimeBinding.modelVersion ||
+          governedLocalVoice.modelPackageId !==
+            voiceRuntimeBinding.modelPackageId ||
+          governedLocalVoice.modelPackageFingerprint !==
+            voiceRuntimeBinding.modelPackageFingerprint ||
+          governedLocalVoice.voiceProfileFingerprint !==
+            voiceRuntimeBinding.voiceProfileFingerprint)))
+  ) {
+    fail("The audition role real-local voice binding was inconsistent.");
+  }
+  if (
+    value.productionExportEligible !== undefined &&
+    value.productionExportEligible !== false
+  ) {
+    fail("An audition role claimed production-export eligibility.");
+  }
   nullableIdentifier(value.latestSessionId, "latestSessionId");
   nullableIdentifier(value.latestClipId, "latestClipId");
   enumValue(
@@ -3839,6 +4827,14 @@ function validateRole(raw: unknown, expectedProjectId: string): void {
       voiceProfileId,
       voiceRuntimeBinding
     );
+    const evidence = record(value.sessionEvidence, "role session evidence");
+    if (
+      governedLocalVoice === null &&
+      evidence.governedLocalVoiceActivation !== undefined &&
+      evidence.governedLocalVoiceActivation !== null
+    ) {
+      fail("A fixture role exposed governed real-local activation evidence.");
+    }
   }
   if (value.generationRequest !== null) {
     validateSpeechPreviewRequest(value.generationRequest, expectedProjectId);
@@ -3850,6 +4846,20 @@ function validateRole(raw: unknown, expectedProjectId: string): void {
       voiceProfileId,
       voiceRuntimeBinding
     );
+    const generationEvidence = record(
+      request.evidence,
+      "role generation evidence"
+    );
+    if (
+      (governedLocalVoice === null &&
+        generationEvidence.governedLocalVoiceActivation !== undefined &&
+        generationEvidence.governedLocalVoiceActivation !== null) ||
+      (governedLocalVoice !== null &&
+        (generationEvidence.governedLocalVoiceActivation === undefined ||
+          generationEvidence.governedLocalVoiceActivation === null))
+    ) {
+      fail("The role generation request carried contradictory activation evidence.");
+    }
     if (
       value.latestSessionId === null ||
       request.auditionSessionId !== value.latestSessionId

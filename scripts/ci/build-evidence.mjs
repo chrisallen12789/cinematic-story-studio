@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import {
   lstat,
   mkdir,
+  readdir,
   readFile,
   realpath,
   writeFile,
@@ -24,6 +25,10 @@ export const BUILD_EVIDENCE_ENVIRONMENT = Object.freeze({
   phase3VoiceCastingEvidencePath:
     "CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH",
   phase3bResultPath: "CSS_PHASE3B_PACKAGED_E2E_RESULT_PATH",
+  phase3b1AbsentPackageEvidencePath:
+    "CSS_PHASE3B1_ABSENT_PACKAGE_EVIDENCE_PATH",
+  phase3b1AbsentPackageStepOutcome:
+    "CSS_PHASE3B1_ABSENT_PACKAGE_STEP_OUTCOME",
   stepOutcome: "CSS_PACKAGED_E2E_STEP_OUTCOME",
   runnerName: "CSS_BUILD_EVIDENCE_RUNNER_NAME",
   runnerOs: "CSS_BUILD_EVIDENCE_RUNNER_OS",
@@ -39,10 +44,11 @@ const APP_EXECUTABLE_NAME = "Cinematic Story Studio.exe";
 const SERVICE_EXECUTABLE_NAME = "cinematic-story-service.exe";
 const MAX_HARNESS_RESULT_BYTES = 1024 * 1024;
 const MAX_SECURITY_INPUT_BYTES = 5 * 1024 * 1024;
-const BUILD_EVIDENCE_SCHEMA_VERSION = "6.0.0";
+const MAX_PHASE_3B1_ABSENT_PACKAGE_EVIDENCE_BYTES = 16 * 1024;
+const BUILD_EVIDENCE_SCHEMA_VERSION = "7.0.0";
 const PACKAGED_E2E_RESULT_SCHEMA_VERSION = "4.0.0";
 const PHASE_3_PACKAGED_E2E_RESULT_SCHEMA_VERSION = "5.0.0";
-const PHASE_3B_PACKAGED_E2E_RESULT_SCHEMA_VERSION = "7.0.0";
+const PHASE_3B_PACKAGED_E2E_RESULT_SCHEMA_VERSION = "8.0.0";
 const PHASE_3B_EVIDENCE_CLASSIFICATION =
   "deterministic_fixture_lifecycle_only";
 const PHASE_3B_RUNTIME_PROFILE_ID =
@@ -58,6 +64,121 @@ const PHASE_3B_FIXTURE_MODEL_PACKAGE_ID =
 const PHASE_3B_FIXTURE_MANIFEST_VERSION = "1.0.0";
 const PHASE_3B_FIXTURE_MODEL_PACKAGE_FINGERPRINT =
   "e0352282af67ff3675fe6067a63feca5d9d4fcaeef5a3f12b80a5e4d2c9635d6";
+const PHASE_3B1_SYNTHETIC_METADATA = Object.freeze({
+  catalog: {
+    catalogRevisionId: "governed-local-voice-catalog-v2@2.0.0",
+    catalogRevisionFingerprint:
+      "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc",
+    castingProfileId: "governed-voice-casting-v1@1.0.1",
+    castingProfileFingerprint:
+      "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97",
+    totalVoiceCount: 15,
+    deterministicFixtureVoiceCount: 14,
+    governedRealVoiceCount: 1,
+  },
+  governedRealVoice: {
+    neutralDisplayLabel: "Local Voice 001",
+    providerId: "kokoro-local-onnx",
+    providerVersion: "1.0.0",
+    modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+    modelVersion: "1.0",
+    modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart",
+    modelPackageVersion:
+      "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+    modelPackageFingerprint:
+      "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0",
+    voiceProfileId: "kokoro-local-voice-001",
+    voiceProfileVersion: "1.0.0",
+    voiceProfileFingerprint:
+      "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210",
+    providerVoiceId: "af_heart",
+    tensor: {
+      relativePath: "voices/af_heart.bin",
+      byteSize: 522_240,
+      sha256:
+        "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+      scalarFormat: "float32_le",
+      shape: [510, 256],
+      elementCount: 130_560,
+    },
+    rights: {
+      rightsRecordId: "kokoro-local-voice-001-rights-v1",
+      rightsRecordRevision: 1,
+      rightsRecordFingerprint:
+        "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038",
+      rightsState: "restricted",
+      consentStatus: "unknown",
+      productionExportEligible: false,
+    },
+  },
+  restriction: {
+    warningText:
+      "Private local audition only. This voice is not cleared by Cinematic Story Studio for production export, commercial distribution, marketplace resale, cloning, or real-person imitation.",
+    warningFingerprint:
+      "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645",
+    activationGovernance:
+      "restricted_audition_acknowledgement_required",
+    packagePresentInCi: false,
+    activationEligibleInCi: false,
+    failClosedReason: "model_package_absent",
+    humanListeningStatus: "pending",
+    humanListeningClaimed: false,
+    realSynthesisClaimed: false,
+  },
+  artifactBoundary: {
+    realModelBytesPresent: false,
+    realProviderAudioPresent: false,
+  },
+});
+const PHASE_3B1_ABSENT_PACKAGE_PROOF = Object.freeze({
+  schemaVersion: 1,
+  classification: "verified_absent_package_fail_closed",
+  packagePresent: false,
+  providerId: PHASE_3B_REAL_PROVIDER_ID,
+  modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+  modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart",
+  modelPackageVersion:
+    "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+  manifestFingerprint:
+    "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0",
+  runtimeBindingStatus: "unavailable",
+  runtimeBindingReason: "VERIFIED_ACTIVE_MODEL_PACKAGE_REQUIRED",
+  sessionEvidencePresent: false,
+  generationRequestPresent: false,
+  counts: {
+    auditionSessions: 0,
+    providerDispatches: 0,
+    runtimeInstances: 0,
+    audioArtifacts: 0,
+    auditionClips: 0,
+  },
+  fallbackUsed: false,
+  productionExportEligible: false,
+});
+const PHASE_3B1_ABSENT_PACKAGE_TEST_CASE =
+  "apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py::test_real_provider_fails_closed_when_exact_package_is_absent";
+const PROHIBITED_PUBLIC_MODEL_OR_VOICE_EXTENSIONS = new Set([
+  ".onnx",
+  ".safetensors",
+  ".pt",
+  ".pth",
+  ".npy",
+  ".npz",
+  ".bin",
+]);
+const ALLOWED_ELECTRON_RUNTIME_BINARIES = new Set([
+  "snapshot_blob.bin",
+  "v8_context_snapshot.bin",
+]);
+const PROHIBITED_PUBLIC_AUDIO_EXTENSIONS = new Set([
+  ".aac",
+  ".flac",
+  ".m4a",
+  ".mp3",
+  ".ogg",
+  ".wav",
+]);
+const MAX_PUBLIC_ARTIFACT_INVENTORY_ENTRIES = 100_000;
 const PHASE_3B_ASSERTION_KEYS = Object.freeze([
   "phase0ThroughPhase3aPrerequisitesCurrent",
   "fixtureProviderClearlyClassified",
@@ -83,9 +204,9 @@ const PHASE_3B_GATE_IDS = Object.freeze([
 ]);
 const VOICE_CASTING_CONTRACT_VERSION = "3.0.0";
 const GOVERNED_VOICE_CASTING_PROFILE_ID =
-  "governed-voice-casting-v1@1.0.0";
+  "governed-voice-casting-v1@1.0.1";
 const GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT =
-  "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6";
+  "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97";
 const VOICE_CASTING_PRODUCER_ID =
   "voice-casting-orchestrator@1.0.0";
 const VOICE_RIGHTS_POLICY_ID = "voice-rights-policy-v1";
@@ -94,6 +215,10 @@ const SYNTHETIC_VOICE_CATALOG_REVISION_ID =
   "synthetic-voice-catalog-v1@1.0.0";
 const SYNTHETIC_VOICE_CATALOG_FINGERPRINT =
   "68d116d1f66e4ea4bcceabfd0520fd889cf9da3074ee1b9186c43c285575c25f";
+const GOVERNED_VOICE_CATALOG_REVISION_ID =
+  "governed-local-voice-catalog-v2@2.0.0";
+const GOVERNED_VOICE_CATALOG_FINGERPRINT =
+  "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc";
 const ANALYSIS_CONTRACT_VERSION = "2.0.0";
 const WHOLE_BOOK_ANALYSIS_PROFILE_ID = "whole-book-intelligence-v1";
 const WHOLE_BOOK_ANALYSIS_PROFILE_VERSION = "1.0.0";
@@ -373,6 +498,10 @@ export async function generateBuildEvidence({
     releaseRoot,
     "phase-3b-packaged-e2e-result.json",
   );
+  const expectedPhase3b1AbsentPackageEvidence = path.join(
+    releaseRoot,
+    "phase-3b1-absent-package-evidence.json",
+  );
   const outputPath =
     manifestPath ?? path.join(releaseRoot, "build-evidence.json");
 
@@ -406,7 +535,17 @@ export async function generateBuildEvidence({
     expectedPhase3bResult,
     "Phase 3B packaged E2E result",
   );
+  assertExactPath(
+    packagedE2e.phase3b1AbsentPackageEvidencePath,
+    expectedPhase3b1AbsentPackageEvidence,
+    "Phase 3B.1 absent-package evidence",
+  );
   assertRepositoryChild(root, outputPath, "build-evidence manifest");
+
+  await assertPublicArtifactInventorySafe(canonicalRoot, root, [
+    path.join(releaseRoot, "win-unpacked"),
+    path.dirname(stagedService),
+  ]);
 
   const [
     desktopApplicationEvidence,
@@ -417,6 +556,7 @@ export async function generateBuildEvidence({
     phase3ResultEvidence,
     phase3VoiceCastingEvidenceFile,
     phase3bResultEvidence,
+    phase3b1AbsentPackageEvidenceFile,
     secureIngestEvidence,
     storyAnalysisContractEvidence,
     voiceCatalogEvidence,
@@ -443,6 +583,12 @@ export async function generateBuildEvidence({
       root,
       expectedPhase3bResult,
       "Phase 3B packaged E2E result",
+    ),
+    requiredFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPhase3b1AbsentPackageEvidence,
+      "Phase 3B.1 absent-package evidence",
     ),
     collectSecureIngestEvidence(canonicalRoot, root),
     collectStoryAnalysisContractEvidence(canonicalRoot, root),
@@ -480,6 +626,11 @@ export async function generateBuildEvidence({
     harnessResult,
     phase3HarnessResult,
     voiceCastingContract,
+  );
+  const phase3b1AbsentPackage = await inspectPhase3b1AbsentPackageEvidence(
+    expectedPhase3b1AbsentPackageEvidence,
+    phase3b1AbsentPackageEvidenceFile,
+    packagedE2e.phase3b1AbsentPackageStepOutcome,
   );
   const harnessResultMatchesStepOutcome =
     harnessResult.contractValid &&
@@ -640,6 +791,9 @@ export async function generateBuildEvidence({
       phase2RestartDurabilityProven,
       phase2WholeBookAnalysisProven,
       phase3bLocalSpeechAuditionsProven,
+      phase3b1RealProviderFailsClosedWithoutPackageProven:
+        phase3b1AbsentPackage.testResult === "passed",
+      publicArtifactInventoryExcludesModelVoiceAndAudioData: true,
       packagedE2eEvidenceComplete,
     },
     secureIngest: secureIngestEvidence,
@@ -667,6 +821,7 @@ export async function generateBuildEvidence({
     },
     voiceCastingContract,
     localSpeechAuditionsContract,
+    phase3b1AbsentPackage,
     testTimestamp:
       phase3HarnessResult.completedAt ??
       harnessResult.completedAt ??
@@ -754,6 +909,7 @@ export async function validateBuildEvidenceManifest({
     "packagedE2e",
     "voiceCastingContract",
     "localSpeechAuditionsContract",
+    "phase3b1AbsentPackage",
     "testTimestamp",
     "runner",
   ];
@@ -827,7 +983,15 @@ export async function validateBuildEvidenceManifest({
       releaseRoot,
       "phase-3b-packaged-e2e-result.json",
     ),
+    phase3b1AbsentPackageEvidence: path.join(
+      releaseRoot,
+      "phase-3b1-absent-package-evidence.json",
+    ),
   };
+  await assertPublicArtifactInventorySafe(canonicalRoot, root, [
+    path.join(releaseRoot, "win-unpacked"),
+    path.dirname(expectedPaths.stagedService),
+  ]);
   if (
     !isPlainObject(manifest.artifacts) ||
     !hasExactKeys(manifest.artifacts, [
@@ -849,6 +1013,7 @@ export async function validateBuildEvidenceManifest({
     phase3ResultEvidence,
     phase3VoiceCastingEvidenceFile,
     phase3bResultEvidence,
+    phase3b1AbsentPackageEvidenceFile,
     secureIngest,
     storyAnalysisContract,
     voiceCatalogEvidence,
@@ -901,6 +1066,12 @@ export async function validateBuildEvidenceManifest({
       expectedPaths.phase3bResult,
       "Phase 3B packaged E2E result",
     ),
+    requiredFileEvidence(
+      canonicalRoot,
+      root,
+      expectedPaths.phase3b1AbsentPackageEvidence,
+      "Phase 3B.1 absent-package evidence",
+    ),
     collectSecureIngestEvidence(canonicalRoot, root),
     collectStoryAnalysisContractEvidence(canonicalRoot, root),
     collectSyntheticVoiceCatalogEvidence(canonicalRoot, root),
@@ -938,6 +1109,8 @@ export async function validateBuildEvidenceManifest({
     "phase2RestartDurabilityProven",
     "phase2WholeBookAnalysisProven",
     "phase3bLocalSpeechAuditionsProven",
+    "phase3b1RealProviderFailsClosedWithoutPackageProven",
+    "publicArtifactInventoryExcludesModelVoiceAndAudioData",
     "packagedE2eEvidenceComplete",
   ];
   if (
@@ -1116,6 +1289,22 @@ export async function validateBuildEvidenceManifest({
     phase3HarnessResult,
     voiceCastingContract,
   );
+  const phase3b1AbsentPackage =
+    await inspectPhase3b1AbsentPackageEvidence(
+      expectedPaths.phase3b1AbsentPackageEvidence,
+      phase3b1AbsentPackageEvidenceFile,
+      "success",
+    );
+  if (
+    !jsonValuesEqual(
+      manifest.phase3b1AbsentPackage,
+      phase3b1AbsentPackage,
+    )
+  ) {
+    throw new Error(
+      "The Phase 3B.1 absent-package evidence is invalid or stale.",
+    );
+  }
   if (
     !phase3HarnessResult.contractValid ||
     voiceCastingContract === null ||
@@ -1745,6 +1934,80 @@ function decodeStrictBase64(text) {
   return decoded;
 }
 
+async function assertPublicArtifactInventorySafe(
+  canonicalRoot,
+  repositoryRoot,
+  artifactRoots,
+) {
+  let inspectedEntries = 0;
+  for (const [rootIndex, artifactRoot] of artifactRoots.entries()) {
+    const stack = [artifactRoot];
+    while (stack.length > 0) {
+      const target = stack.pop();
+      if (target === undefined) {
+        continue;
+      }
+      inspectedEntries += 1;
+      if (inspectedEntries > MAX_PUBLIC_ARTIFACT_INVENTORY_ENTRIES) {
+        throw new Error("The public artifact inventory exceeded its bound.");
+      }
+
+      let metadata;
+      try {
+        metadata = await lstat(target);
+      } catch (error) {
+        throw new Error("The public artifact inventory was unreadable.", {
+          cause: error,
+        });
+      }
+      if (metadata.isSymbolicLink()) {
+        throw new Error("The public artifact inventory contained a symlink.");
+      }
+      const canonicalTarget = await realpath(target);
+      assertRepositoryChild(
+        canonicalRoot,
+        canonicalTarget,
+        "public artifact inventory entry",
+      );
+      if (metadata.isDirectory()) {
+        const entries = await readdir(target, { withFileTypes: true });
+        entries.sort((left, right) => left.name.localeCompare(right.name));
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+          const entry = entries[index];
+          if (entry !== undefined) {
+            stack.push(path.join(target, entry.name));
+          }
+        }
+        continue;
+      }
+      if (!metadata.isFile()) {
+        throw new Error(
+          "The public artifact inventory contained a non-file entry.",
+        );
+      }
+
+      const extension = path.extname(target).toLowerCase();
+      const allowedElectronRuntimeBinary =
+        rootIndex === 0 &&
+        normalizedPath(path.dirname(target)) === normalizedPath(artifactRoot) &&
+        ALLOWED_ELECTRON_RUNTIME_BINARIES.has(path.basename(target));
+      if (
+        (PROHIBITED_PUBLIC_MODEL_OR_VOICE_EXTENSIONS.has(extension) &&
+          !allowedElectronRuntimeBinary) ||
+        PROHIBITED_PUBLIC_AUDIO_EXTENSIONS.has(extension)
+      ) {
+        throw new Error(
+          `The public artifact inventory contained prohibited model, voice, or audio data: ${relativeRepositoryPath(
+            repositoryRoot,
+            target,
+            "prohibited public artifact",
+          )}.`,
+        );
+      }
+    }
+  }
+}
+
 async function requiredFileEvidence(
   canonicalRoot,
   repositoryRoot,
@@ -2176,11 +2439,15 @@ async function collectSyntheticVoiceCatalogEvidence(
         "The synthetic voice assignment evidence is invalid.",
       );
     }
+    const governedVoice = {
+      ...structuredClone(voice),
+      catalogRevisionId: GOVERNED_VOICE_CATALOG_REVISION_ID,
+    };
     assignmentEvidenceByVoiceId.set(voice.voiceProfileId, {
       voiceProfileVersion: voice.version,
       voiceEvidenceFingerprint: sha256Bytes(
         Buffer.from(
-          JSON.stringify(canonicalizeJsonValue(voice)),
+          JSON.stringify(canonicalizeJsonValue(governedVoice)),
           "utf8",
         ),
       ),
@@ -2203,16 +2470,97 @@ async function collectSyntheticVoiceCatalogEvidence(
       "The synthetic voice assignment inventory is incomplete.",
     );
   }
+  providers.push({
+    descriptorId: PHASE_3B_REAL_PROVIDER_ID,
+    version: PHASE_3B_REAL_PROVIDER_VERSION,
+  });
+  models.push({
+    descriptorId:
+      PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice.modelId,
+    version:
+      PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice.modelVersion,
+  });
+  assignmentEvidenceByVoiceId.set(
+    PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice.voiceProfileId,
+    {
+      voiceProfileVersion:
+        PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice
+          .voiceProfileVersion,
+      voiceEvidenceFingerprint:
+        PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice
+          .voiceProfileFingerprint,
+      rightsRecordId:
+        PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice.rights
+          .rightsRecordId,
+      rightsRecordRevision:
+        PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice.rights
+          .rightsRecordRevision,
+      rightsEvidenceFingerprint:
+        PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice.rights
+          .rightsRecordFingerprint,
+      rightsState:
+        PHASE_3B1_SYNTHETIC_METADATA.governedRealVoice.rights
+          .rightsState,
+    },
+  );
   return {
     providers,
     models,
     catalogRevision: {
-      catalogRevisionId: catalog.catalogRevision.catalogRevisionId,
-      revision: catalog.catalogRevision.revision,
-      fingerprint: catalog.fingerprint,
+      catalogRevisionId: GOVERNED_VOICE_CATALOG_REVISION_ID,
+      revision: 2,
+      fingerprint: GOVERNED_VOICE_CATALOG_FINGERPRINT,
     },
     rightsPolicyId: catalog.catalogRevision.rightsPolicyId,
     assignmentEvidenceByVoiceId,
+  };
+}
+
+async function inspectPhase3b1AbsentPackageEvidence(
+  resultPath,
+  resultEvidence,
+  stepOutcome,
+) {
+  if (
+    resultEvidence.sizeBytes <= 0 ||
+    resultEvidence.sizeBytes >
+      MAX_PHASE_3B1_ABSENT_PACKAGE_EVIDENCE_BYTES
+  ) {
+    throw new Error(
+      "The Phase 3B.1 absent-package evidence size is invalid.",
+    );
+  }
+  if (normalizeStepOutcome(stepOutcome) !== "success") {
+    throw new Error(
+      "The Phase 3B.1 absent-package test did not pass.",
+    );
+  }
+
+  let value;
+  try {
+    value = JSON.parse(
+      await readBoundedUtf8(
+        resultPath,
+        "Phase 3B.1 absent-package evidence",
+      ),
+    );
+  } catch {
+    throw new Error(
+      "The Phase 3B.1 absent-package evidence is invalid JSON.",
+    );
+  }
+  if (!jsonValuesEqual(value, PHASE_3B1_ABSENT_PACKAGE_PROOF)) {
+    throw new Error(
+      "The Phase 3B.1 absent-package evidence is invalid or stale.",
+    );
+  }
+
+  return {
+    testCase: PHASE_3B1_ABSENT_PACKAGE_TEST_CASE,
+    databaseIsolation: "fresh_pytest_temporary_directory",
+    testResult: "passed",
+    evidenceFile: resultEvidence,
+    proof: structuredClone(PHASE_3B1_ABSENT_PACKAGE_PROOF),
   };
 }
 
@@ -2244,6 +2592,7 @@ async function inspectPhase3bEvidence(
       "status",
       "evidenceClassification",
       "fixtureClaims",
+      "phase3b1SyntheticMetadata",
       "runtime",
       "fixtureProvider",
       "realProviderAdapter",
@@ -2274,6 +2623,10 @@ async function inspectPhase3bEvidence(
       completedAt !== harnessResult.completedAt ||
       completedAt !== phase3HarnessResult.completedAt ||
       !validPhase3bFixtureClaims(value.fixtureClaims) ||
+      !jsonValuesEqual(
+        value.phase3b1SyntheticMetadata,
+        PHASE_3B1_SYNTHETIC_METADATA,
+      ) ||
       !validPhase3bRuntime(value.runtime) ||
       !validPhase3bProvider(
         value.fixtureProvider,
@@ -2323,6 +2676,9 @@ async function inspectPhase3bEvidence(
       completedAt,
       evidenceClassification: value.evidenceClassification,
       fixtureClaims: structuredClone(value.fixtureClaims),
+      phase3b1SyntheticMetadata: structuredClone(
+        value.phase3b1SyntheticMetadata,
+      ),
       runtime: structuredClone(value.runtime),
       fixtureProvider: structuredClone(value.fixtureProvider),
       realProviderAdapter: structuredClone(value.realProviderAdapter),
@@ -3262,9 +3618,9 @@ function sanitizePhase3CastingProof(value) {
     value.profileId !== GOVERNED_VOICE_CASTING_PROFILE_ID ||
     value.profileFingerprint !==
       GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT ||
-    value.catalogRevisionId !== SYNTHETIC_VOICE_CATALOG_REVISION_ID ||
+    value.catalogRevisionId !== GOVERNED_VOICE_CATALOG_REVISION_ID ||
     value.catalogFingerprint !==
-      SYNTHETIC_VOICE_CATALOG_FINGERPRINT ||
+      GOVERNED_VOICE_CATALOG_FINGERPRINT ||
     !isPhase3Id(value.castingRunId) ||
     !isPhase3Id(value.approvedCastSnapshotId) ||
     !Number.isSafeInteger(value.approvedCastSnapshotRevision) ||
@@ -3404,7 +3760,7 @@ function sanitizePhase3RoleVoiceAssignment(
     !Number.isSafeInteger(value.rightsRecordRevision) ||
     value.rightsRecordRevision < 1 ||
     !isSha256(value.rightsEvidenceFingerprint) ||
-    value.catalogRevisionId !== SYNTHETIC_VOICE_CATALOG_REVISION_ID ||
+    value.catalogRevisionId !== GOVERNED_VOICE_CATALOG_REVISION_ID ||
     value.castingProfileFingerprint !==
       GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT ||
     !isSha256(value.phase2SnapshotFingerprint) ||
@@ -5215,11 +5571,11 @@ function normalizeRunner(value) {
     runner.os !== "Windows" ||
     runner.architecture !== "X64" ||
     runner.environment !== "github-hosted" ||
-    runner.workflow !== "Phase 3B Windows CI" ||
+    runner.workflow !== "Phase 3B.1 Windows CI" ||
     runner.job !== "verify-and-build"
   ) {
     throw new Error(
-      "The build-evidence runner does not match the Phase 3B Windows CI job.",
+      "The build-evidence runner does not match the Phase 3B.1 Windows CI job.",
     );
   }
   return runner;
@@ -5418,6 +5774,14 @@ async function main() {
       ),
       phase3bResultPath: environmentValue(
         BUILD_EVIDENCE_ENVIRONMENT.phase3bResultPath,
+      ),
+      phase3b1AbsentPackageEvidencePath: environmentValue(
+        BUILD_EVIDENCE_ENVIRONMENT
+          .phase3b1AbsentPackageEvidencePath,
+      ),
+      phase3b1AbsentPackageStepOutcome: environmentValue(
+        BUILD_EVIDENCE_ENVIRONMENT
+          .phase3b1AbsentPackageStepOutcome,
       ),
       stepOutcome: environmentValue(
         BUILD_EVIDENCE_ENVIRONMENT.stepOutcome,

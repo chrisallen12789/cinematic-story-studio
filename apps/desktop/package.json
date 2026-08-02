@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:packaged": "node scripts/run-packaged-e2e.mjs",
+    "test:e2e:packaged:phase3b1-real": "node scripts/run-phase3b1-real-product-e2e.mjs",
     "build": "pnpm run assets && node scripts/build.mjs",
     "package:dir": "pnpm run build && electron-builder --dir --config electron-builder.yml"
   },

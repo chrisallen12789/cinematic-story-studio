@@ -29,6 +29,7 @@ vi.mock("electron", () => ({
 }));
 
 import { IPC_CHANNELS } from "../shared/desktop-api";
+import { CASTING_PROFILE_FINGERPRINT } from "../shared/casting-api";
 import type { BackendApiClient } from "./api-client";
 import { DesktopMainError } from "./errors";
 import { ActiveProjectSession, registerDesktopIpc } from "./ipc";
@@ -428,6 +429,7 @@ describe("desktop main active project session", () => {
       expectedSnapshotId: "snapshot-a",
       expectedSnapshotRevision: 3,
       expectedSnapshotFingerprint: "c".repeat(64),
+      expectedCastingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
       roleId: "role-a",
       expectedRoleRevision: 2,
       limit: 12
@@ -455,7 +457,7 @@ describe("desktop main active project session", () => {
       expectedSnapshotRevision: 3,
       expectedSnapshotFingerprint: "c".repeat(64),
       expectedCorrectionSetFingerprint: "d".repeat(64),
-      expectedCastingProfileFingerprint: "e".repeat(64),
+      expectedCastingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
       idempotencyKey: "custom-role-create-1"
     };
 

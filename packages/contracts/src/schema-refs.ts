@@ -176,6 +176,20 @@ export const SCHEMA_REFS = {
     "https://schemas.cinematic-story-studio.dev/v3/model-verification-record.schema.json",
   VoiceRuntimeBinding:
     "https://schemas.cinematic-story-studio.dev/v3/voice-runtime-binding.schema.json",
+  GovernedVoiceTensorBinding:
+    "https://schemas.cinematic-story-studio.dev/v3/governed-voice-tensor-binding.schema.json",
+  GovernedLocalVoiceRightsBinding:
+    "https://schemas.cinematic-story-studio.dev/v3/governed-local-voice-rights-binding.schema.json",
+  GovernedLocalVoiceInventoryRecord:
+    "https://schemas.cinematic-story-studio.dev/v3/governed-local-voice-inventory-record.schema.json",
+  GovernedLocalVoiceInventory:
+    "https://schemas.cinematic-story-studio.dev/v3/governed-local-voice-inventory.schema.json",
+  RestrictedLocalAuditionActivationRequest:
+    "https://schemas.cinematic-story-studio.dev/v3/restricted-local-audition-activation-request.schema.json",
+  RestrictedLocalAuditionActivationAcknowledgement:
+    "https://schemas.cinematic-story-studio.dev/v3/restricted-local-audition-activation-acknowledgement.schema.json",
+  GovernedLocalVoiceActivationBinding:
+    "https://schemas.cinematic-story-studio.dev/v3/governed-local-voice-activation-binding.schema.json",
   TextNormalizationPlan:
     "https://schemas.cinematic-story-studio.dev/v3/text-normalization-plan.schema.json",
   PronunciationDictionary:
@@ -208,6 +222,14 @@ export const SCHEMA_REFS = {
     "https://schemas.cinematic-story-studio.dev/v3/audition-review.schema.json",
   AuditionReviewDecision:
     "https://schemas.cinematic-story-studio.dev/v3/audition-review-decision.schema.json",
+  HumanListeningAttestationRequest:
+    "https://schemas.cinematic-story-studio.dev/v3/human-listening-attestation-request.schema.json",
+  HumanListeningAttestation:
+    "https://schemas.cinematic-story-studio.dev/v3/human-listening-attestation.schema.json",
+  CreateAuditionSessionRequest:
+    "https://schemas.cinematic-story-studio.dev/v3/create-audition-session-request.schema.json",
+  DecideAuditionReviewRequest:
+    "https://schemas.cinematic-story-studio.dev/v3/decide-audition-review-request.schema.json",
   VoiceReadinessSnapshot:
     "https://schemas.cinematic-story-studio.dev/v3/voice-readiness-snapshot.schema.json",
   AuditionRoleStatus:

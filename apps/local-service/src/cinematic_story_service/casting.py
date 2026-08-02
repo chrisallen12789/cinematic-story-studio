@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import heapq
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.resources import files
 from typing import Any, Final, Literal
 
 from .errors import ServiceError
+from .model_packages import KOKORO_LOCAL_ONNX_MANIFEST
 from .util import canonical_json, request_fingerprint, stable_id
 
 CASTING_CONTRACT_VERSION: Final = "3.0.0"
-CASTING_PROFILE_ID: Final = "governed-voice-casting-v1@1.0.0"
-CASTING_PROFILE_VERSION: Final = "1.0.0"
+LEGACY_CASTING_PROFILE_ID: Final = "governed-voice-casting-v1@1.0.0"
+LEGACY_CASTING_PROFILE_VERSION: Final = "1.0.0"
+CASTING_PROFILE_ID: Final = "governed-voice-casting-v1@1.0.1"
+CASTING_PROFILE_VERSION: Final = "1.0.1"
 CASTING_PRODUCER_ID: Final = "voice-casting-orchestrator@1.0.0"
 CASTING_PRODUCER_VERSION: Final = "1.0.0"
 CASTING_PRODUCER_RECORDED_AT: Final = "2026-01-01T00:00:00Z"
@@ -120,19 +124,36 @@ COMPATIBILITY_RULE_IDS: Final = (
     "declared_metadata_only",
 )
 
-RIGHTS_ELIGIBILITY_RULE_IDS: Final = (
+LEGACY_RIGHTS_ELIGIBILITY_RULE_IDS: Final = (
     "verified_eligible",
     "restricted_requires_acknowledgement",
     "unknown_ineligible",
     "prohibited_ineligible",
 )
+RIGHTS_ELIGIBILITY_RULE_IDS: Final = (
+    *LEGACY_RIGHTS_ELIGIBILITY_RULE_IDS,
+    "restricted_private_audition_pending_evidence",
+)
+
+GOVERNED_VOICE_CATALOG_REVISION_ID: Final = "governed-local-voice-catalog-v2@2.0.0"
+GOVERNED_KOKORO_VOICE_PROFILE_ID: Final = "kokoro-local-voice-001"
+GOVERNED_KOKORO_VOICE_PROFILE_VERSION: Final = "1.0.0"
+GOVERNED_KOKORO_RIGHTS_RECORD_ID: Final = "kokoro-local-voice-001-rights-v1"
+GOVERNED_KOKORO_MODEL_ID: Final = "onnx-community/Kokoro-82M-v1.0-ONNX"
+GOVERNED_KOKORO_VOICE_TENSOR_PATH: Final = "voices/af_heart.bin"
+GOVERNED_KOKORO_VOICE_TENSOR_SHAPE: Final = (510, 256)
+GOVERNED_KOKORO_VOICE_TENSOR_FORMAT: Final = "little_endian_float32"
 
 CompatibilityStatus = Literal["eligible", "conditional", "ineligible", "unknown"]
 
 
-def _profile_values() -> dict[str, Any]:
+def _profile_values(
+    *,
+    profile_id: str = CASTING_PROFILE_ID,
+    rights_eligibility_rules: tuple[str, ...] = RIGHTS_ELIGIBILITY_RULE_IDS,
+) -> dict[str, Any]:
     return {
-        "profileId": CASTING_PROFILE_ID,
+        "profileId": profile_id,
         "castingContractVersion": CASTING_CONTRACT_VERSION,
         "producerId": CASTING_PRODUCER_ID,
         "rightsPolicyId": RIGHTS_POLICY_VERSION,
@@ -143,7 +164,7 @@ def _profile_values() -> dict[str, Any]:
         "softPreferences": list(SOFT_PREFERENCE_IDS),
         "compatibilityRules": list(COMPATIBILITY_RULE_IDS),
         "conflictRules": list(CASTING_CONFLICT_CATEGORIES),
-        "rightsEligibilityRules": list(RIGHTS_ELIGIBILITY_RULE_IDS),
+        "rightsEligibilityRules": list(rights_eligibility_rules),
         "explanationRequired": True,
         "limits": {
             "defaultPageSize": DEFAULT_CASTING_PAGE_SIZE,
@@ -164,6 +185,11 @@ def _profile_values() -> dict[str, Any]:
 
 CASTING_PROFILE_VALUES: Final = _profile_values()
 CASTING_PROFILE_FINGERPRINT: Final = request_fingerprint(CASTING_PROFILE_VALUES)
+LEGACY_CASTING_PROFILE_VALUES: Final = _profile_values(
+    profile_id=LEGACY_CASTING_PROFILE_ID,
+    rights_eligibility_rules=LEGACY_RIGHTS_ELIGIBILITY_RULE_IDS,
+)
+LEGACY_CASTING_PROFILE_FINGERPRINT: Final = request_fingerprint(LEGACY_CASTING_PROFILE_VALUES)
 
 
 def casting_profile() -> dict[str, Any]:
@@ -201,6 +227,22 @@ def _identifier(value: Any) -> str:
         or not value
         or len(value) > 128
         or any(not (character.isalnum() or character in "._-@") for character in value)
+    ):
+        raise _invalid_catalog()
+    return value
+
+
+def _model_identifier(value: Any) -> str:
+    """Accept an exact provider repository model ID without widening other IDs."""
+
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 160
+        or value.startswith("/")
+        or value.endswith("/")
+        or "//" in value
+        or any(not (character.isalnum() or character in "._-/@") for character in value)
     ):
         raise _invalid_catalog()
     return value
@@ -290,7 +332,10 @@ def _catalog_range(
     minimum: float,
     maximum: float,
     unit: str | None = None,
-) -> tuple[float, float]:
+    nullable: bool = False,
+) -> tuple[float, float] | None:
+    if value is None and nullable:
+        return None
     result = _object(value)
     expected = {"minimum", "maximum"} | ({"unit"} if unit is not None else set())
     if set(result) != expected or (unit is not None and result.get("unit") != unit):
@@ -594,7 +639,7 @@ def validate_catalog(payload: Any) -> VoiceCatalog:
         )
         _catalog_contract(model)
         provider_id = _identifier(model.get("providerId"))
-        model_id = _identifier(model.get("modelId"))
+        model_id = _model_identifier(model.get("modelId"))
         pair = (provider_id, model_id)
         if provider_id not in provider_ids or pair in model_pairs or model_id in model_ids:
             raise _invalid_catalog()
@@ -707,7 +752,7 @@ def validate_catalog(payload: Any) -> VoiceCatalog:
         voice_ids.add(voice_id)
         voices_by_id[voice_id] = voice
         provider_id = _identifier(voice.get("providerId"))
-        model_id = _identifier(voice.get("modelId"))
+        model_id = _model_identifier(voice.get("modelId"))
         if provider_id not in provider_ids or (provider_id, model_id) not in model_pairs:
             raise _invalid_catalog()
         _identifier(voice.get("providerVoiceId"))
@@ -726,6 +771,7 @@ def validate_catalog(payload: Any) -> VoiceCatalog:
             voice.get("agePresentationRange"),
             minimum=0,
             maximum=120,
+            nullable=True,
         )
         _catalog_range(
             voice.get("speakingRateRange"),
@@ -733,7 +779,12 @@ def validate_catalog(payload: Any) -> VoiceCatalog:
             maximum=4.0,
             unit="multiplier",
         )
-        _catalog_range(voice.get("energyRange"), minimum=0, maximum=1)
+        _catalog_range(
+            voice.get("energyRange"),
+            minimum=0,
+            maximum=1,
+            nullable=True,
+        )
         _state(
             voice.get("vocalPresentation"),
             frozenset(
@@ -997,6 +1048,8 @@ def validate_catalog(payload: Any) -> VoiceCatalog:
 
 
 def load_synthetic_catalog() -> VoiceCatalog:
+    """Load the immutable Phase 3A v1 fixture for historical verification."""
+
     try:
         resource = files("cinematic_story_service").joinpath(
             "catalogs",
@@ -1006,6 +1059,277 @@ def load_synthetic_catalog() -> VoiceCatalog:
     except Exception as exc:
         raise _invalid_catalog() from exc
     return validate_catalog(payload)
+
+
+def _governed_kokoro_catalog_records() -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+]:
+    recorded_at = "2026-08-02T00:00:00Z"
+    provenance = {
+        "origin": "local_catalog",
+        "producerId": "repository-governed-voice-catalog",
+        "producerVersion": "2.0.0",
+        "recordedAt": recorded_at,
+        "inputFingerprint": KOKORO_LOCAL_ONNX_MANIFEST.fingerprint,
+        "sourceRevisionId": KOKORO_LOCAL_ONNX_MANIFEST.source_revision,
+    }
+    provider = {
+        "contractVersion": CASTING_CONTRACT_VERSION,
+        "providerId": KOKORO_LOCAL_ONNX_MANIFEST.provider_id,
+        "providerVersion": KOKORO_LOCAL_ONNX_MANIFEST.provider_version,
+        "providerType": "local",
+        "runtimeAvailability": "available",
+        "catalogAvailability": "available",
+        "synthesisImplemented": True,
+        "networkUseRequired": False,
+        "credentialsRequired": False,
+        "supportedOperatingSystems": ["windows"],
+        "supportedLanguages": ["en"],
+        "outputCapability": {
+            "formats": ["wav"],
+            "sampleRatesHz": [24_000],
+        },
+        "rightsMetadataCapabilities": [
+            "license_identifier",
+            "commercial_use",
+            "attribution",
+            "distribution_limits",
+            "consent",
+            "effective_dates",
+            "evidence_reference",
+        ],
+        "healthStatus": "healthy",
+        "provenance": provenance,
+    }
+    model = {
+        "contractVersion": CASTING_CONTRACT_VERSION,
+        "modelId": GOVERNED_KOKORO_MODEL_ID,
+        "providerId": KOKORO_LOCAL_ONNX_MANIFEST.provider_id,
+        "modelName": "Kokoro 82M v1.0 ONNX Q8",
+        "modelVersion": KOKORO_LOCAL_ONNX_MANIFEST.model_version,
+        "capability": {
+            "supportedLanguages": ["en"],
+            "supportedLocales": ["en-US"],
+            "expressiveControls": ["pace"],
+            "speakingRateRange": {
+                "minimum": 0.5,
+                "maximum": 2.0,
+                "unit": "multiplier",
+            },
+            "pitchControl": "none",
+            "styleControl": "none",
+            "outputCapability": {
+                "formats": ["wav"],
+                "sampleRatesHz": [24_000],
+            },
+        },
+        "executionLocation": "local",
+        "licenseClassification": "restricted",
+        "availability": "available",
+        "deprecated": False,
+        "provenance": provenance,
+    }
+    voice = {
+        "contractVersion": CASTING_CONTRACT_VERSION,
+        "voiceProfileId": GOVERNED_KOKORO_VOICE_PROFILE_ID,
+        "providerId": KOKORO_LOCAL_ONNX_MANIFEST.provider_id,
+        "modelId": GOVERNED_KOKORO_MODEL_ID,
+        "providerVoiceId": KOKORO_LOCAL_ONNX_MANIFEST.voice_id,
+        "catalogRevisionId": GOVERNED_VOICE_CATALOG_REVISION_ID,
+        "displayLabel": "Local Voice 001",
+        "language": "en",
+        "locale": "en-US",
+        "accentOrDialect": "Provider-declared American English; not independently verified",
+        "agePresentationRange": None,
+        "vocalPresentation": "unspecified",
+        "vocalTexture": "unspecified",
+        "pitchRange": "unspecified",
+        "speakingRateRange": {
+            "minimum": 0.5,
+            "maximum": 2.0,
+            "unit": "multiplier",
+        },
+        "energyRange": None,
+        "expressiveRange": [],
+        "narrationSuitability": "unknown",
+        "dialogueSuitability": "unknown",
+        "longFormSuitability": "unknown",
+        "characterRoleSuitability": [],
+        "maximumRecommendedWords": None,
+        "knownLimitations": [
+            "private_local_audition_only",
+            "human_listening_required",
+            "production_export_ineligible",
+            "voice_rights_evidence_incomplete",
+            "provider_declared_categories_not_independently_verified",
+            "single_voice_package",
+        ],
+        "rightsRecordId": GOVERNED_KOKORO_RIGHTS_RECORD_ID,
+        "rightsState": "restricted",
+        "licenseScope": (
+            "Private local audition only; production and redistribution are not cleared."
+        ),
+        "commercialUse": "restricted",
+        "attributionRequired": True,
+        "voiceCloningClassification": "unknown",
+        "consentStatus": "unknown",
+        "metadataSimilarityGroup": None,
+        "reuseRiskGroup": "kokoro-local-single-voice",
+        "version": GOVERNED_KOKORO_VOICE_PROFILE_VERSION,
+        "state": "active",
+        "provenance": provenance,
+    }
+    rights = {
+        "contractVersion": CASTING_CONTRACT_VERSION,
+        "rightsRecordId": GOVERNED_KOKORO_RIGHTS_RECORD_ID,
+        "voiceProfileId": GOVERNED_KOKORO_VOICE_PROFILE_ID,
+        "providerId": KOKORO_LOCAL_ONNX_MANIFEST.provider_id,
+        "revision": 1,
+        "state": "restricted",
+        "licenseIdentifier": "Apache-2.0 model metadata; voice-tensor rights incomplete",
+        "rightsBasis": (
+            "Official upstream and conversion metadata identify permissive model licensing, "
+            "but the exact voice tensor lacks complete performer-consent, identity, likeness, "
+            "dataset-chain, redistribution, and sublicensing evidence."
+        ),
+        "commercialUsePermission": "restricted",
+        "attributionRequirement": "required",
+        "geographicLimitations": ["unknown"],
+        "distributionLimitations": [
+            "private_local_audition_only",
+            "production_export_prohibited",
+            "commercial_distribution_not_cleared",
+            "marketplace_resale_prohibited",
+            "raw_model_redistribution_not_authorized",
+            "sublicensing_not_authorized",
+        ],
+        "voiceCloningStatus": "not_permitted",
+        "consentStatus": "unknown",
+        "effectiveDate": None,
+        "expiresAt": None,
+        "evidenceReference": (
+            "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/"
+            "tree/1939ad2a8e416c0acfeecc08a694d14ef25f2231"
+        ),
+        "humanVerificationStatus": "pending",
+        "provenance": provenance,
+    }
+    return provider, model, voice, rights
+
+
+(
+    _GOVERNED_KOKORO_PROVIDER,
+    _GOVERNED_KOKORO_MODEL,
+    _GOVERNED_KOKORO_VOICE,
+    _GOVERNED_KOKORO_RIGHTS,
+) = _governed_kokoro_catalog_records()
+GOVERNED_KOKORO_PROVIDER_FINGERPRINT: Final = (
+    "1928f3ce835fb32ffd988f1509e05ba4a28449d45a3f04d5582d641ebd657971"
+)
+GOVERNED_KOKORO_MODEL_FINGERPRINT: Final = (
+    "56b5ec0464874cd6f445947846e1ea1f558d0ad38cf01594070ded4c12007024"
+)
+GOVERNED_KOKORO_VOICE_PROFILE_FINGERPRINT: Final = (
+    "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210"
+)
+GOVERNED_KOKORO_RIGHTS_RECORD_FINGERPRINT: Final = (
+    "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038"
+)
+
+
+def _governed_voice_catalog_payload() -> dict[str, Any]:
+    try:
+        resource = files("cinematic_story_service").joinpath(
+            "catalogs",
+            "synthetic_voice_catalog.v1.json",
+        )
+        payload = json.loads(resource.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise _invalid_catalog() from exc
+    root = deepcopy(_object(payload))
+    revision = _object(root.get("catalogRevision"))
+    revision.update(
+        {
+            "catalogRevisionId": GOVERNED_VOICE_CATALOG_REVISION_ID,
+            "revision": 2,
+            "semanticVersion": "2.0.0",
+            "createdAt": "2026-08-02T00:00:00Z",
+            "provenance": {
+                "origin": "local_catalog",
+                "producerId": "repository-governed-voice-catalog",
+                "producerVersion": "2.0.0",
+                "recordedAt": "2026-08-02T00:00:00Z",
+                "inputFingerprint": KOKORO_LOCAL_ONNX_MANIFEST.fingerprint,
+                "sourceRevisionId": KOKORO_LOCAL_ONNX_MANIFEST.source_revision,
+            },
+        }
+    )
+    providers = _objects(root.get("providers"))
+    models = _objects(root.get("models"))
+    voices = _objects(root.get("voices"))
+    rights = _objects(root.get("rights"))
+    for voice in voices:
+        voice["catalogRevisionId"] = GOVERNED_VOICE_CATALOG_REVISION_ID
+    providers.append(deepcopy(_GOVERNED_KOKORO_PROVIDER))
+    models.append(deepcopy(_GOVERNED_KOKORO_MODEL))
+    voices.append(deepcopy(_GOVERNED_KOKORO_VOICE))
+    rights.append(deepcopy(_GOVERNED_KOKORO_RIGHTS))
+    revision["providerDescriptorIds"] = [str(value["providerId"]) for value in providers]
+    revision["modelDescriptorIds"] = [str(value["modelId"]) for value in models]
+    revision["voiceProfileIds"] = [str(value["voiceProfileId"]) for value in voices]
+    root.pop("fingerprint", None)
+    revision.pop("catalogFingerprint", None)
+    fingerprint = request_fingerprint(root)
+    root["fingerprint"] = fingerprint
+    revision["catalogFingerprint"] = fingerprint
+    return root
+
+
+GOVERNED_VOICE_CATALOG_FINGERPRINT: Final = (
+    "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc"
+)
+
+
+def load_governed_voice_catalog() -> VoiceCatalog:
+    """Load immutable catalog v2 while retaining the v1 fixture as history."""
+
+    if (
+        request_fingerprint(_GOVERNED_KOKORO_PROVIDER) != GOVERNED_KOKORO_PROVIDER_FINGERPRINT
+        or request_fingerprint(_GOVERNED_KOKORO_MODEL) != GOVERNED_KOKORO_MODEL_FINGERPRINT
+        or request_fingerprint(_GOVERNED_KOKORO_VOICE) != GOVERNED_KOKORO_VOICE_PROFILE_FINGERPRINT
+        or request_fingerprint(_GOVERNED_KOKORO_RIGHTS) != GOVERNED_KOKORO_RIGHTS_RECORD_FINGERPRINT
+    ):
+        raise _invalid_catalog()
+    catalog = validate_catalog(_governed_voice_catalog_payload())
+    if catalog.fingerprint != GOVERNED_VOICE_CATALOG_FINGERPRINT:
+        raise _invalid_catalog()
+    return catalog
+
+
+def governed_private_audition_binding_is_exact(
+    *,
+    voice: dict[str, Any],
+    rights: dict[str, Any],
+    provider: dict[str, Any],
+    model: dict[str, Any],
+) -> bool:
+    """Recognize only the exact pending-rights profile admitted by profile 1.0.1."""
+
+    return (
+        request_fingerprint(voice) == GOVERNED_KOKORO_VOICE_PROFILE_FINGERPRINT
+        and request_fingerprint(rights) == GOVERNED_KOKORO_RIGHTS_RECORD_FINGERPRINT
+        and request_fingerprint(provider) == GOVERNED_KOKORO_PROVIDER_FINGERPRINT
+        and request_fingerprint(model) == GOVERNED_KOKORO_MODEL_FINGERPRINT
+        and voice.get("voiceProfileId") == GOVERNED_KOKORO_VOICE_PROFILE_ID
+        and rights.get("rightsRecordId") == GOVERNED_KOKORO_RIGHTS_RECORD_ID
+        and rights.get("state") == "restricted"
+        and rights.get("commercialUsePermission") == "restricted"
+        and rights.get("consentStatus") == "unknown"
+        and rights.get("humanVerificationStatus") == "pending"
+    )
 
 
 def _payload(record: dict[str, Any]) -> dict[str, Any]:
@@ -1598,6 +1922,7 @@ def _rule(
 
 @dataclass(frozen=True, slots=True)
 class _HardConstraintFacts:
+    governed_private_audition: bool
     language_ok: bool | None
     provider_available: bool
     model_available: bool
@@ -1616,6 +1941,19 @@ class _HardConstraintFacts:
 
     @property
     def hard_results(self) -> tuple[bool | None, ...]:
+        declared_capabilities_result: bool | None = (
+            None
+            if self.governed_private_audition
+            else (
+                self.narration_ok
+                and self.dialogue_ok
+                and self.commercial_ok
+                and self.role_capability_ok
+            )
+        )
+        role_length_result: bool | None = (
+            None if self.governed_private_audition else self.long_form_ok and self.word_count_ok
+        )
         return (
             self.language_ok,
             self.provider_available,
@@ -1624,13 +1962,8 @@ class _HardConstraintFacts:
             self.rights_known,
             self.consent_ok,
             self.voice_available,
-            (
-                self.narration_ok
-                and self.dialogue_ok
-                and self.commercial_ok
-                and self.role_capability_ok
-            ),
-            self.long_form_ok and self.word_count_ok,
+            declared_capabilities_result,
+            role_length_result,
         )
 
     @property
@@ -1651,6 +1984,12 @@ def _hard_constraint_facts(
     model: dict[str, Any],
     rights_reference_time: datetime | None = None,
 ) -> _HardConstraintFacts:
+    governed_private_audition = governed_private_audition_binding_is_exact(
+        voice=voice,
+        rights=rights,
+        provider=provider,
+        model=model,
+    )
     role_type = str(role["roleType"])
     requirements = _object(role["performanceRequirements"])
     languages = _string_values(
@@ -1757,6 +2096,7 @@ def _hard_constraint_facts(
         or approximate_words <= maximum_words
     )
     return _HardConstraintFacts(
+        governed_private_audition=governed_private_audition,
         language_ok=language_ok,
         provider_available=provider_available,
         model_available=model_available,
@@ -1809,6 +2149,15 @@ def compatibility_assessment(
     role_capability_ok = facts.role_capability_ok
     long_form_ok = facts.long_form_ok
     word_count_ok = facts.word_count_ok
+    governed_private_audition = facts.governed_private_audition
+    declared_capabilities_result: bool | None = (
+        None
+        if governed_private_audition
+        else narration_ok and dialogue_ok and commercial_ok and role_capability_ok
+    )
+    role_length_result: bool | None = (
+        None if governed_private_audition else long_form_ok and word_count_ok
+    )
 
     hard_results = [
         _rule(
@@ -1843,7 +2192,12 @@ def compatibility_assessment(
             "rights_not_prohibited",
             passed=rights_not_prohibited,
             kind="hard",
-            explanation="Recorded rights are not prohibited."
+            explanation=(
+                "The exact fingerprint-bound exception permits only a restricted private "
+                "local audition; it grants no broader rights."
+            )
+            if governed_private_audition
+            else "Recorded rights are not prohibited."
             if rights_not_prohibited
             else "Recorded rights prohibit use.",
         ),
@@ -1852,7 +2206,10 @@ def compatibility_assessment(
             passed=rights_known,
             kind="hard",
             explanation=(
-                "The rights and commercial-use states are declared."
+                "The exact fingerprint-bound private-audition exception applies; rights and "
+                "commercial clearance remain restricted and incomplete."
+                if governed_private_audition
+                else "The rights and commercial-use states are declared."
                 if rights_known is True
                 else "Rights or commercial-use eligibility remains unknown."
                 if rights_known is None
@@ -1864,7 +2221,10 @@ def compatibility_assessment(
             passed=consent_ok,
             kind="hard",
             explanation=(
-                "The recorded consent state meets declared requirements."
+                "The exact fingerprint-bound private-audition exception applies; performer "
+                "consent remains unknown and is not verified."
+                if governed_private_audition
+                else "The recorded consent state meets declared requirements."
                 if consent_ok is True
                 else "Consent eligibility remains unknown."
                 if consent_ok is None
@@ -1882,17 +2242,28 @@ def compatibility_assessment(
         ),
         _rule(
             "declared_capabilities",
-            passed=(narration_ok and dialogue_ok and commercial_ok and role_capability_ok),
+            passed=declared_capabilities_result,
             kind="hard",
-            explanation="Declared role capabilities and commercial scope are compatible."
+            explanation=(
+                "The exact fingerprint-bound exception permits a short private audition only; "
+                "role capabilities and commercial scope remain unverified or restricted."
+            )
+            if governed_private_audition
+            else "Declared role capabilities and commercial scope are compatible."
             if narration_ok and dialogue_ok and commercial_ok and role_capability_ok
             else "The role requires a capability or scope the voice does not declare.",
         ),
         _rule(
             "role_length_suitability",
-            passed=long_form_ok and word_count_ok,
+            passed=role_length_result,
             kind="hard",
-            explanation="Declared long-form suitability matches the workload."
+            explanation=(
+                "The exact fingerprint-bound exception permits only bounded short audition "
+                "text; long-form suitability remains unknown and full-book rendering is not "
+                "authorized."
+            )
+            if governed_private_audition
+            else "Declared long-form suitability matches the workload."
             if long_form_ok and word_count_ok
             else "The role workload requires long-form suitability.",
         ),
@@ -1961,17 +2332,25 @@ def compatibility_assessment(
         ),
         _rule(
             "narration_suitability",
-            passed=narration_ok,
+            passed=None if governed_private_audition else narration_ok,
             kind="soft",
             weight=7,
-            explanation="Declared narration suitability is visible as a preference.",
+            explanation=(
+                "Narration suitability remains unknown pending human listening."
+                if governed_private_audition
+                else "Declared narration suitability is visible as a preference."
+            ),
         ),
         _rule(
             "dialogue_suitability",
-            passed=dialogue_ok,
+            passed=None if governed_private_audition else dialogue_ok,
             kind="soft",
             weight=7,
-            explanation="Declared dialogue suitability is visible as a preference.",
+            explanation=(
+                "Dialogue suitability remains unknown pending human listening."
+                if governed_private_audition
+                else "Declared dialogue suitability is visible as a preference."
+            ),
         ),
         _rule(
             "expressive_range",
@@ -2063,19 +2442,38 @@ def compatibility_assessment(
         ),
         _rule(
             "long_form_preference",
-            passed=long_form_ok and word_count_ok,
+            passed=None if governed_private_audition else long_form_ok and word_count_ok,
             kind="soft",
             weight=6,
-            explanation="Declared long-form suitability matches the workload."
+            explanation=(
+                "Long-form suitability remains unknown; this exception permits only a bounded "
+                "short private audition."
+            )
+            if governed_private_audition
+            else "Declared long-form suitability matches the workload."
             if long_form_ok and word_count_ok
             else "Long-form suitability is limited for this workload.",
         ),
     ]
     hard_failed = any(value["result"] == "fail" for value in hard_results)
-    hard_unknown = any(value["result"] == "unknown" for value in hard_results)
+    hard_unknown_ids = {
+        str(value["ruleId"]) for value in hard_results if value["result"] == "unknown"
+    }
+    governed_private_audition_unknowns = {
+        "rights_known",
+        "required_consent",
+        "declared_capabilities",
+        "role_length_suitability",
+    }
     if hard_failed:
         status: CompatibilityStatus = "ineligible"
-    elif hard_unknown:
+    elif (
+        governed_private_audition
+        and hard_unknown_ids
+        and hard_unknown_ids <= governed_private_audition_unknowns
+    ):
+        status = "conditional"
+    elif hard_unknown_ids:
         status = "unknown"
     elif rights_state == "restricted" or voice_state == "deprecated":
         status = "conditional"
@@ -2091,8 +2489,12 @@ def compatibility_assessment(
     elif status == "unknown":
         score = min(score, 49)
     explanation = (
-        "Deterministic declared-metadata assessment; it is not an artistic "
-        "correctness or acoustic-similarity claim."
+        "Exact fingerprint-bound restricted private-audition exception; rights, consent, "
+        "capabilities, and long-form suitability remain unverified or unknown, and no "
+        "full-book or production use is authorized."
+        if governed_private_audition
+        else "Deterministic declared-metadata assessment; it is not an artistic correctness "
+        "or acoustic-similarity claim."
     )
     values = {
         "compatibilityStatus": status,
@@ -2110,7 +2512,7 @@ def compatibility_assessment(
         ),
         "providerAvailability": provider_available,
         "modelAvailability": model_available,
-        "longFormSuitability": long_form_ok,
+        "longFormSuitability": None if governed_private_audition else long_form_ok,
         "explanation": explanation,
         "inputFingerprint": input_fingerprint,
     }
@@ -2961,7 +3363,8 @@ def validate_casting_result(
             or candidate.get("languageEligibility") not in {"eligible", "ineligible", "unknown"}
             or not isinstance(candidate.get("providerAvailability"), bool)
             or not isinstance(candidate.get("modelAvailability"), bool)
-            or not isinstance(candidate.get("longFormSuitability"), bool)
+            or candidate.get("longFormSuitability") is not None
+            and not isinstance(candidate.get("longFormSuitability"), bool)
             or not non_empty_text(candidate.get("explanation"))
             or candidate.get("inputFingerprint") != expected_input_fingerprint
             or not isinstance(rank, int)

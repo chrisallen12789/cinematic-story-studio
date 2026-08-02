@@ -93,6 +93,7 @@ import {
 } from "../../src/verification/owned-process-network-observation";
 import {
   phase3bAssertionKeys,
+  phase3b1SyntheticMetadataEvidence,
   phase3bFixtureEvidenceClassification,
   phase3bPackagedE2eResultEnvironment,
   phase3bPackagedE2eSchemaVersion,
@@ -106,6 +107,17 @@ import {
   type Phase3bRestartEvidence,
   type Phase3bWorkflowEvidence
 } from "./phase3b-local-speech-auditions";
+import {
+  completePrivateListeningPackage,
+  phase3b1PrivateEvidenceRootEnvironment,
+  phase3b1RealModelPackageZipEnvironment,
+  phase3b1SourceHeadEnvironment,
+  preservePhase3b1PrivateReplayState,
+  provePhase3b1RestartPersistence,
+  requirePhase3b1LocalInputs,
+  runPhase3b1RealProductPathWorkflow,
+  type Phase3b1LocalInputs
+} from "./phase3b1-real-product-path";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -137,7 +149,37 @@ test.describe("packaged desktop verification", () => {
   );
 
   test("runs the synthetic persistence flow in the packaged application", async () => {
-    test.setTimeout(900_000);
+    const realModelPackageConfigured = hasEnvironmentValue(
+      phase3b1RealModelPackageZipEnvironment
+    );
+    const privateEvidenceRootConfigured = hasEnvironmentValue(
+      phase3b1PrivateEvidenceRootEnvironment
+    );
+    const sourceHeadConfigured = hasEnvironmentValue(
+      phase3b1SourceHeadEnvironment
+    );
+    if (
+      new Set([
+        realModelPackageConfigured,
+        privateEvidenceRootConfigured,
+        sourceHeadConfigured
+      ]).size !== 1
+    ) {
+      throw new Error(
+        `Set all or none of ${phase3b1RealModelPackageZipEnvironment}, ${phase3b1PrivateEvidenceRootEnvironment}, and ${phase3b1SourceHeadEnvironment}.`
+      );
+    }
+    const runRealProductPath = realModelPackageConfigured;
+    test.setTimeout(runRealProductPath ? 1_800_000 : 900_000);
+    const phase3b1Inputs: Phase3b1LocalInputs | null = runRealProductPath
+      ? await requirePhase3b1LocalInputs(
+          requiredEnvironment(phase3b1RealModelPackageZipEnvironment),
+          requiredEnvironment(phase3b1PrivateEvidenceRootEnvironment)
+        )
+      : null;
+    const phase3b1SourceHead = runRealProductPath
+      ? requireSourceHead(requiredEnvironment(phase3b1SourceHeadEnvironment))
+      : null;
     const packaged = await requirePackagedExecutable(
       requiredEnvironment(packagedExecutableEnvironment)
     );
@@ -172,12 +214,20 @@ test.describe("packaged desktop verification", () => {
     let preexistingProcesses: readonly ProcessIdentity[] | null = null;
     let first: ElectronApplication | null = null;
     let second: ElectronApplication | null = null;
+    let third: ElectronApplication | null = null;
+    let fourth: ElectronApplication | null = null;
     let firstOwnership: LaunchOwnership | null = null;
     let secondOwnership: LaunchOwnership | null = null;
+    let thirdOwnership: LaunchOwnership | null = null;
+    let fourthOwnership: LaunchOwnership | null = null;
     let firstOwnershipSampler: OwnershipSampler | null = null;
     let secondOwnershipSampler: OwnershipSampler | null = null;
+    let thirdOwnershipSampler: OwnershipSampler | null = null;
+    let fourthOwnershipSampler: OwnershipSampler | null = null;
     let firstShutdownEvidencePath: string | null = null;
     let secondShutdownEvidencePath: string | null = null;
+    let thirdShutdownEvidencePath: string | null = null;
+    let fourthShutdownEvidencePath: string | null = null;
     let operationError: Error | null = null;
     let failureStage: PackagedFailureStage | null = null;
     let failureCode: PackagedFailureCode | null = null;
@@ -285,6 +335,16 @@ test.describe("packaged desktop verification", () => {
         isolatedUserDataPath,
         "packaged-e2e-service-shutdown-2.json"
       );
+      if (phase3b1Inputs !== null) {
+        thirdShutdownEvidencePath = path.join(
+          isolatedUserDataPath,
+          "phase3b1-real-service-shutdown-3.json"
+        );
+        fourthShutdownEvidencePath = path.join(
+          isolatedUserDataPath,
+          "phase3b1-real-service-shutdown-4.json"
+        );
+      }
       await Promise.all([
         mkdir(isolatedPaths.localAppData, { recursive: true }),
         mkdir(isolatedPaths.roamingAppData, { recursive: true }),
@@ -781,6 +841,161 @@ test.describe("packaged desktop verification", () => {
       phase3Workflow.flowRecorder.complete();
       second = null;
       secondOwnership = null;
+
+      if (
+        phase3b1Inputs !== null &&
+        phase3b1SourceHead !== null &&
+        thirdShutdownEvidencePath !== null &&
+        fourthShutdownEvidencePath !== null
+      ) {
+        const beforeThirdLaunch = await queryRelevantProcesses();
+        third = await launchPackaged(
+          packaged.executablePath,
+          { ...isolatedPaths },
+          thirdShutdownEvidencePath
+        );
+        thirdOwnership = await establishRootOwnership(
+          third,
+          beforeThirdLaunch,
+          packaged
+        );
+        const thirdPage = await third.firstWindow();
+        await expect(
+          thirdPage.getByText("Backend ready", { exact: true }).first()
+        ).toBeVisible({ timeout: 45_000 });
+        thirdOwnership = await expandOwnership(thirdOwnership, true);
+        thirdOwnershipSampler = startOwnershipSampler(thirdOwnership);
+        const phase3b1Workflow = await runPhase3b1RealProductPathWorkflow(
+          thirdPage,
+          third,
+          phase3b1Inputs
+        );
+        const completedThirdOwnershipSampler = thirdOwnershipSampler;
+        thirdOwnershipSampler = null;
+        await completedThirdOwnershipSampler.stop();
+        thirdOwnership = await bindPhase3bProviderWorkerOwnership(
+          thirdOwnership,
+          phase3b1Workflow.liveRuntimeInstance.workerPid,
+          phase3b1Workflow.liveRuntimeInstance.parentPid
+        );
+        const realNetworkObservation =
+          await requireNoOwnedPythonExternalEndpoints(
+            thirdOwnership,
+            phase3b1Workflow.liveRuntimeInstance.workerPid,
+            phase3b1Workflow.liveRuntimeInstance.parentPid
+          );
+        const thirdExitProof = await closeOwnedElectron(
+          third,
+          thirdOwnership,
+          thirdShutdownEvidencePath
+        );
+        const realRuntimeExit = provePhase3bRuntimeShutdown(
+          thirdExitProof.runtimeShutdownEvidence,
+          phase3b1Workflow.liveRuntimeInstance
+        );
+        const thirdLaunchProof = phase3b1LocalLaunchProof(
+          3,
+          thirdOwnership,
+          thirdExitProof
+        );
+        third = null;
+        thirdOwnership = null;
+
+        const beforeFourthLaunch = await queryRelevantProcesses();
+        fourth = await launchPackaged(
+          packaged.executablePath,
+          { ...isolatedPaths },
+          fourthShutdownEvidencePath
+        );
+        fourthOwnership = await establishRootOwnership(
+          fourth,
+          beforeFourthLaunch,
+          packaged
+        );
+        const fourthPage = await fourth.firstWindow();
+        await expect(
+          fourthPage.getByText("Backend ready", { exact: true }).first()
+        ).toBeVisible({ timeout: 45_000 });
+        fourthOwnership = await expandOwnership(fourthOwnership, true);
+        fourthOwnershipSampler = startOwnershipSampler(fourthOwnership);
+        const phase3b1RestartEvidence = await provePhase3b1RestartPersistence(
+          fourthPage,
+          phase3b1Workflow.evidence
+        );
+        const completedFourthOwnershipSampler = fourthOwnershipSampler;
+        fourthOwnershipSampler = null;
+        await completedFourthOwnershipSampler.stop();
+        fourthOwnership = await expandOwnership(fourthOwnership, true);
+        const fourthExitProof = await closeOwnedElectron(
+          fourth,
+          fourthOwnership,
+          fourthShutdownEvidencePath
+        );
+        const fourthLaunchProof = phase3b1LocalLaunchProof(
+          4,
+          fourthOwnership,
+          fourthExitProof
+        );
+        fourth = null;
+        fourthOwnership = null;
+
+        if (isolationRoot === null) {
+          throw new Error("The isolated private replay state was unavailable.");
+        }
+        await preservePhase3b1PrivateReplayState(
+          isolationRoot,
+          phase3b1Workflow.listeningPackage,
+          packaged.version
+        );
+        const listeningPackagePath = await completePrivateListeningPackage(
+          phase3b1Workflow.listeningPackage,
+          {
+            schemaVersion: 1,
+            completedAt: new Date().toISOString(),
+            status: "passed",
+            sourceHeadSha: phase3b1SourceHead,
+            packagedVersion: packaged.version,
+            executable:
+              `release/${packaged.version}/win-unpacked/${appExecutableName}`,
+            workflow: phase3b1Workflow.evidence,
+            restart: phase3b1RestartEvidence,
+            process: {
+              launches: [thirdLaunchProof, fourthLaunchProof],
+              providerRuntimeExit: realRuntimeExit,
+              networkObservation: realNetworkObservation,
+              exactOwnedProcessesExited: true,
+              forcedTerminationUsed: false,
+              unrelatedProcessesInspected: false,
+              unrelatedProcessesTerminated: false
+            },
+            privateListeningPackage: {
+              directoryName: phase3b1Workflow.listeningPackage.directoryName,
+              replayStateDirectoryName:
+                phase3b1Workflow.listeningPackage.replayStateDirectoryName,
+              replayLauncherFileName:
+                phase3b1Workflow.listeningPackage.replayLauncherFileName,
+              isolatedDesktopStateRetained: true,
+              listeningIndexSha256:
+                phase3b1Workflow.listeningPackage.indexSha256,
+              listeningScorecardSha256:
+                phase3b1Workflow.listeningPackage.scorecardSha256,
+              committed: false,
+              uploaded: false
+            },
+            claims: {
+              humanListeningStatus: "pending",
+              humanListeningClaimed: false,
+              humanPerceivedQualityClaimed: false,
+              productionExportEligible: false,
+              commercialClearanceClaimed: false,
+              consentClaimed: false
+            }
+          }
+        );
+        process.stdout.write(
+          `PHASE3B1_PRIVATE_LISTENING_PACKAGE=${listeningPackagePath}\n`
+        );
+      }
     } catch (error) {
       operationError =
         error instanceof Error
@@ -795,6 +1010,8 @@ test.describe("packaged desktop verification", () => {
       }
     } finally {
       for (const sampler of [
+        fourthOwnershipSampler,
+        thirdOwnershipSampler,
         secondOwnershipSampler,
         firstOwnershipSampler
       ]) {
@@ -805,6 +1022,8 @@ test.describe("packaged desktop verification", () => {
         }
       }
       for (const [application, ownership, shutdownEvidencePath] of [
+        [fourth, fourthOwnership, fourthShutdownEvidencePath],
+        [third, thirdOwnership, thirdShutdownEvidencePath],
         [second, secondOwnership, secondShutdownEvidencePath],
         [first, firstOwnership, firstShutdownEvidencePath]
       ] as const) {
@@ -1205,6 +1424,9 @@ async function launchPackaged(
   environment.TMP = isolatedPaths.temporaryDirectory;
   delete environment.CSS_DESKTOP_DEV_URL;
   delete environment.CSS_E2E_DATA_DIR;
+  delete environment[phase3b1RealModelPackageZipEnvironment];
+  delete environment[phase3b1PrivateEvidenceRootEnvironment];
+  delete environment[phase3b1SourceHeadEnvironment];
   environment[packagedShutdownEvidenceEnvironment] =
     shutdownEvidencePath;
   environment[phase3bRuntimeShutdownEvidenceEnvironment] = "1";
@@ -1859,6 +2081,58 @@ function machineLaunchEvidence(
   };
 }
 
+function phase3b1LocalLaunchProof(
+  launch: 3 | 4,
+  ownership: LaunchOwnership,
+  exitProof: ExitProof
+) {
+  const ownedPids = [...exitProof.ownedPids].sort(
+    (left, right) => left - right
+  );
+  const expectedPids = ownership.processes
+    .map((item) => item.pid)
+    .sort((left, right) => left - right);
+  if (
+    !exitProof.graceful ||
+    exitProof.electronExitCode !== 0 ||
+    exitProof.forcedPids.length !== 0 ||
+    exitProof.remainingPids.length !== 0 ||
+    exitProof.serviceShutdown === null ||
+    ownedPids.join(",") !== expectedPids.join(",") ||
+    !ownership.processes.some((item) => item.kind === "app") ||
+    !ownership.processes.some((item) => item.kind === "service")
+  ) {
+    throw new Error(
+      `The exact Phase 3B.1 owned-process exit proof for launch ${launch} was incomplete.`
+    );
+  }
+  return {
+    launch,
+    preexistingRelevantProcesses: ownership.baseline
+      .map(redactPreexistingProcess)
+      .sort(compareEvidenceProcess),
+    ownedProcesses: ownership.processes.map((item) => ({
+      pid: item.pid,
+      parentPid: item.parentPid,
+      kind: item.kind === "app" ? "electron" : item.kind,
+      executableName: item.name,
+      creationIdentity: item.creationDate,
+      goneAfterShutdown: true
+    })),
+    electron: {
+      launcherPid: ownership.launcherPid,
+      rootPid: ownership.rootPid,
+      exitCode: 0,
+      forceKillUsed: false
+    },
+    service: { ...exitProof.serviceShutdown },
+    forcedPids: [],
+    remainingPids: [],
+    unrelatedProcessesInspected: false,
+    unrelatedProcessesTerminated: false
+  } as const;
+}
+
 function phase3LaunchShutdownProof(
   launch: 1 | 2,
   ownership: LaunchOwnership,
@@ -2271,6 +2545,7 @@ function buildPhase3bMachineResult({
       productionExportEligible: false,
       humanListeningClaimed: false
     },
+    phase3b1SyntheticMetadata: phase3b1SyntheticMetadataEvidence,
     runtime: {
       ...workflow.runtime,
       runtimeInstanceIds: sortedUniqueStrings([
@@ -2358,6 +2633,15 @@ function requiredEnvironment(name: string): string {
     throw new Error(`${name} is required.`);
   }
   return value.trim();
+}
+
+function requireSourceHead(value: string): string {
+  if (!/^[a-f0-9]{40}$/u.test(value)) {
+    throw new Error(
+      `${phase3b1SourceHeadEnvironment} must be an exact lowercase Git commit SHA.`
+    );
+  }
+  return value;
 }
 
 function hasEnvironmentValue(name: string): boolean {

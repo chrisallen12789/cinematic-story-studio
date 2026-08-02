@@ -830,7 +830,7 @@ describe("Phase 0 desktop workspace", () => {
     expect(
       screen.getByRole("heading", { name: "Phase 2 prerequisite status" })
     ).toBeVisible();
-    expect(screen.getByText("governed-voice-casting-v1@1.0.0")).toBeVisible();
+    expect(screen.getByText("governed-voice-casting-v1@1.0.1")).toBeVisible();
     expect(api.casting.getCatalog).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "project-1", limit: 50 })
     );

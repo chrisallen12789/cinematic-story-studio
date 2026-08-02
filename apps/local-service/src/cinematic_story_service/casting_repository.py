@@ -20,6 +20,8 @@ from .casting import (
     CASTING_PROFILE_VALUES,
     CASTING_PROFILE_VERSION,
     DEFAULT_CASTING_PAGE_SIZE,
+    LEGACY_CASTING_PROFILE_FINGERPRINT,
+    LEGACY_CASTING_PROFILE_ID,
     MAX_CASTING_CONFLICTS,
     MAX_CASTING_CORRECTIONS_PER_RUN,
     MAX_CASTING_PAGE_SIZE,
@@ -30,7 +32,8 @@ from .casting import (
     compatibility_assessment,
     generate_candidates,
     generate_pairwise_candidate_conflicts,
-    load_synthetic_catalog,
+    governed_private_audition_binding_is_exact,
+    load_governed_voice_catalog,
     rights_record_is_current,
 )
 from .database import Database
@@ -302,7 +305,7 @@ class CastingRepository:
         self.database = database
         self.projects = projects
         self.story_intelligence = story_intelligence
-        self.catalog = load_synthetic_catalog()
+        self.catalog = load_governed_voice_catalog()
         self._review_refresh_lock = RLock()
 
     @staticmethod
@@ -543,7 +546,11 @@ class CastingRepository:
                 catalog_fingerprint=self.catalog.fingerprint,
                 provider_set_fingerprint=request_fingerprint(list(self.catalog.providers)),
                 rights_policy_version=RIGHTS_POLICY_VERSION,
-                source_kind="development_fixture",
+                source_kind=(
+                    "local_static"
+                    if revision.get("provenance", {}).get("origin") == "local_catalog"
+                    else "development_fixture"
+                ),
                 active=True,
                 provenance_json=canonical_json(revision["provenance"]),
                 created_at=str(revision["createdAt"]),
@@ -1940,7 +1947,11 @@ class CastingRepository:
                     "available" if candidate["modelAvailability"] else "unavailable"
                 ),
                 long_form_suitability=(
-                    "suitable" if candidate["longFormSuitability"] else "unsuitable"
+                    "suitable"
+                    if candidate["longFormSuitability"] is True
+                    else "unsuitable"
+                    if candidate["longFormSuitability"] is False
+                    else "unknown"
                 ),
                 conflict_warnings_json=canonical_json(
                     conflict_ids_by_candidate[str(candidate["candidateId"])]
@@ -2549,7 +2560,11 @@ class CastingRepository:
                         "available" if generated_candidate["modelAvailability"] else "unavailable"
                     ),
                     long_form_suitability=(
-                        "suitable" if generated_candidate["longFormSuitability"] else "unsuitable"
+                        "suitable"
+                        if generated_candidate["longFormSuitability"] is True
+                        else "unsuitable"
+                        if generated_candidate["longFormSuitability"] is False
+                        else "unknown"
                     ),
                     conflict_warnings_json=canonical_json(
                         conflict_ids_by_candidate[str(generated_candidate["candidateId"])]
@@ -3042,7 +3057,6 @@ class CastingRepository:
                 or candidate.language_eligibility != "eligible"
                 or candidate.provider_availability != "available"
                 or candidate.model_availability != "available"
-                or candidate.long_form_suitability in {"unsuitable", "unknown"}
             ):
                 blockers.append(f"ineligible-candidate:{role.id}:{voice.profile_id}")
             elif (
@@ -3104,6 +3118,22 @@ class CastingRepository:
             ):
                 blockers.append(f"provider-model-changed:{role.id}:{voice.profile_id}")
             elif current_rights_record is not None:
+                governed_private_audition = governed_private_audition_binding_is_exact(
+                    voice=current_voice,
+                    rights=current_rights_record,
+                    provider=current_provider,
+                    model=current_model,
+                )
+                if (
+                    candidate is not None
+                    and candidate.long_form_suitability in {"unsuitable", "unknown"}
+                    and not (
+                        candidate.long_form_suitability == "unknown" and governed_private_audition
+                    )
+                ):
+                    blocker = f"ineligible-candidate:{role.id}:{voice.profile_id}"
+                    if blocker not in blockers:
+                        blockers.append(blocker)
                 current_assessment = compatibility_assessment(
                     role=self._role_wire(session, role),
                     voice=current_voice,
@@ -3955,6 +3985,18 @@ class CastingRepository:
                 providers_by_id.get(voice.provider_descriptor_id) if voice is not None else None
             )
             model = models_by_id.get(voice.model_descriptor_id) if voice is not None else None
+            governed_private_audition = (
+                catalog_voice is not None
+                and catalog_rights is not None
+                and catalog_provider is not None
+                and catalog_model is not None
+                and governed_private_audition_binding_is_exact(
+                    voice=catalog_voice,
+                    rights=catalog_rights,
+                    provider=catalog_provider,
+                    model=catalog_model,
+                )
+            )
             if (
                 voice is None
                 or current_rights is None
@@ -3991,9 +4033,15 @@ class CastingRepository:
                 != request_fingerprint(self._catalog_rights_material(catalog_rights))
                 or current_rights.rights_state not in {"verified", "restricted"}
                 or current_rights.commercial_use_status in {"unknown", "prohibited"}
-                or current_rights.consent_status in {"missing", "unknown", "prohibited"}
-                or current_rights.human_verification_status
-                not in {"verified", "not_required_fixture"}
+                or (
+                    current_rights.consent_status in {"missing", "unknown", "prohibited"}
+                    and not governed_private_audition
+                )
+                or (
+                    current_rights.human_verification_status
+                    not in {"verified", "not_required_fixture"}
+                    and not governed_private_audition
+                )
                 or not rights_record_is_current(self._stored_rights_material(current_rights))
             ):
                 return False
@@ -4468,6 +4516,16 @@ class CastingRepository:
                 "The casting job is unavailable.",
             )
         catalog = self._catalog_identity(session, run.catalog_revision_id)
+        profile_id = {
+            CASTING_PROFILE_FINGERPRINT: CASTING_PROFILE_ID,
+            LEGACY_CASTING_PROFILE_FINGERPRINT: LEGACY_CASTING_PROFILE_ID,
+        }.get(run.casting_profile_fingerprint)
+        if profile_id is None:
+            raise ServiceError(
+                500,
+                "CASTING_PROFILE_EVIDENCE_INVALID",
+                "The persisted casting profile is not recognized.",
+            )
         snapshot = self._latest_snapshot(session, run.id)
         checkpoint_row = session.scalar(
             select(JobCheckpointRow)
@@ -4589,7 +4647,7 @@ class CastingRepository:
             "projectId": run.project_id,
             "prerequisites": self._prerequisites_wire(run),
             "profile": {
-                "profileId": CASTING_PROFILE_ID,
+                "profileId": profile_id,
                 "fingerprint": run.casting_profile_fingerprint,
             },
             "producerId": run.producer_id,
@@ -5317,7 +5375,7 @@ class CastingRepository:
             or rights_eligibility is None
             or provider_available is None
             or model_available is None
-            or long_form_suitable is None
+            or row.long_form_suitability not in {"suitable", "unsuitable", "unknown"}
         ):
             raise ServiceError(
                 500,

@@ -9,7 +9,11 @@ import {
 } from "react";
 
 import type { Job, ProjectDetail } from "@cinematic-story-studio/contracts/api";
-import { SPEECH_AUDITION_LIMITS } from "@cinematic-story-studio/contracts";
+import {
+  GOVERNED_PRIVATE_AUDITION_WARNING,
+  GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+  SPEECH_AUDITION_LIMITS
+} from "@cinematic-story-studio/contracts";
 import type {
   AuditionClip,
   AuditionReview,
@@ -17,9 +21,11 @@ import type {
   AuditionRoleStatus,
   AuditionSession,
   AuditionWorkspaceSnapshot,
+  HumanListeningAttestationRequest,
   ModelInstallationRecord,
   ModelVerificationRecord,
   PronunciationEntry,
+  RestrictedLocalAuditionActivationRequest,
   TextNormalizationPlan
 } from "@cinematic-story-studio/contracts";
 
@@ -220,6 +226,12 @@ export function AuditionsWorkspace({
   const [modelPackageReason, setModelPackageReason] = useState(
     "Use these exact local model bytes only for restricted local auditions."
   );
+  const [restrictedVoiceUseAcknowledged, setRestrictedVoiceUseAcknowledged] =
+    useState(false);
+  const [restrictedVoiceReason, setRestrictedVoiceReason] = useState(
+    "Generate a bounded private local audition under the displayed restrictions."
+  );
+  const [listenedClipIds, setListenedClipIds] = useState<readonly string[]>([]);
   const [expectedCacheProjectRevision, setExpectedCacheProjectRevision] =
     useState(project.project.revision);
   const [draft, setDraft] = useState<PronunciationDraft>({
@@ -278,6 +290,9 @@ export function AuditionsWorkspace({
       const clipIds = new Set(items.map((item) => item.auditionClipId));
       setClips(items);
       setComparisonIds((current) =>
+        current.filter((clipId) => clipIds.has(clipId))
+      );
+      setListenedClipIds((current) =>
         current.filter((clipId) => clipIds.has(clipId))
       );
       setLoadedClipId(null);
@@ -909,12 +924,17 @@ export function AuditionsWorkspace({
       return;
     }
     if (!connected || busy !== null) return;
+    const restrictedActivation = restrictedActivationForRole(role);
+    if (restrictedActivation === null) return;
     setBusy(`create-pronunciation-test-${role.roleId}`);
     onError(null);
     const sessionResult = await api.auditions.createSession({
       projectId,
       roleId: role.roleId,
       evidence: role.sessionEvidence,
+      ...(restrictedActivation === undefined
+        ? {}
+        : { restrictedLocalAuditionActivation: restrictedActivation }),
       idempotencyKey: idempotency("pronunciation-test-session")
     });
     if (!sessionResult.ok) {
@@ -923,6 +943,9 @@ export function AuditionsWorkspace({
       return;
     }
     const currentSession = sessionResult.value.session;
+    if (restrictedActivation !== undefined) {
+      setRestrictedVoiceUseAcknowledged(false);
+    }
     const sourceTextSha256 = await sha256Text(text);
     const scriptResult = await api.auditions.createScript({
       projectId,
@@ -1046,6 +1069,8 @@ export function AuditionsWorkspace({
 
   async function createSession(role: AuditionRoleStatus) {
     if (role.sessionEvidence === null) return;
+    const restrictedActivation = restrictedActivationForRole(role);
+    if (restrictedActivation === null) return;
     const result = await perform(
       `create-session-${role.roleId}`,
       () =>
@@ -1055,14 +1080,58 @@ export function AuditionsWorkspace({
           evidence: role.sessionEvidence as NonNullable<
             AuditionRoleStatus["sessionEvidence"]
           >,
+          ...(restrictedActivation === undefined
+            ? {}
+            : { restrictedLocalAuditionActivation: restrictedActivation }),
           idempotencyKey: idempotency("audition-session")
         }),
       `A governed audition session was created for ${role.displayLabel}.`
     );
     if (result !== null) {
+      if (restrictedActivation !== undefined) {
+        setRestrictedVoiceUseAcknowledged(false);
+      }
       setSelectedSessionId(result.session.auditionSessionId);
       await loadWorkspace();
     }
+  }
+
+  function restrictedActivationForRole(
+    role: AuditionRoleStatus
+  ): RestrictedLocalAuditionActivationRequest | null | undefined {
+    if (role.governedLocalVoice === undefined || role.governedLocalVoice === null) {
+      return undefined;
+    }
+    const inventory = workspace?.voiceInventory;
+    const reason = restrictedVoiceReason.trim();
+    if (
+      inventory === undefined ||
+      inventory.warningText !== GOVERNED_PRIVATE_AUDITION_WARNING ||
+      inventory.warningFingerprint !==
+        GOVERNED_PRIVATE_AUDITION_WARNING_SHA256
+    ) {
+      onError({
+        code: "RESTRICTED_AUDITION_INVENTORY_UNAVAILABLE",
+        message:
+          "The exact governed voice inventory and restriction warning are required before creating a real-local session.",
+        retryable: true
+      });
+      return null;
+    }
+    if (!restrictedVoiceUseAcknowledged || reason.length === 0) {
+      onError({
+        code: "RESTRICTED_AUDITION_ACKNOWLEDGEMENT_REQUIRED",
+        message:
+          "Acknowledge the exact private-audition restriction and add a reason before creating a real-local session.",
+        retryable: false
+      });
+      return null;
+    }
+    return {
+      expectedInventoryFingerprint: inventory.inventoryFingerprint,
+      expectedWarningFingerprint: inventory.warningFingerprint,
+      reason
+    };
   }
 
   async function modelAction(
@@ -1134,7 +1203,8 @@ export function AuditionsWorkspace({
 
   async function decide(
     review: AuditionReview,
-    decision: "approve" | "request_changes" | "reject"
+    decision: "approve" | "request_changes" | "reject",
+    listeningDisposition?: "undecided"
   ) {
     const rationale = reviewRationales[review.reviewId]?.trim();
     if (rationale === undefined || rationale.length === 0) {
@@ -1145,6 +1215,12 @@ export function AuditionsWorkspace({
       });
       return;
     }
+    const listeningAttestation = listeningAttestationFor(
+      review,
+      decision,
+      listeningDisposition
+    );
+    if (listeningAttestation === null) return;
     const result = await perform(
       `review-${review.reviewId}`,
       () =>
@@ -1158,6 +1234,9 @@ export function AuditionsWorkspace({
           decision,
           rationale,
           supersedesDecisionId: review.latestDecision?.decisionId ?? null,
+          ...(listeningAttestation === undefined
+            ? {}
+            : { listeningAttestation }),
           idempotencyKey: idempotency(`review-${review.gateId}`)
         }),
       `${gateLabel(review.gateId)} decision recorded.`
@@ -1168,6 +1247,69 @@ export function AuditionsWorkspace({
       await loadWorkspace();
       if (historyWasLoaded) await loadReviewHistory(review);
     }
+  }
+
+  function exactReviewClip(review: AuditionReview): AuditionClip | null {
+    if (review.evidence.auditionClipId === null) return null;
+    return (
+      clips.find(
+        (clip) =>
+          clip.auditionClipId === review.evidence.auditionClipId &&
+          clip.revision === review.evidence.auditionClipRevision
+      ) ?? null
+    );
+  }
+
+  function reviewRequiresListeningAttestation(review: AuditionReview): boolean {
+    if (review.gateId !== "per_role_audition_review" || review.roleId === null) {
+      return false;
+    }
+    const clip = exactReviewClip(review);
+    // A missing exact clip is unresolved, not fixture evidence. Fail closed
+    // until the bounded clip page containing the review evidence is loaded.
+    return clip === null || clip.providerClass === "real_local";
+  }
+
+  function listeningAttestationFor(
+    review: AuditionReview,
+    decision: "approve" | "request_changes" | "reject",
+    listeningDisposition?: "undecided"
+  ): HumanListeningAttestationRequest | null | undefined {
+    if (!reviewRequiresListeningAttestation(review)) return undefined;
+    const clip = exactReviewClip(review);
+    if (clip === null || clip.providerClass !== "real_local") {
+      onError({
+        code: "EXACT_REAL_AUDITION_CLIP_REQUIRED",
+        message:
+          "Load the bounded page containing this review's exact clip before recording a human decision.",
+        retryable: true
+      });
+      return null;
+    }
+    if (!listenedClipIds.includes(clip.auditionClipId)) {
+      onError({
+        code: "HUMAN_LISTENING_ATTESTATION_REQUIRED",
+        message:
+          "Explicitly confirm that you listened to this exact clip before recording its human decision.",
+        retryable: false
+      });
+      return null;
+    }
+    return {
+      auditionClipId: clip.auditionClipId,
+      auditionClipRevision: clip.revision,
+      auditionClipFingerprint: clip.clipFingerprint,
+      audioArtifactId: clip.audioArtifact.audioArtifactId,
+      audioArtifactSha256: clip.audioArtifact.sha256,
+      listened: true,
+      disposition:
+        listeningDisposition ??
+        (decision === "approve"
+          ? "acceptable"
+          : decision === "request_changes"
+            ? "needs_changes"
+            : "unacceptable")
+    };
   }
 
   async function loadAudio(clip: AuditionClip) {
@@ -1299,6 +1441,15 @@ export function AuditionsWorkspace({
   }
 
   const generationRoles = workspace.roles.items;
+  const selectedRole =
+    selectedSession === null
+      ? null
+      : generationRoles.find((role) => role.roleId === selectedSession.roleId) ??
+        null;
+  const selectedRoleActivationReady =
+    selectedRole?.governedLocalVoice == null ||
+    (restrictedVoiceUseAcknowledged &&
+      restrictedVoiceReason.trim().length > 0);
   const rolePageStart = rolePage.previousCursors.length * rolePageSize;
   const currentRolePage = rolePage.previousCursors.length + 1;
   const rolePageCount = Math.max(1, Math.ceil(rolePage.total / rolePageSize));
@@ -1444,6 +1595,191 @@ export function AuditionsWorkspace({
           )}
         </div>
 
+        <section
+          className="real-local-voice-inventory"
+          aria-labelledby="real-local-voices-heading"
+          data-testid="real-local-voice-inventory"
+        >
+          <div className="section-title-row">
+            <div>
+              <span className="eyebrow">Governed private comparison</span>
+              <h3 id="real-local-voices-heading">Real Local Voices</h3>
+            </div>
+            <span className="production-ineligible">Production ineligible</span>
+          </div>
+          {workspace.voiceInventory === undefined ? (
+            <p className="quiet">
+              No governed real-local voice inventory is available. Fixture
+              audition behavior remains unchanged.
+            </p>
+          ) : (
+            <>
+              <div className="restriction-banner" role="alert">
+                <strong>Private local audition only</strong>
+                <p>{workspace.voiceInventory.warningText}</p>
+                <small>
+                  Warning SHA-256: {workspace.voiceInventory.warningFingerprint}
+                </small>
+              </div>
+              <fieldset className="restricted-voice-activation-controls">
+                <legend>Restricted local-audition activation</legend>
+                <label className="restricted-use-acknowledgement">
+                  <input
+                    type="checkbox"
+                    checked={restrictedVoiceUseAcknowledged}
+                    data-testid="restricted-local-audition-acknowledgement"
+                    onChange={(event) =>
+                      setRestrictedVoiceUseAcknowledged(event.target.checked)
+                    }
+                  />
+                  I acknowledge this exact restricted voice for a bounded private
+                  local audition only.
+                </label>
+                <label>
+                  Restricted-audition reason
+                  <textarea
+                    value={restrictedVoiceReason}
+                    maxLength={1_000}
+                    onChange={(event) =>
+                      setRestrictedVoiceReason(event.target.value)
+                    }
+                  />
+                </label>
+                <small>
+                  This acknowledgement records review of the displayed
+                  restriction. It is not legal clearance, performer consent,
+                  production approval, commercial-use approval, or a quality
+                  decision.
+                </small>
+              </fieldset>
+              <div className="voice-inventory-grid">
+                {workspace.voiceInventory.items.map((voice) => {
+                  const model = models.find(
+                    (item) =>
+                      item.modelPackageId === voice.modelPackageId &&
+                      item.manifestFingerprint === voice.modelPackageFingerprint
+                  );
+                  const health = workspace.runtimeHealth.find(
+                    (item) => item.providerId === voice.providerId
+                  );
+                  const runtimeProfile = workspace.runtimeProfiles.find(
+                    (item) =>
+                      item.providerIds.includes(voice.providerId) &&
+                      item.compatibleModelPackageIds.includes(
+                        voice.modelPackageId
+                      )
+                  );
+                  const boundRoles = generationRoles.filter(
+                    (role) => role.voiceProfileId === voice.voiceProfileId
+                  );
+                  const reapprovalRequired = boundRoles.some(
+                    (role) => role.sessionEvidence === null
+                  );
+                  return (
+                    <article
+                      className="voice-inventory-card"
+                      data-testid={`real-local-voice-${voice.inventoryRecordId}`}
+                      key={voice.inventoryRecordId}
+                    >
+                      <div className="card-title-row">
+                        <div>
+                          <span className="eyebrow">Real Kokoro speech</span>
+                          <strong>{voice.neutralDisplayLabel}</strong>
+                        </div>
+                        <StatusBadge state={voice.activationEligibility} />
+                      </div>
+                      <div className="eligibility-labels">
+                        <span>Private audition: restricted</span>
+                        <span>Production export: prohibited</span>
+                      </div>
+                      <dl className="mini-facts">
+                        <dt>Technical status</dt>
+                        <dd>{humanize(voice.technicalCompatibility)}</dd>
+                        <dt>Provider</dt>
+                        <dd>{voice.providerId} @ {voice.providerVersion}</dd>
+                        <dt>Runtime health</dt>
+                        <dd>{health === undefined ? "Not reported" : humanize(health.status)}</dd>
+                        <dt>Runtime profile</dt>
+                        <dd>
+                          {runtimeProfile === undefined ? "Not reported" : runtimeProfile.runtimeProfileId}
+                        </dd>
+                        <dt>Runtime profile fingerprint</dt>
+                        <dd>
+                          {runtimeProfile === undefined ? "Not reported" : <EvidenceHash value={runtimeProfile.profileFingerprint} />}
+                        </dd>
+                        <dt>Model</dt>
+                        <dd>{voice.modelId} @ {voice.modelVersion}</dd>
+                        <dt>Package identity</dt>
+                        <dd>{voice.modelPackageId}</dd>
+                        <dt>Package state</dt>
+                        <dd>
+                          {model?.installation?.status ?? "not installed"} / {model?.verification?.status ?? "not verified"}
+                        </dd>
+                        <dt>Package fingerprint</dt>
+                        <dd><EvidenceHash value={voice.modelPackageFingerprint} /></dd>
+                        <dt>Catalog</dt>
+                        <dd>{voice.catalogRevisionId} / <EvidenceHash value={voice.catalogRevisionFingerprint} /></dd>
+                        <dt>Voice profile</dt>
+                        <dd>{voice.voiceProfileId} @ {voice.voiceProfileVersion}</dd>
+                        <dt>Voice profile fingerprint</dt>
+                        <dd><EvidenceHash value={voice.voiceProfileFingerprint} /></dd>
+                        <dt>Tensor</dt>
+                        <dd>
+                          {voice.voiceTensor.scalarFormat} [{voice.voiceTensor.shape.join(", ")}] / <EvidenceHash value={voice.voiceTensor.sha256} />
+                        </dd>
+                        <dt>Rights</dt>
+                        <dd>{humanize(voice.rights.rightsState)}</dd>
+                        <dt>Rights record</dt>
+                        <dd>
+                          {voice.rights.rightsRecordId} r{voice.rights.rightsRecordRevision} / <EvidenceHash value={voice.rights.rightsRecordFingerprint} />
+                        </dd>
+                        <dt>Consent</dt>
+                        <dd>{humanize(voice.rights.consentStatus)}</dd>
+                        <dt>Commercial use</dt>
+                        <dd>{humanize(voice.rights.commercialUseClassification)}</dd>
+                        <dt>Redistribution</dt>
+                        <dd>{humanize(voice.rights.redistributionClassification)}</dd>
+                        <dt>Language</dt>
+                        <dd>{voice.locale ?? voice.language}</dd>
+                        <dt>Provenance</dt>
+                        <dd>
+                          {humanize(voice.provenance.origin)} / {voice.provenance.producerId} @ {voice.provenance.producerVersion}
+                        </dd>
+                      </dl>
+                      {voice.providerDeclaredPresentationCategory === null ? null : (
+                        <small>
+                          Provider-declared presentation category: {voice.providerDeclaredPresentationCategory}. Not independently verified.
+                        </small>
+                      )}
+                      <div className="voice-evidence-lists">
+                        <strong>Unresolved evidence</strong>
+                        {voice.unresolvedEvidenceCodes.length === 0 ? (
+                          <span className="quiet">None reported</span>
+                        ) : (
+                          <ul>{voice.unresolvedEvidenceCodes.map((code) => <li key={code}><code>{code}</code></li>)}</ul>
+                        )}
+                        <strong>Known limitations</strong>
+                        {voice.knownLimitations.length === 0 ? (
+                          <span className="quiet">None reported</span>
+                        ) : (
+                          <ul>{voice.knownLimitations.map((item) => <li key={item}>{item}</li>)}</ul>
+                        )}
+                      </div>
+                      <p className={reapprovalRequired ? "phase3a-reapproval-required" : "quiet"}>
+                        {boundRoles.length === 0
+                          ? "Not assigned on this bounded role page. Use the Casting workspace and its immutable correction path to select this voice."
+                          : reapprovalRequired
+                            ? "Phase 3A reapproval required. Return to Casting and explicitly reapprove the applicable Narrator or Character Casting Review and Complete Cast Review after the assignment correction."
+                            : `Current Phase 3A binding available for ${boundRoles.map((role) => role.displayLabel).join(", ")}.`}
+                      </p>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </section>
+
         <div className="model-table-wrap">
           <fieldset className="model-package-install-controls">
             <legend>Local model ZIP install &amp; repair</legend>
@@ -1582,6 +1918,11 @@ export function AuditionsWorkspace({
                 busy === `generate-${role.roleId}` ||
                 busy === `create-session-${role.roleId}`
               }
+              activationReady={
+                role.governedLocalVoice == null ||
+                (restrictedVoiceUseAcknowledged &&
+                  restrictedVoiceReason.trim().length > 0)
+              }
               onCreateSession={() => void createSession(role)}
               onGenerate={() => void generate(role)}
             />
@@ -1659,7 +2000,8 @@ export function AuditionsWorkspace({
               disabled={
                 selectedSession === null ||
                 busy !== null ||
-                pronunciationTestText.trim().length === 0
+                pronunciationTestText.trim().length === 0 ||
+                !selectedRoleActivationReady
               }
             >
               Create pronunciation test
@@ -1964,7 +2306,45 @@ export function AuditionsWorkspace({
                 <strong>QC warnings</strong>
                 {clip.audioQuality.warningCodes.length === 0 ? <span className="quiet">None</span> : <ul>{clip.audioQuality.warningCodes.map((code) => <li key={code}><code>{code}</code></li>)}</ul>}
               </div>
-              <div className="button-cluster">{clip.audioArtifact.availability === "present" && clip.audioArtifact.playbackEligible ? <button type="button" onClick={() => void loadAudio(clip)} disabled={busy !== null}>Load audio</button> : <span className="quiet" role="status">Playback unavailable</span>}<label className="compare-check"><input type="checkbox" checked={comparisonIds.includes(clip.auditionClipId)} disabled={!comparisonIds.includes(clip.auditionClipId) && comparisonIds.length >= 3} onChange={(event) => compare(clip.auditionClipId, event.target.checked)} />Compare</label></div>
+              <div className="button-cluster">
+                {clip.audioArtifact.availability === "present" && clip.audioArtifact.playbackEligible ? (
+                  <button type="button" onClick={() => void loadAudio(clip)} disabled={busy !== null}>Load audio</button>
+                ) : (
+                  <span className="quiet" role="status">Playback unavailable</span>
+                )}
+                <label className="compare-check">
+                  <input
+                    type="checkbox"
+                    checked={comparisonIds.includes(clip.auditionClipId)}
+                    disabled={!comparisonIds.includes(clip.auditionClipId) && comparisonIds.length >= 3}
+                    onChange={(event) => compare(clip.auditionClipId, event.target.checked)}
+                  />
+                  Compare
+                </label>
+                {clip.providerClass === "real_local" ? (
+                  <label className="listened-exact-clip-check">
+                    <input
+                      type="checkbox"
+                      checked={listenedClipIds.includes(clip.auditionClipId)}
+                      data-testid={`listened-exact-clip-${clip.auditionClipId}`}
+                      onChange={(event) =>
+                        setListenedClipIds((current) =>
+                          event.target.checked
+                            ? [...new Set([...current, clip.auditionClipId])]
+                            : current.filter(
+                                (clipId) => clipId !== clip.auditionClipId
+                              )
+                        )
+                      }
+                    />
+                    I listened to this exact clip
+                  </label>
+                ) : (
+                  <small className="quiet">
+                    Fixture lifecycle clip / listening attestation omitted.
+                  </small>
+                )}
+              </div>
             </article>
           ))}
         </div>
@@ -1994,13 +2374,83 @@ export function AuditionsWorkspace({
           {workspace.reviews.map((review) => {
             const history = reviewHistoryByScope[reviewHistoryKey(review)];
             const historyBusyKey = `review-history-${reviewHistoryKey(review)}`;
+            const exactClip = exactReviewClip(review);
+            const listeningRequired = reviewRequiresListeningAttestation(review);
+            const listeningReady =
+              !listeningRequired ||
+              (exactClip !== null &&
+                exactClip.providerClass === "real_local" &&
+                listenedClipIds.includes(exactClip.auditionClipId));
             return (
               <article className="review-card" key={review.reviewId}>
                 <div className="card-title-row"><strong>{gateLabel(review.gateId)}{review.roleId === null ? "" : ` · ${review.roleId}`}</strong><StatusBadge state={review.state} /></div>
                 <p>{review.blockerCodes.length} blockers · {review.warningCodes.length} warnings</p>
                 <label>Decision rationale<textarea value={reviewRationales[review.reviewId] ?? ""} maxLength={4000} onChange={(event) => setReviewRationales((current) => ({ ...current, [review.reviewId]: event.target.value }))} /></label>
-                <div className="button-cluster"><button type="button" onClick={() => void decide(review, "approve")} disabled={busy !== null || review.blockerCodes.length > 0}>Approve</button><button type="button" onClick={() => void decide(review, "request_changes")} disabled={busy !== null}>Request changes</button><button type="button" onClick={() => void decide(review, "reject")} disabled={busy !== null}>Reject</button></div>
-                <small>{review.latestDecision === null ? "No human decision" : `${review.latestDecision.decision} · immutable history`}</small>
+                {listeningRequired ? (
+                  <div
+                    className={listeningReady ? "listening-ready" : "listening-required"}
+                    role="status"
+                  >
+                    {exactClip === null
+                      ? "Exact review clip is not on this bounded page. Load it before deciding whether listening evidence applies."
+                      : listeningReady
+                        ? "Exact-clip listening attestation is ready."
+                        : "Listen to the exact real-local clip and check its explicit listened box before deciding."}
+                  </div>
+                ) : (
+                  <small className="quiet">
+                    Fixture or aggregate review / listening attestation omitted.
+                  </small>
+                )}
+                <div className="button-cluster">
+                  <button
+                    type="button"
+                    onClick={() => void decide(review, "approve")}
+                    disabled={busy !== null || review.blockerCodes.length > 0 || !listeningReady}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void decide(review, "request_changes")}
+                    disabled={busy !== null || !listeningReady}
+                  >
+                    Request changes
+                  </button>
+                  {listeningRequired ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void decide(review, "request_changes", "undecided")
+                      }
+                      disabled={busy !== null || !listeningReady}
+                    >
+                      Record undecided
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void decide(review, "reject")}
+                    disabled={busy !== null || !listeningReady}
+                  >
+                    Reject
+                  </button>
+                </div>
+                <small>
+                  {review.latestDecision === null
+                    ? "No human decision"
+                    : `${humanize(review.latestDecision.decision)}${
+                        review.latestDecision.listeningAttestation == null
+                          ? ""
+                          : ` · Listening ${humanize(review.latestDecision.listeningAttestation.disposition)}`
+                      } · immutable history`}
+                </small>
+                {review.latestDecision?.listeningAttestation?.disposition ===
+                "undecided" ? (
+                  <small className="quiet">
+                    Undecided is not approval; voice readiness remains blocked.
+                  </small>
+                ) : null}
                 <div className="review-history-controls">
                   {history === undefined ? (
                     <button
@@ -2051,6 +2501,12 @@ export function AuditionsWorkspace({
                           <dt>Review</dt><dd>{decision.reviewId} · r{decision.expectedReviewRevision}</dd>
                           <dt>Supersedes</dt><dd>{decision.supersedesDecisionId ?? "none"}</dd>
                           <dt>Evidence</dt><dd className="evidence-hash">{decision.evidenceFingerprint}</dd>
+                          <dt>Listening</dt>
+                          <dd>
+                            {decision.listeningAttestation == null
+                              ? "not applicable / omitted"
+                              : `${humanize(decision.listeningAttestation.disposition)} · exact clip ${shortId(decision.listeningAttestation.auditionClipId)}`}
+                          </dd>
                           <dt>Record</dt><dd>immutable</dd>
                         </dl>
                       </li>
@@ -2130,12 +2586,14 @@ function RoleAuditionCard({
   role,
   disabled,
   busy,
+  activationReady,
   onCreateSession,
   onGenerate
 }: {
   readonly role: AuditionRoleStatus;
   readonly disabled: boolean;
   readonly busy: boolean;
+  readonly activationReady: boolean;
   readonly onCreateSession: () => void;
   readonly onGenerate: () => void;
 }) {
@@ -2152,6 +2610,12 @@ function RoleAuditionCard({
         <StatusBadge state={role.reviewState} />
       </div>
       <dl className="mini-facts">
+        <dt>Provider class</dt>
+        <dd>
+          {role.governedLocalVoice == null
+            ? "Deterministic fixture lifecycle"
+            : "Real local voice / private audition only"}
+        </dd>
         <dt>Voice</dt><dd>{role.voiceDisplayLabel}</dd>
         <dt>Voice profile</dt>
         <dd>
@@ -2180,12 +2644,32 @@ function RoleAuditionCard({
         <dt>Rights</dt><dd>{role.rightsState}</dd>
         <dt>Assignment</dt><dd>r{role.assignmentRevision}</dd>
         <dt>Latest clip</dt><dd>{role.latestClipId === null ? "none" : shortId(role.latestClipId)}</dd>
+        <dt>Production export</dt><dd>Not eligible</dd>
       </dl>
+      {role.governedLocalVoice == null ? null : (
+        <div className="role-real-local-status">
+          <strong>{role.governedLocalVoice.neutralDisplayLabel}</strong>
+          <span>{humanize(role.governedLocalVoice.activationEligibility)}</span>
+          {role.sessionEvidence === null ? (
+            <small>
+              Phase 3A reapproval required or another current prerequisite is
+              blocked. Return to Casting and explicitly reapprove the affected
+              role gate and Complete Cast Review after the immutable assignment
+              correction.
+            </small>
+          ) : (
+            <small>
+              Creating the session requires the exact restricted-audition
+              acknowledgement above.
+            </small>
+          )}
+        </div>
+      )}
       {needsSession ? (
         <button
           type="button"
           onClick={onCreateSession}
-          disabled={disabled || !canCreateSession}
+          disabled={disabled || !canCreateSession || !activationReady}
         >
           {busy ? "Creating…" : "Create audition session"}
         </button>

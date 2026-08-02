@@ -6,6 +6,8 @@ import {
   CASTING_SOFT_PREFERENCE_IDS,
   GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT,
   GOVERNED_VOICE_CASTING_PROFILE_ID,
+  LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT,
+  LEGACY_GOVERNED_VOICE_CASTING_PROFILE_ID,
   VOICE_CASTING_CONTRACT_VERSION,
   VOICE_CASTING_PRODUCER_ID,
   VOICE_RIGHTS_POLICY_ID,
@@ -92,7 +94,8 @@ const runEvidenceFields = [
   "expectedCatalogFingerprint",
   "expectedSnapshotId",
   "expectedSnapshotRevision",
-  "expectedSnapshotFingerprint"
+  "expectedSnapshotFingerprint",
+  "expectedCastingProfileFingerprint"
 ] as const;
 
 export function parseListVoiceCatalogRequest(
@@ -258,7 +261,6 @@ export function parseCreateCustomProductionRoleRequest(
     "performanceRequirements",
     "reason",
     "expectedCorrectionSetFingerprint",
-    "expectedCastingProfileFingerprint",
     "idempotencyKey"
   ] as const;
   allowed(payload, fields);
@@ -280,10 +282,6 @@ export function parseCreateCustomProductionRoleRequest(
     expectedCorrectionSetFingerprint: sha256(
       payload.expectedCorrectionSetFingerprint,
       "expectedCorrectionSetFingerprint"
-    ),
-    expectedCastingProfileFingerprint: sha256(
-      payload.expectedCastingProfileFingerprint,
-      "expectedCastingProfileFingerprint"
     ),
     idempotencyKey: identifier(payload.idempotencyKey, "idempotencyKey")
   });
@@ -686,7 +684,8 @@ export function validateCreateCustomProductionRoleResponse(
     expectedSnapshotId: run.prerequisites.analysisSnapshotId,
     expectedSnapshotRevision: run.prerequisites.analysisSnapshotRevision,
     expectedSnapshotFingerprint:
-      run.prerequisites.analysisSnapshotFingerprint
+      run.prerequisites.analysisSnapshotFingerprint,
+    expectedCastingProfileFingerprint: run.profile.fingerprint
   };
   const role = validateRole(root.role, evidence);
   const customRange = role.range;
@@ -852,7 +851,8 @@ export function validateAppendCastingCorrectionResponse(
     expectedSnapshotId: run.prerequisites.analysisSnapshotId,
     expectedSnapshotRevision: run.prerequisites.analysisSnapshotRevision,
     expectedSnapshotFingerprint:
-      run.prerequisites.analysisSnapshotFingerprint
+      run.prerequisites.analysisSnapshotFingerprint,
+    expectedCastingProfileFingerprint: run.profile.fingerprint
   };
   const correction = validateCorrection(root.correction, evidence);
   if (
@@ -931,7 +931,12 @@ export function validateDecideCastingReviewResponse(
   ) {
     throw invalid("The review response changed casting-run identity.");
   }
-  const snapshot = validateSnapshot(root.snapshot, input.projectId, input.runId);
+  const snapshot = validateSnapshot(
+    root.snapshot,
+    input.projectId,
+    input.runId,
+    run.profile.fingerprint
+  );
   if (
     snapshot.snapshotId !== input.expectedApprovedCastSnapshotId ||
     snapshot.revision !== input.expectedApprovedCastSnapshotRevision
@@ -946,7 +951,8 @@ export function validateDecideCastingReviewResponse(
     expectedCatalogFingerprint: snapshot.catalogFingerprint,
     expectedSnapshotId: run.prerequisites.analysisSnapshotId,
     expectedSnapshotRevision: run.prerequisites.analysisSnapshotRevision,
-    expectedSnapshotFingerprint: run.prerequisites.analysisSnapshotFingerprint
+    expectedSnapshotFingerprint: run.prerequisites.analysisSnapshotFingerprint,
+    expectedCastingProfileFingerprint: run.profile.fingerprint
   };
   const review = validateReview(root.review, evidence);
   const decision = validateDecision(root.decision, evidence);
@@ -1267,7 +1273,14 @@ function validateVoiceProfile(
   text(item.language, "voice.language", 1, 40);
   text(item.locale, "voice.locale", 1, 40);
   text(item.accentOrDialect, "voice.accentOrDialect", 1, 80);
-  validateIntegerRange(item.agePresentationRange, "voice.agePresentationRange", 0, 130);
+  if (item.agePresentationRange !== null) {
+    validateIntegerRange(
+      item.agePresentationRange,
+      "voice.agePresentationRange",
+      0,
+      130
+    );
+  }
   vocalPresentation(item.vocalPresentation, "voice.vocalPresentation");
   vocalTexture(item.vocalTexture, "voice.vocalTexture");
   enumeration(
@@ -1276,7 +1289,9 @@ function validateVoiceProfile(
     "voice.pitchRange"
   );
   validateUnitRange(item.speakingRateRange, "voice.speakingRateRange", 0.1, 5);
-  validateNumberRange(item.energyRange, "voice.energyRange", 0, 1);
+  if (item.energyRange !== null) {
+    validateNumberRange(item.energyRange, "voice.energyRange", 0, 1);
+  }
   stringArray(item.expressiveRange, "voice.expressiveRange", 64, 80);
   suitability(item.narrationSuitability, "voice.narrationSuitability");
   suitability(item.dialogueSuitability, "voice.dialogueSuitability");
@@ -1468,9 +1483,17 @@ function validateRun(value: unknown, projectId: string): CastingRun {
   }
   validatePrerequisites(item.prerequisites, projectId);
   const profile = exact(item.profile, "run.profile", ["profileId", "fingerprint"]);
+  const profileFingerprint =
+    profile.profileId === GOVERNED_VOICE_CASTING_PROFILE_ID &&
+    profile.fingerprint === GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+      ? GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+      : profile.profileId === LEGACY_GOVERNED_VOICE_CASTING_PROFILE_ID &&
+          profile.fingerprint ===
+            LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+        ? LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+        : null;
   if (
-    profile.profileId !== GOVERNED_VOICE_CASTING_PROFILE_ID ||
-    profile.fingerprint !== GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT ||
+    profileFingerprint === null ||
     item.producerId !== VOICE_CASTING_PRODUCER_ID
   ) {
     throw invalid("The casting run profile or producer was not governed.");
@@ -1550,7 +1573,12 @@ function validateRun(value: unknown, projectId: string): CastingRun {
     validateSummary(item.summary, "run.summary");
   }
   if (item.approvedCastSnapshot !== null) {
-    validateSnapshot(item.approvedCastSnapshot, projectId, String(item.castingRunId));
+    validateSnapshot(
+      item.approvedCastSnapshot,
+      projectId,
+      String(item.castingRunId),
+      profileFingerprint
+    );
   } else if (status === "succeeded") {
     throw invalid("A succeeded casting run must publish a cast snapshot.");
   }
@@ -2036,10 +2064,10 @@ function validateAssignment(
     "assignment.rightsEvidenceFingerprint"
   );
   if (
-    sha256(
+    castingProfileFingerprint(
       item.castingProfileFingerprint,
       "assignment.castingProfileFingerprint"
-    ) !== GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+    ) !== input.expectedCastingProfileFingerprint
   ) {
     throw invalid("The assignment used another casting profile.");
   }
@@ -2332,10 +2360,10 @@ function validateGateEvidence(
       item.phase2SnapshotFingerprint,
       "evidence.phase2SnapshotFingerprint"
     ) !== input.expectedSnapshotFingerprint ||
-    sha256(
+    castingProfileFingerprint(
       item.castingProfileFingerprint,
       "evidence.castingProfileFingerprint"
-    ) !== GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+    ) !== input.expectedCastingProfileFingerprint
   ) {
     throw invalid("The casting review evidence did not match requested ownership.");
   }
@@ -2361,7 +2389,8 @@ function validateGateEvidence(
 function validateSnapshot(
   value: unknown,
   projectId: string,
-  runId: string
+  runId: string,
+  expectedCastingProfileFingerprint: string
 ) {
   const item = exact(value, "approved cast snapshot", [
     "contractVersion",
@@ -2402,7 +2431,7 @@ function validateSnapshot(
     sha256(
       item.castingProfileFingerprint,
       "snapshot.castingProfileFingerprint"
-    ) !== GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+    ) !== expectedCastingProfileFingerprint
   ) {
     throw invalid("The cast snapshot used another casting profile.");
   }
@@ -2992,6 +3021,10 @@ function parseEvidence(
     expectedSnapshotFingerprint: sha256(
       payload.expectedSnapshotFingerprint,
       "expectedSnapshotFingerprint"
+    ),
+    expectedCastingProfileFingerprint: castingProfileFingerprint(
+      payload.expectedCastingProfileFingerprint,
+      "expectedCastingProfileFingerprint"
     )
   };
 }
@@ -3186,6 +3219,22 @@ function sha256(value: unknown, field: string): string {
     throw invalid(`${field} must be a lowercase SHA-256 digest.`);
   }
   return value;
+}
+
+function castingProfileFingerprint(
+  value: unknown,
+  field: string
+):
+  | typeof GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+  | typeof LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT {
+  const fingerprint = sha256(value, field);
+  if (fingerprint === GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT) {
+    return GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT;
+  }
+  if (fingerprint === LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT) {
+    return LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT;
+  }
+  throw invalid(`${field} was not a governed current or legacy profile.`);
 }
 
 function semver(value: unknown, field: string): string {

@@ -46,6 +46,7 @@
 .role-preview-card,
 .clip-card,
 .review-card,
+.voice-inventory-card,
 .audio-player-card,
 .normalization-plan {
   border: 1px solid var(--line, #d8d2c6);
@@ -60,6 +61,7 @@
 .role-preview-card,
 .clip-card,
 .review-card,
+.voice-inventory-card,
 .audio-player-card,
 .normalization-plan { padding: 0.85rem; }
 
@@ -68,7 +70,8 @@
 .provider-card,
 .role-preview-card,
 .clip-card,
-.review-card { display: grid; align-content: start; gap: 0.65rem; }
+.review-card,
+.voice-inventory-card { display: grid; align-content: start; gap: 0.65rem; }
 .clip-card.active { border-color: var(--accent, #a25535); box-shadow: 0 0 0 2px rgb(162 85 53 / 12%); }
 
 .audit-list,
@@ -128,6 +131,7 @@
 .bounded-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.45rem 0.7rem; margin-top: 0.75rem; color: var(--muted, #706a61); font-size: 0.8rem; }
 .bounded-pager small { margin-right: auto; }
 .compare-check { display: inline-flex; flex-direction: row; gap: 0.35rem; align-items: center; font-size: 0.8rem; }
+.listened-exact-clip-check { display: inline-flex; flex-direction: row; gap: 0.35rem; align-items: center; font-size: 0.8rem; font-weight: 650; }
 .script-preview { margin: 0.75rem 0; padding: 0.75rem; border-left: 3px solid var(--accent, #a25535); background: rgb(162 85 53 / 5%); }
 .pronunciation-test-control { display: grid; gap: 0.5rem; margin: 0.75rem 0; padding: 0.75rem; border: 1px solid var(--line, #d8d2c6); border-radius: 0.55rem; }
 .pronunciation-test-control label { display: grid; gap: 0.3rem; font-size: 0.8rem; font-weight: 650; }
@@ -179,6 +183,27 @@
 .model-package-install-controls textarea { min-height: 3.5rem; resize: vertical; }
 .model-package-install-controls .restricted-use-acknowledgement { grid-template-columns: auto 1fr; align-items: start; font-weight: 600; }
 .model-package-install-controls small { color: var(--muted, #706a61); }
+.real-local-voice-inventory { display: grid; gap: 0.75rem; margin-top: 0.9rem; padding: 0.85rem; border: 1px solid var(--line, #d8d2c6); border-radius: 0.65rem; background: rgb(44 36 24 / 2%); }
+.real-local-voice-inventory h3 { margin: 0.15rem 0 0.35rem; }
+.production-ineligible { color: #8a342b; font-weight: 700; }
+.restriction-banner { padding: 0.75rem 0.85rem; border: 1px solid #a25535; border-left-width: 4px; border-radius: 0.45rem; background: rgb(162 85 53 / 9%); }
+.restriction-banner small { color: var(--muted, #706a61); overflow-wrap: anywhere; }
+.restricted-voice-activation-controls { display: grid; gap: 0.6rem; padding: 0.8rem; border: 1px solid var(--line, #d8d2c6); border-radius: 0.55rem; }
+.restricted-voice-activation-controls label { display: grid; gap: 0.3rem; font-size: 0.8rem; font-weight: 650; }
+.restricted-voice-activation-controls .restricted-use-acknowledgement { grid-template-columns: auto 1fr; align-items: start; font-weight: 600; }
+.restricted-voice-activation-controls textarea { min-height: 3.5rem; resize: vertical; }
+.restricted-voice-activation-controls small { color: var(--muted, #706a61); }
+.voice-inventory-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.75rem; }
+.voice-inventory-card { border: 1px solid var(--line, #d8d2c6); border-radius: 14px; background: color-mix(in srgb, var(--panel, #fff) 94%, transparent); box-shadow: 0 8px 30px rgb(44 36 24 / 5%); padding: 0.85rem; }
+.eligibility-labels { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.eligibility-labels span { padding: 0.2rem 0.45rem; border-radius: 999px; background: #f6dfdc; color: #8a342b; font-size: 0.72rem; font-weight: 700; }
+.voice-evidence-lists { display: grid; gap: 0.3rem; font-size: 0.8rem; }
+.voice-evidence-lists ul { margin: 0; padding-left: 1.1rem; }
+.voice-evidence-lists code { overflow-wrap: anywhere; }
+.phase3a-reapproval-required,
+.listening-required { padding: 0.55rem 0.7rem; border-left: 3px solid #a25535; background: rgb(162 85 53 / 8%); color: #713126; font-size: 0.8rem; }
+.listening-ready { padding: 0.55rem 0.7rem; border-left: 3px solid #47745e; background: rgb(71 116 94 / 8%); color: #27633d; font-size: 0.8rem; }
+.role-real-local-status { display: grid; gap: 0.25rem; padding: 0.55rem 0.7rem; border-left: 3px solid #a25535; background: rgb(162 85 53 / 7%); font-size: 0.8rem; }
 
 @media (max-width: 980px) {
   .auditions-two-column { grid-template-columns: 1fr; }

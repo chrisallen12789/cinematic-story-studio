@@ -4,6 +4,10 @@ export const SPEECH_AUDITION_CONTRACT_VERSION = "1.0.0" as const;
 export const SPEECH_RUNTIME_PROTOCOL_VERSION = "1.0.0" as const;
 export const SPEECH_AUDITION_PRODUCER_ID =
   "local-speech-audition-orchestrator@1.0.0" as const;
+export const GOVERNED_PRIVATE_AUDITION_WARNING =
+  "Private local audition only. This voice is not cleared by Cinematic Story Studio for production export, commercial distribution, marketplace resale, cloning, or real-person imitation." as const;
+export const GOVERNED_PRIVATE_AUDITION_WARNING_SHA256 =
+  "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645" as const;
 
 export const AUDITION_GATE_IDS = [
   "per_role_audition_review",
@@ -50,6 +54,7 @@ export const SPEECH_AUDITION_LIMITS = Object.freeze({
   maximumReviewRationaleCodePoints: 4_000,
   maximumWarningsPerEntity: 32,
   maximumModelFiles: 4_096,
+  maximumVoiceInventoryRecords: 5_000,
   maximumModelFileRelativePathCodePoints: 512,
   maximumAudioBytes: 24 * 1024 * 1024,
   maximumAuditionDurationMilliseconds: 30_000,
@@ -64,6 +69,11 @@ export type SpeechAuditionContractVersion =
 export type AuditionGateId = (typeof AUDITION_GATE_IDS)[number];
 export type PronunciationScope = (typeof PRONUNCIATION_SCOPES)[number];
 export type ModelPackageAction = (typeof MODEL_PACKAGE_ACTIONS)[number];
+export type HumanListeningDisposition =
+  | "acceptable"
+  | "unacceptable"
+  | "needs_changes"
+  | "undecided";
 
 export interface SpeechAuditionProvenance {
   readonly origin:
@@ -317,6 +327,157 @@ export interface ModelVerificationRecord {
   readonly provenance: SpeechAuditionProvenance;
 }
 
+export interface GovernedVoiceTensorBinding {
+  /** Package-relative source identity; never an absolute filesystem path. */
+  readonly relativePath: string;
+  readonly byteSize: number;
+  readonly sha256: Sha256;
+  readonly scalarFormat: "float32_le";
+  readonly shape: readonly number[];
+  readonly elementCount: number;
+}
+
+export interface GovernedLocalVoiceRightsBinding {
+  readonly rightsRecordId: EntityId;
+  readonly rightsRecordRevision: number;
+  readonly rightsRecordFingerprint: Sha256;
+  readonly rightsState: "restricted" | "unknown" | "prohibited";
+  readonly consentStatus:
+    | "restricted"
+    | "missing"
+    | "unknown"
+    | "prohibited";
+  readonly commercialUseClassification:
+    | "restricted"
+    | "unknown"
+    | "prohibited";
+  readonly redistributionClassification:
+    | "restricted"
+    | "unknown"
+    | "prohibited";
+  readonly evidenceReferences: readonly string[];
+}
+
+export interface GovernedLocalVoiceInventoryRecord {
+  readonly contractVersion: SpeechAuditionContractVersion;
+  readonly inventoryRecordId: EntityId;
+  readonly neutralDisplayLabel: string;
+  readonly providerId: string;
+  readonly providerVersion: string;
+  readonly providerVoiceId: string;
+  readonly modelId: string;
+  readonly modelVersion: string;
+  readonly modelPackageId: EntityId;
+  readonly modelPackageFingerprint: Sha256;
+  readonly voiceProfileId: EntityId;
+  readonly voiceProfileVersion: string;
+  readonly voiceProfileFingerprint: Sha256;
+  readonly catalogRevisionId: EntityId;
+  readonly catalogRevisionFingerprint: Sha256;
+  readonly voiceTensor: GovernedVoiceTensorBinding;
+  readonly rights: GovernedLocalVoiceRightsBinding;
+  readonly language: string;
+  readonly locale: string | null;
+  readonly providerDeclaredPresentationCategory: string | null;
+  readonly providerDeclaredMetadataIndependentlyVerified: false;
+  readonly technicalCompatibility:
+    | "compatible"
+    | "incompatible"
+    | "unavailable";
+  readonly activationEligibility:
+    | "restricted_private_audition"
+    | "ineligible_unknown_rights"
+    | "ineligible_prohibited"
+    | "ineligible_unavailable";
+  readonly activationReasonCode: string;
+  readonly knownLimitations: readonly string[];
+  readonly unresolvedEvidenceCodes: readonly string[];
+  readonly productionExportEligible: false;
+  readonly inventoryFingerprint: Sha256;
+  readonly provenance: SpeechAuditionProvenance;
+}
+
+export interface GovernedLocalVoiceInventory {
+  readonly inventoryId: EntityId;
+  readonly inventoryRevision: number;
+  readonly inventoryFingerprint: Sha256;
+  readonly warningText: typeof GOVERNED_PRIVATE_AUDITION_WARNING;
+  readonly warningFingerprint:
+    typeof GOVERNED_PRIVATE_AUDITION_WARNING_SHA256;
+  readonly items: readonly GovernedLocalVoiceInventoryRecord[];
+}
+
+export interface RestrictedLocalAuditionActivationRequest {
+  readonly expectedInventoryFingerprint: Sha256;
+  readonly expectedWarningFingerprint:
+    typeof GOVERNED_PRIVATE_AUDITION_WARNING_SHA256;
+  readonly reason: string;
+}
+
+export interface RestrictedLocalAuditionActivationAcknowledgement {
+  readonly contractVersion: SpeechAuditionContractVersion;
+  readonly acknowledgementId: EntityId;
+  readonly actor: {
+    readonly classification: "human";
+    readonly actorId: EntityId;
+  };
+  readonly acknowledgedAt: IsoDateTime;
+  readonly reason: string;
+  readonly warningText: typeof GOVERNED_PRIVATE_AUDITION_WARNING;
+  readonly warningFingerprint:
+    typeof GOVERNED_PRIVATE_AUDITION_WARNING_SHA256;
+  readonly inventoryRecordId: EntityId;
+  readonly inventoryFingerprint: Sha256;
+  readonly providerId: string;
+  readonly providerVersion: string;
+  readonly modelId: string;
+  readonly modelVersion: string;
+  readonly modelPackageId: EntityId;
+  readonly modelPackageFingerprint: Sha256;
+  readonly voiceProfileId: EntityId;
+  readonly voiceProfileVersion: string;
+  readonly voiceProfileFingerprint: Sha256;
+  readonly catalogRevisionId: EntityId;
+  readonly catalogRevisionFingerprint: Sha256;
+  readonly voiceTensorSha256: Sha256;
+  readonly rightsRecordId: EntityId;
+  readonly rightsRecordRevision: number;
+  readonly rightsRecordFingerprint: Sha256;
+  readonly restrictedRightsCorrectionId: EntityId;
+  readonly restrictedRightsCorrectionFingerprint: Sha256;
+  readonly modelInstallationAcknowledgementEventId: EntityId;
+  readonly modelVerificationId: EntityId;
+  readonly modelVerificationFingerprint: Sha256;
+  readonly privateLocalAuditionOnly: true;
+  readonly productionExportAuthorized: false;
+  readonly commercialDistributionAuthorized: false;
+  readonly marketplaceResaleAuthorized: false;
+  readonly cloningAuthorized: false;
+  readonly realPersonImitationAuthorized: false;
+  readonly acknowledgementFingerprint: Sha256;
+  readonly immutable: true;
+  readonly provenance: SpeechAuditionProvenance & {
+    readonly origin: "human";
+  };
+}
+
+export interface GovernedLocalVoiceActivationBinding {
+  readonly contractVersion: SpeechAuditionContractVersion;
+  readonly acknowledgement:
+    RestrictedLocalAuditionActivationAcknowledgement;
+  readonly castAssignmentId: EntityId;
+  readonly castAssignmentRevision: number;
+  readonly castAssignmentFingerprint: Sha256;
+  readonly approvedCastSnapshotId: EntityId;
+  readonly approvedCastSnapshotRevision: number;
+  readonly approvedCastSnapshotFingerprint: Sha256;
+  readonly runtimeProfileId: EntityId;
+  readonly runtimeProfileFingerprint: Sha256;
+  readonly privateLocalAuditionOnly: true;
+  readonly productionExportEligible: false;
+  readonly bindingFingerprint: Sha256;
+}
+
 export interface VoiceRuntimeBinding {
   readonly contractVersion: SpeechAuditionContractVersion;
   readonly bindingId: EntityId;
@@ -508,6 +669,9 @@ export interface AuditionSession {
   readonly voiceRuntimeBindingFingerprint: Sha256;
   readonly providerVoiceId: string;
   readonly voiceRuntimeBinding: VoiceRuntimeBinding;
+  /** Present only for an exact governed real-local activation. */
+  readonly governedLocalVoiceActivation?:
+    GovernedLocalVoiceActivationBinding | null;
   readonly providerId: string;
   readonly providerVersion: string;
   readonly modelPackageFingerprint: Sha256;
@@ -610,6 +774,9 @@ export interface AuditionEvidenceBinding {
   readonly runtimeProfileFingerprint: Sha256;
   readonly modelPackageId: EntityId;
   readonly modelPackageFingerprint: Sha256;
+  /** Exact activation chain for a restricted real-local audition. */
+  readonly governedLocalVoiceActivation?:
+    GovernedLocalVoiceActivationBinding | null;
   readonly producerVersion: string;
 }
 
@@ -816,6 +983,9 @@ export interface AuditionClip {
   readonly voiceRuntimeBindingFingerprint: Sha256;
   readonly providerVoiceId: string;
   readonly providerClass: "deterministic_fixture" | "real_local";
+  /** Exact activation chain for a restricted real-local audition. */
+  readonly governedLocalVoiceActivation?:
+    GovernedLocalVoiceActivationBinding | null;
   readonly modelId: string;
   readonly modelVersion: string;
   readonly modelPackageFingerprint: Sha256;
@@ -836,6 +1006,7 @@ export interface AuditionClip {
   readonly audioArtifact: AudioArtifactRecord;
   readonly audioQuality: AudioQualityRecord;
   readonly state: "reviewable" | "approved" | "rejected" | "invalidated";
+  readonly productionExportEligible?: false;
   readonly clipFingerprint: Sha256;
   readonly revision: number;
   readonly createdAt: IsoDateTime;
@@ -906,7 +1077,32 @@ export interface AuditionReviewDecision {
   readonly decidedAt: IsoDateTime;
   readonly immutable: true;
   readonly supersedesDecisionId: EntityId | null;
+  /** Null or omitted for fixtures, aggregate gates, and system invalidation. */
+  readonly listeningAttestation?: HumanListeningAttestation | null;
   readonly provenance: SpeechAuditionProvenance;
+}
+
+export interface HumanListeningAttestationRequest {
+  readonly auditionClipId: EntityId;
+  readonly auditionClipRevision: number;
+  readonly auditionClipFingerprint: Sha256;
+  readonly audioArtifactId: EntityId;
+  readonly audioArtifactSha256: Sha256;
+  readonly listened: true;
+  readonly disposition: HumanListeningDisposition;
+}
+
+export interface HumanListeningAttestation
+  extends HumanListeningAttestationRequest {
+  readonly attestationId: EntityId;
+  readonly actor: {
+    readonly classification: "human";
+    readonly actorId: EntityId;
+  };
+  readonly recordedAt: IsoDateTime;
+  readonly rationale: string;
+  readonly attestationFingerprint: Sha256;
+  readonly immutable: true;
 }
 
 export interface VoiceReadinessSnapshot {
@@ -930,6 +1126,7 @@ export interface VoiceReadinessSnapshot {
   readonly reviewEligible: boolean;
   readonly authorizes: "later_performance_direction_only";
   readonly authorizesFullBookRendering: false;
+  readonly productionExportEligible?: false;
   readonly createdAt: IsoDateTime;
   readonly immutable: true;
 }
@@ -962,6 +1159,8 @@ export interface AuditionRoleStatus {
   readonly assignmentRevision: number;
   readonly voiceProfileId: EntityId;
   readonly voiceDisplayLabel: string;
+  /** Governed inventory projection when this role selects a real local voice. */
+  readonly governedLocalVoice?: GovernedLocalVoiceInventoryRecord | null;
   readonly voiceRuntimeBinding: VoiceRuntimeBinding | null;
   readonly runtimeBindingStatus:
     | "compatible"
@@ -979,6 +1178,7 @@ export interface AuditionRoleStatus {
   readonly sessionEvidence: AuditionEvidenceBinding | null;
   /** Server-issued, hash-only request material for the next explicit generation. */
   readonly generationRequest: SpeechPreviewRequest | null;
+  readonly productionExportEligible?: false;
 }
 
 export interface AuditionWorkspaceSnapshot {
@@ -991,6 +1191,7 @@ export interface AuditionWorkspaceSnapshot {
     readonly fingerprint: Sha256;
   } | null;
   readonly providers: readonly SpeechProviderAdapterDescriptor[];
+  readonly voiceInventory?: GovernedLocalVoiceInventory;
   readonly runtimeProfiles: readonly SpeechRuntimeProfile[];
   readonly runtimeHealth: readonly SpeechRuntimeHealth[];
   readonly runtimeInstances: readonly SpeechRuntimeInstance[];
@@ -1125,6 +1326,9 @@ export interface ClearAuditionCacheResponse {
 export interface CreateAuditionSessionRequest {
   readonly roleId: EntityId;
   readonly evidence: AuditionEvidenceBinding;
+  /** Required by the service only for restricted real-local activation. */
+  readonly restrictedLocalAuditionActivation?:
+    RestrictedLocalAuditionActivationRequest;
   readonly idempotencyKey: string;
 }
 
@@ -1196,6 +1400,8 @@ export interface DecideAuditionReviewRequest {
   readonly decision: "approve" | "request_changes" | "reject";
   readonly rationale: string;
   readonly supersedesDecisionId: EntityId | null;
+  /** Required only for current real-provider per-role human decisions. */
+  readonly listeningAttestation?: HumanListeningAttestationRequest;
   readonly idempotencyKey: string;
 }
 

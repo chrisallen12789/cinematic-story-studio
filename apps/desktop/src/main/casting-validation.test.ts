@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import {
   GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT,
   GOVERNED_VOICE_CASTING_PROFILE_ID,
+  LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT,
+  LEGACY_GOVERNED_VOICE_CASTING_PROFILE_ID,
   type CastingReviewDecision,
   VOICE_CASTING_CONTRACT_VERSION,
   VOICE_CASTING_PRODUCER_ID
@@ -24,9 +26,11 @@ import {
   parseDecideCastingReviewRequest,
   parseListCastingCandidatesRequest,
   parseListVoiceCatalogRequest,
+  validateCastAssignmentsResponse,
   validateCastingCandidatesResponse,
   validateCastingConflictsResponse,
   validateCastingReviewsResponse,
+  validateCastingRunResponse,
   validateCreateCustomProductionRoleResponse,
   validateVoiceCatalogResponse
 } from "./casting-validation";
@@ -79,7 +83,9 @@ function runEvidence(): CastingRunEvidenceInput {
     expectedCatalogFingerprint: digest,
     expectedSnapshotId: "analysis-snapshot-1",
     expectedSnapshotRevision: 2,
-    expectedSnapshotFingerprint: digest
+    expectedSnapshotFingerprint: digest,
+    expectedCastingProfileFingerprint:
+      GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
   };
 }
 
@@ -197,6 +203,39 @@ describe("casting desktop request validation", () => {
       total: voices.length,
       pageSize: voices.length
     });
+  });
+
+  it("accepts nullable real-voice age-presentation and energy metadata", () => {
+    const catalog = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../../local-service/src/cinematic_story_service/catalogs/synthetic_voice_catalog.v1.json",
+          import.meta.url
+        ),
+        "utf8"
+      )
+    ) as Record<string, unknown>;
+    const voices = structuredClone(catalog.voices) as Record<string, unknown>[];
+    const firstVoice = voices[0];
+    if (firstVoice === undefined) throw new Error("The voice fixture was empty.");
+    firstVoice.agePresentationRange = null;
+    firstVoice.energyRange = null;
+
+    expect(
+      validateVoiceCatalogResponse(
+        {
+          correlationId: "catalog-nullable-real-metadata",
+          catalogRevision: catalog.catalogRevision,
+          providers: catalog.providers,
+          models: catalog.models,
+          items: voices,
+          rights: catalog.rights,
+          total: voices.length,
+          pageSize: voices.length
+        },
+        { projectId: "project-1", limit: 50 }
+      )
+    ).toMatchObject({ total: voices.length });
   });
 
   it("caps final candidates at twelve and rejects stale ownership fields", () => {
@@ -386,7 +425,8 @@ describe("casting desktop request validation", () => {
         },
         reason: "A producer-defined role with no manuscript source.",
         expectedCorrectionSetFingerprint: "b".repeat(64),
-        expectedCastingProfileFingerprint: "c".repeat(64),
+        expectedCastingProfileFingerprint:
+          GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT,
         idempotencyKey: "custom-role-create-1"
       })
     );
@@ -441,6 +481,152 @@ describe("casting desktop request validation", () => {
     expect(() =>
       validateCreateCustomProductionRoleResponse(malformed, input)
     ).toThrow("did not match its definition");
+  });
+
+  it("accepts only exact current or legacy governed casting-profile pairs", () => {
+    const customInput = customRoleInput();
+    const current = {
+      correlationId: "correlation-current-casting-run",
+      run: customRoleResponse(customInput).run
+    };
+    const input = {
+      projectId: customInput.projectId,
+      runId: customInput.runId
+    };
+    expect(validateCastingRunResponse(current, input)).toBe(current);
+
+    if (current.run.approvedCastSnapshot === null) {
+      throw new Error("The casting-run fixture omitted its snapshot.");
+    }
+    const legacy = {
+      ...current,
+      run: {
+        ...current.run,
+        profile: {
+          profileId: LEGACY_GOVERNED_VOICE_CASTING_PROFILE_ID,
+          fingerprint: LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+        },
+        approvedCastSnapshot: {
+          ...current.run.approvedCastSnapshot,
+          castingProfileFingerprint:
+            LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+        }
+      }
+    };
+    expect(validateCastingRunResponse(legacy, input)).toBe(legacy);
+
+    for (const profile of [
+      {
+        profileId: GOVERNED_VOICE_CASTING_PROFILE_ID,
+        fingerprint: LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+      },
+      {
+        profileId: LEGACY_GOVERNED_VOICE_CASTING_PROFILE_ID,
+        fingerprint: GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+      },
+      {
+        profileId: "governed-voice-casting-v1@9.9.9",
+        fingerprint: GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+      },
+      {
+        profileId: GOVERNED_VOICE_CASTING_PROFILE_ID,
+        fingerprint: "f".repeat(64)
+      }
+    ]) {
+      expect(() =>
+        validateCastingRunResponse(
+          {
+            ...current,
+            run: { ...current.run, profile }
+          },
+          input
+        )
+      ).toThrow("profile or producer was not governed");
+    }
+  });
+
+  it("loads a full legacy assignment and review workspace without accepting crossed evidence", () => {
+    const legacyEvidence = {
+      ...runEvidence(),
+      expectedCastingProfileFingerprint:
+        LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+    };
+    const assignment = castAssignment(
+      LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+    );
+    const assignmentResponse = {
+      correlationId: "correlation-legacy-assignments",
+      castingRunId: legacyEvidence.runId,
+      pageSize: 1,
+      total: 1,
+      items: [assignment]
+    };
+    expect(
+      validateCastAssignmentsResponse(assignmentResponse, {
+        ...legacyEvidence,
+        limit: 200
+      })
+    ).toBe(assignmentResponse);
+
+    const currentReviewResponse = castingReviewsResponse("approved", "human");
+    const legacyReviewResponse = {
+      ...currentReviewResponse,
+      items: currentReviewResponse.items.map((review) => ({
+        ...review,
+        evidence: {
+          ...review.evidence,
+          castingProfileFingerprint:
+            LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+        }
+      }))
+    };
+    const legacyReviewInput = {
+      ...castingReviewsInput(),
+      expectedCastingProfileFingerprint:
+        LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+    };
+    expect(
+      validateCastingReviewsResponse(
+        legacyReviewResponse,
+        legacyReviewInput
+      )
+    ).toBe(legacyReviewResponse);
+
+    expect(() =>
+      validateCastAssignmentsResponse(
+        {
+          ...assignmentResponse,
+          items: [
+            {
+              ...assignment,
+              castingProfileFingerprint:
+                GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+            }
+          ]
+        },
+        { ...legacyEvidence, limit: 200 }
+      )
+    ).toThrow("another casting profile");
+    expect(() =>
+      validateCastingReviewsResponse(
+        {
+          ...legacyReviewResponse,
+          items: legacyReviewResponse.items.map((review, index) =>
+            index === 0
+              ? {
+                  ...review,
+                  evidence: {
+                    ...review.evidence,
+                    castingProfileFingerprint:
+                      GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT
+                  }
+                }
+              : review
+          )
+        },
+        legacyReviewInput
+      )
+    ).toThrow("did not match requested ownership");
   });
 
   it("accepts a matching human voice selection and rejects ambiguous selection data", () => {
@@ -642,6 +828,39 @@ function castingReviewsInput() {
     ...runEvidence(),
     expectedApprovedCastSnapshotId: "cast-snapshot-2",
     expectedApprovedCastSnapshotRevision: 2
+  };
+}
+
+function castAssignment(castingProfileFingerprint: string) {
+  return {
+    contractVersion: VOICE_CASTING_CONTRACT_VERSION,
+    assignmentId: "assignment-role-1",
+    projectId: "project-1",
+    roleId: "role-1",
+    voiceProfileId: "voice-1",
+    voiceProfileVersion: "1.0.0",
+    voiceEvidenceFingerprint: digest,
+    rightsRecordId: "rights-1",
+    rightsRecordRevision: 1,
+    rightsEvidenceFingerprint: digest,
+    catalogRevisionId: "catalog-1",
+    castingRunId: "casting-run-1",
+    castingProfileFingerprint,
+    phase2SnapshotFingerprint: digest,
+    effectiveCorrectionSetFingerprint: digest,
+    authority: "machine_proposal",
+    rationale: "Deterministic governed casting proposal.",
+    warnings: [],
+    rightsState: "verified",
+    revision: 1,
+    provenance: {
+      origin: "system",
+      producerId: VOICE_CASTING_PRODUCER_ID,
+      producerVersion: "1.0.0",
+      recordedAt: "2026-07-31T12:00:00Z"
+    },
+    supersedesAssignmentId: null,
+    effective: true
   };
 }
 

@@ -118,6 +118,14 @@ class _CapturingRuntime:
         return self.running
 
     @property
+    def identity(self) -> SpeechWorkerIdentity | None:
+        return self._identity if self.running else None
+
+    @property
+    def last_identity(self) -> SpeechWorkerIdentity | None:
+        return self._identity
+
+    @property
     def last_exit(self) -> SpeechRuntimeExitEvidence | None:
         return self._last_exit
 
@@ -162,7 +170,8 @@ class _CapturingRuntime:
         if on_dispatch_committed is not None:
             on_dispatch_committed()
         self.calls.append((request, context))
-        samples = tuple(1_200 if index % 2 == 0 else -1_200 for index in range(4_800))
+        amplitude = 800 + (int(request.input_fingerprint()[:4], 16) % 1_200)
+        samples = tuple(amplitude if index % 2 == 0 else -amplitude for index in range(4_800))
         wav_bytes = encode_pcm16_wav(samples, sample_rate_hz=SPEECH_SAMPLE_RATE_HZ)
         model_artifact = next(
             artifact
@@ -225,8 +234,12 @@ class _CapturingRuntime:
         )
         return self._last_exit
 
+    def reap_if_idle(self, *, now_monotonic: float | None = None) -> bool:
+        del now_monotonic
+        return False
 
-def test_real_provider_reports_incompatible_synthetic_cast_without_silent_fallback(
+
+def test_real_provider_activation_does_not_change_fixture_role_provider_binding(
     app: FastAPI,
     client: TestClient,
     auth_headers: dict[str, str],
@@ -374,14 +387,16 @@ def test_real_provider_reports_incompatible_synthetic_cast_without_silent_fallba
     )
     assert available["status"] == "available"
     assert available["statusReasonCode"] is None
-    incompatible_role = next(
+    fixture_bound_role = next(
         item for item in real_workspace["roles"]["items"] if item["roleId"] == role["roleId"]
     )
-    assert incompatible_role["sessionEvidence"] is None
-    assert incompatible_role["generationRequest"] is None
-    assert incompatible_role["voiceRuntimeBinding"] is None
-    assert incompatible_role["runtimeBindingStatus"] == "incompatible"
-    assert incompatible_role["runtimeBindingReasonCode"] == "VOICE_RUNTIME_BINDING_INCOMPATIBLE"
+    assert fixture_bound_role["sessionEvidence"]["providerId"] == ("deterministic-pcm-wav-fixture")
+    assert fixture_bound_role["generationRequest"] is None
+    assert fixture_bound_role["voiceRuntimeBinding"]["providerId"] == (
+        "deterministic-pcm-wav-fixture"
+    )
+    assert fixture_bound_role["runtimeBindingStatus"] == "compatible"
+    assert fixture_bound_role["runtimeBindingReasonCode"] is None
     assert synthesis_calls == []
 
     deactivated = auditions.perform_model_package_action(

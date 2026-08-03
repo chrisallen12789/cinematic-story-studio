@@ -2,13 +2,15 @@
 
 ## Status and evidence boundary
 
+Required stopping status after final frozen-head local and hosted closure:
+
 > Implementation and automated verification complete; human listening decision pending.
 
 Phase 3B.1 activates one narrowly governed Kokoro/ONNX path for restricted,
 private local voice auditions. It does not establish naturalness, artistic
 quality, performer consent, commercial-use clearance, production readiness, or
-export eligibility. Chris has not yet performed the mandatory listening
-decision. No full-book rendering exists, and Phase 3C and Phase 4 were not
+export eligibility. No human-listening decision is recorded, and Phase 3B.1
+produced and records no full-book rendering. Phase 3C and Phase 4 were not
 started.
 
 Three evidence classes remain separate:
@@ -24,10 +26,12 @@ Three evidence classes remain separate:
 3. Human listening is a later private decision. Automated signal checks and
    playback automation are not human listening and cannot approve a voice.
 
-Generated models, tensors, audio, databases, caches, manifests, isolated
-desktop state, and listening packages are ignored private artifacts. They are
-not committed, uploaded with the pull request, or included in the short-lived
-CI application artifact.
+Generated real-provider models, voice tensors, audio, databases, caches,
+private manifests, isolated desktop state, and listening packages are ignored
+private artifacts and are not committed or uploaded. The short-lived CI
+artifact contains the built application and sanitized CI evidence files,
+including `build-evidence.json` and fixture E2E results; it contains no real
+model, tensor, audio, or private listening evidence.
 
 ## Revision and fixed controls
 
@@ -95,13 +99,16 @@ requires a clean source tree, opens the model ZIP through the native desktop
 dialog boundary, and exercises the application rather than a disconnected
 provider utility.
 
-The durable implementation-checkpoint run generated real Kokoro audio through
-the desktop product path. It created one invalidation probe, six listening-
-purpose real audition clips, and one verified cache repeat. The six listening
-clips were valid 24 kHz mono PCM16 WAV files with durations between 2.850 and
-4.150 seconds. The cache repeat reused the exact verified first artifact with
-no provider dispatch. All six clips were restored after restart and loaded
-through authenticated desktop playback.
+A durable implementation-checkpoint run, bound in its ignored evidence to its
+exact source-head SHA, generated real Kokoro audio through the desktop product
+path. This section records checkpoint behavior rather than final-head closure;
+the draft pull request report binds final results to their exact head and
+evidence fingerprints. The checkpoint created one invalidation probe, six
+listening-purpose real audition clips, and one verified cache repeat. The six
+listening clips were valid 24 kHz mono PCM16 WAV files with durations between
+2.850 and 4.150 seconds. The cache repeat reused the exact verified first
+artifact with no provider dispatch. All six clips were restored after restart
+and loaded through authenticated desktop playback.
 
 That run also proved:
 
@@ -112,7 +119,8 @@ That run also proved:
 - targeted pronunciation and activation invalidation without silent provider,
   model, voice, or historical-evidence substitution;
 - one owned managed Kokoro worker with authenticated handshake, graceful
-  shutdown acknowledgement, exit code 0, and no permitted network use;
+  shutdown acknowledgement, exit code 0, Python socket denial, and zero
+  observed non-loopback endpoints in the owned-PID inventory;
 - exact Electron, service, and provider-worker ownership by executable identity
   and process ancestry;
 - every exact owned PID gone after shutdown;
@@ -125,9 +133,9 @@ Process-scoped endpoint inventory and the worker's Python socket denial are
 bounded defense-in-depth evidence; they are not a complete firewall or packet
 capture.
 
-The private package is ignored and remains only on the verification workstation.
-Its audio, database, cache, state, generated manifests, and personal filesystem
-location are intentionally absent from this public record and from CI.
+The private package path is ignored. The audited Git index and `HEAD` do not
+contain its audio, database, cache, state, generated manifests, or personal
+filesystem location, and the CI artifact policy rejects those materials.
 
 ## Automated test closure
 

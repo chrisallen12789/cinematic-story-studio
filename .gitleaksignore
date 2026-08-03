@@ -52,3 +52,13 @@
 249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_scale.py:generic-api-key:999
 249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:1301
 249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:1308
+
+# Audited synthetic idempotency labels from the initial Phase 3B.1 test
+# commit. These exact historical fingerprints do not suppress later commits,
+# other paths or lines, other detector rules, or production code.
+3578eae9c49260db80caf557f9d21c96bd66d8f9:apps/desktop/src/main/audition-validation.test.ts:generic-api-key:363
+3578eae9c49260db80caf557f9d21c96bd66d8f9:apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py:generic-api-key:424
+3578eae9c49260db80caf557f9d21c96bd66d8f9:apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py:generic-api-key:1153
+3578eae9c49260db80caf557f9d21c96bd66d8f9:apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py:generic-api-key:1214
+3578eae9c49260db80caf557f9d21c96bd66d8f9:apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py:generic-api-key:1281
+3578eae9c49260db80caf557f9d21c96bd66d8f9:apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py:generic-api-key:1315

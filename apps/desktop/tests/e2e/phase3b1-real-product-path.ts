@@ -1460,9 +1460,16 @@ Final decision: ____________________
 
 async function proveComparisonPlaybackUi(page: Page): Promise<void> {
   await openAuditions(page);
+  const refresh = page.getByRole("button", {
+    name: "Refresh evidence",
+    exact: true
+  });
+  await expect(refresh).toBeEnabled({ timeout: 30_000 });
+  await refresh.click();
   const realCards = page.locator(".clip-card").filter({
     hasText: "Real-provider clip"
   });
+  await expect(realCards).toHaveCount(8, { timeout: 30_000 });
   await expect(realCards.first()).toBeVisible({ timeout: 30_000 });
   await realCards.first().getByRole("button", { name: "Load audio", exact: true }).click();
   await expect(

@@ -173,4 +173,5 @@ That private state may contain a local database, model installation, audio, and
 caches; it is never committed or uploaded. A failed staging or replay-state
 directory is preserved for diagnosis.
 
-See the [Phase 3B.1 known limitations](../architecture/phase-3b1-known-limitations.md).
+See the [Phase 3B.1 known limitations](../architecture/phase-3b1-known-limitations.md)
+and [Phase 3B.1 verification record](../evidence/phase-3b1-verification.md).

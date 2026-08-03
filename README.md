@@ -84,12 +84,18 @@ $releaseRoot = [IO.Path]::GetFullPath(
 $env:CSS_PACKAGED_E2E_EXECUTABLE = Join-Path $releaseRoot "win-unpacked/Cinematic Story Studio.exe"
 $env:CSS_PACKAGED_E2E_EVIDENCE_PATH = Join-Path $releaseRoot "packaged-e2e.png"
 $env:CSS_PACKAGED_E2E_RESULT_PATH = Join-Path $releaseRoot "packaged-e2e-result.json"
+$env:CSS_PHASE3_PACKAGED_E2E_RESULT_PATH = Join-Path $releaseRoot "phase-3-packaged-e2e-result.json"
+$env:CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH = Join-Path $releaseRoot "phase-3-voice-casting-evidence.json"
+$env:CSS_PHASE3B_PACKAGED_E2E_RESULT_PATH = Join-Path $releaseRoot "phase-3b-packaged-e2e-result.json"
 try {
   pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged
 } finally {
   Remove-Item Env:CSS_PACKAGED_E2E_EXECUTABLE
   Remove-Item Env:CSS_PACKAGED_E2E_EVIDENCE_PATH
   Remove-Item Env:CSS_PACKAGED_E2E_RESULT_PATH
+  Remove-Item Env:CSS_PHASE3_PACKAGED_E2E_RESULT_PATH
+  Remove-Item Env:CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH
+  Remove-Item Env:CSS_PHASE3B_PACKAGED_E2E_RESULT_PATH
 }
 ```
 

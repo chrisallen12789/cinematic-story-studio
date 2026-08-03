@@ -1068,6 +1068,7 @@ describe("AuditionsWorkspace", () => {
       name: "Installed model packages and verification"
     });
     expect(within(modelTable).getByTitle(otherDigest)).toBeVisible();
+    expect(screen.getByLabelText("Model Packages pagination")).toBeVisible();
     const installControls = screen.getByRole("group", {
       name: "Local model ZIP install & repair"
     });

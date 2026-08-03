@@ -860,7 +860,7 @@ async function findExactModelPackageRow(
     })
     .toBeGreaterThan(0);
 
-  const pager = page.getByLabel("Model packages pagination", {
+  const pager = page.getByLabel("Model Packages pagination", {
     exact: true
   });
   await expect(pager).toBeVisible({ timeout: 30_000 });

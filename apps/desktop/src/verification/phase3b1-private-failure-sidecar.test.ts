@@ -3,6 +3,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   symlink
 } from "node:fs/promises";
@@ -458,10 +459,11 @@ interface EvidenceRoots {
 }
 
 async function createEvidenceRoots(): Promise<EvidenceRoots> {
-  const testRoot = await mkdtemp(
+  const createdTestRoot = await mkdtemp(
     path.join(tmpdir(), "css-phase3b1-private-failure-test-")
   );
-  temporaryRoots.push(testRoot);
+  temporaryRoots.push(createdTestRoot);
+  const testRoot = await realpath(createdTestRoot);
   const expectedLocalRendersParent = path.join(testRoot, "local-renders");
   const privateRoot = path.join(
     expectedLocalRendersParent,

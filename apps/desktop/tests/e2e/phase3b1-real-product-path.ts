@@ -1564,11 +1564,26 @@ function requiredRealRole(
 
 async function activeProjectId(page: Page): Promise<string> {
   return page.evaluate(async () => {
-    const result = await window.cinematicStory.projects.restoreRecent();
-    if (!result.ok || result.value === null) {
-      throw new Error("The active project was unavailable.");
+    // Selection operations advance the guarded project epoch and can reject
+    // the Auditions renderer's in-flight collection hydration. Discover the
+    // sole isolated project without mutating active-project state.
+    const result = await window.cinematicStory.projects.list();
+    if (!result.ok) {
+      throw new Error(
+        `The isolated project discovery failed: ${result.error.code}: ${result.error.message}`
+      );
     }
-    return result.value.project.projectId;
+    const project = result.value.items[0];
+    if (
+      project === undefined ||
+      result.value.items.length !== 1 ||
+      result.value.nextCursor !== undefined
+    ) {
+      throw new Error(
+        "The isolated Phase 3B.1 product path did not contain exactly one project."
+      );
+    }
+    return project.projectId;
   });
 }
 

@@ -28,6 +28,7 @@ import {
 import {
   expect,
   type ElectronApplication,
+  type Locator,
   type Page
 } from "@playwright/test";
 
@@ -751,16 +752,12 @@ async function installVerifyAndActivateExactPackage(
     throw new Error("The exact allow-listed Kokoro package manifest was unavailable.");
   }
   if (exact.installation === null || exact.installation.status === "removed") {
-    const modelTable = page.getByRole("table", {
-      name: "Installed model packages and verification",
-      exact: true
-    });
-    await expect(modelTable).toBeVisible({ timeout: 30_000 });
-    const modelRows = modelTable
-      .getByRole("row")
-      .filter({ hasText: realModelId });
-    await expect(modelRows).toHaveCount(1, { timeout: 30_000 });
-    const installButton = modelRows.getByRole("button", {
+    const modelRow = await findExactModelPackageRow(
+      page,
+      realModelPackageId,
+      realModelPackageFingerprint
+    );
+    const installButton = modelRow.getByRole("button", {
       name: "Choose ZIP & install",
       exact: true
     });
@@ -844,6 +841,72 @@ async function installVerifyAndActivateExactPackage(
     installation: current.installation,
     verification: current.verification
   };
+}
+
+async function findExactModelPackageRow(
+  page: Page,
+  modelPackageId: string,
+  manifestFingerprint: string
+): Promise<Locator> {
+  const modelTable = page.getByRole("table", {
+    name: "Installed model packages and verification",
+    exact: true
+  });
+  await expect(modelTable).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() => modelTable.locator("tbody tr").count(), {
+      message: "Wait for the first bounded model-package page.",
+      timeout: 120_000
+    })
+    .toBeGreaterThan(0);
+
+  const pager = page.getByLabel("Model packages pagination", {
+    exact: true
+  });
+  await expect(pager).toBeVisible({ timeout: 30_000 });
+  for (let pageIndex = 0; pageIndex < 200; pageIndex += 1) {
+    const matchingRows = modelTable
+      .locator("tbody tr")
+      .filter({
+        has: page.getByText(modelPackageId, { exact: true })
+      })
+      .filter({
+        has: page.getByTitle(manifestFingerprint, { exact: true })
+      });
+    const matchingCount = await matchingRows.count();
+    if (matchingCount === 1) {
+      return matchingRows;
+    }
+    if (matchingCount > 1) {
+      throw new Error(
+        "The governed model-package table rendered a duplicate exact package identity."
+      );
+    }
+
+    const next = pager.getByRole("button", {
+      name: "Next model packages",
+      exact: true
+    });
+    if (await next.isDisabled()) {
+      break;
+    }
+    const priorPageSummary = await pager.locator("span").innerText();
+    await next.click();
+    await expect
+      .poll(() => pager.locator("span").innerText(), {
+        message: "Wait for the next bounded model-package page.",
+        timeout: 30_000
+      })
+      .not.toBe(priorPageSummary);
+    await expect
+      .poll(() => modelTable.locator("tbody tr").count(), {
+        timeout: 30_000
+      })
+      .toBeGreaterThan(0);
+  }
+  throw new Error(
+    "The exact governed model-package row was unavailable through bounded renderer pagination."
+  );
 }
 
 async function performModelAction(

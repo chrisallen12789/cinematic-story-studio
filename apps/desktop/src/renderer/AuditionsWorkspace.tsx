@@ -1817,6 +1817,7 @@ export function AuditionsWorkspace({
                 <tr key={item.modelPackageId}>
                   <td>
                     <strong>{item.modelId}</strong>
+                    <small>{item.modelPackageId}</small>
                     <small>{item.modelVersion} · {item.licenseIdentifier} · {humanize(item.commercialUseClassification)}</small>
                   </td>
                   <td>{item.installation?.status ?? "not installed"}</td>

@@ -82,6 +82,23 @@ const governedInventoryFingerprint =
 const pronunciationTerm = "Harbor";
 const supersedingPronunciation = "HAR-bore";
 const generationTimeoutMs = 300_000;
+const projectContextReadRetryLimit = 5;
+const projectContextReadRetryDelayMs = 250;
+const retryableProjectContextReadCodes = new Set([
+  "PROJECT_CONTEXT_CHANGED",
+  "PROJECT_CONTEXT_MISMATCH"
+]);
+
+type ProjectScopedReadAttempt<T> =
+  | {
+      readonly outcome: "succeeded";
+      readonly value: T;
+    }
+  | {
+      readonly outcome: "failed";
+      readonly code: string;
+      readonly message: string;
+    };
 
 const listeningScripts = [
   {
@@ -1598,33 +1615,64 @@ async function readWorkspace(
   page: Page,
   projectId: string
 ): Promise<AuditionWorkspaceSnapshot> {
-  return page.evaluate(async (id) => {
-    const result = await window.cinematicStory.auditions.getWorkspace({
-      projectId: id,
-      roleLimit: 50
-    });
-    if (!result.ok) {
-      throw new Error(
-        `Audition workspace failed: ${result.error.code}: ${result.error.message}`
-      );
-    }
-    return result.value.workspace;
-  }, projectId);
+  return boundedProjectScopedRead(page, "Audition workspace", () =>
+    page.evaluate(async (id) => {
+      const result = await window.cinematicStory.auditions.getWorkspace({
+        projectId: id,
+        roleLimit: 50
+      });
+      return result.ok
+        ? ({ outcome: "succeeded", value: result.value.workspace } as const)
+        : ({
+            outcome: "failed",
+            code: result.error.code,
+            message: result.error.message
+          } as const);
+    }, projectId)
+  );
 }
 
 async function listModelPackages(page: Page, projectId: string) {
-  return page.evaluate(async (id) => {
-    const result = await window.cinematicStory.auditions.listModelPackages({
-      projectId: id,
-      limit: 50
-    });
-    if (!result.ok) {
-      throw new Error(
-        `Model package list failed: ${result.error.code}: ${result.error.message}`
-      );
+  return boundedProjectScopedRead(page, "Model package list", () =>
+    page.evaluate(async (id) => {
+      const result = await window.cinematicStory.auditions.listModelPackages({
+        projectId: id,
+        limit: 50
+      });
+      return result.ok
+        ? ({ outcome: "succeeded", value: result.value.items } as const)
+        : ({
+            outcome: "failed",
+            code: result.error.code,
+            message: result.error.message
+          } as const);
+    }, projectId)
+  );
+}
+
+async function boundedProjectScopedRead<T>(
+  page: Page,
+  label: string,
+  read: () => Promise<ProjectScopedReadAttempt<T>>
+): Promise<T> {
+  let latestContextCode = "PROJECT_CONTEXT_UNAVAILABLE";
+  for (let attempt = 1; attempt <= projectContextReadRetryLimit; attempt += 1) {
+    const result = await read();
+    if (result.outcome === "succeeded") return result.value;
+    if (!retryableProjectContextReadCodes.has(result.code)) {
+      throw new Error(`${label} failed: ${result.code}: ${result.message}`);
     }
-    return result.value.items;
-  }, projectId);
+    latestContextCode = result.code;
+    if (attempt < projectContextReadRetryLimit) {
+      // A same-project renderer refresh can advance the guarded epoch while a
+      // long-running local model read completes. Discard the entire response
+      // and retry only the exact typed context failures.
+      await page.waitForTimeout(projectContextReadRetryDelayMs * attempt);
+    }
+  }
+  throw new Error(
+    `${label} remained unavailable after bounded project-context retries (${latestContextCode}).`
+  );
 }
 
 function requiredModelPackage(

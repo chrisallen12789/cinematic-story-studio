@@ -1041,8 +1041,34 @@ describe("AuditionsWorkspace", () => {
       });
   });
 
-  it("requires restricted-use acknowledgement and never sends the selected ZIP path", async () => {
+  it("defers install completion until refreshed evidence settles and never sends the ZIP path", async () => {
     const api = createApi();
+    let releaseRefresh: () => void = () => undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations)
+      .mockResolvedValueOnce(
+        ok({
+          correlationId: "correlation-initial-pronunciations",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        })
+      )
+      .mockImplementationOnce(async () => {
+        await refreshGate;
+        return ok({
+          correlationId: "correlation-refreshed-pronunciations",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        });
+      });
     vi.mocked(api.auditions.listModelPackages).mockResolvedValue(
       ok({
         correlationId: "correlation-real-model",
@@ -1059,7 +1085,16 @@ describe("AuditionsWorkspace", () => {
       })
     );
     const user = userEvent.setup();
-    renderWorkspace(api);
+    const onNotice = vi.fn();
+    render(
+      <AuditionsWorkspace
+        project={projectDetail()}
+        api={api}
+        connected
+        onNotice={onNotice}
+        onError={vi.fn()}
+      />
+    );
 
     const install = await screen.findByRole("button", {
       name: "Choose ZIP & install"
@@ -1090,6 +1125,13 @@ describe("AuditionsWorkspace", () => {
     await waitFor(() =>
       expect(api.auditions.selectLocalModelPackage).toHaveBeenCalledTimes(1)
     );
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(2)
+    );
+    expect(install).toBeDisabled();
+    expect(onNotice).not.toHaveBeenCalledWith(
+      "The local model install completed from verified ZIP bytes."
+    );
     const request = vi.mocked(api.auditions.selectLocalModelPackage).mock
       .calls[0]?.[0];
     expect(request).toMatchObject({
@@ -1101,6 +1143,15 @@ describe("AuditionsWorkspace", () => {
       acknowledgeRestrictedLocalUse: true
     });
     expect(request).not.toHaveProperty("sourcePath");
+    await act(async () => {
+      releaseRefresh();
+      await refreshGate;
+    });
+    await waitFor(() =>
+      expect(onNotice).toHaveBeenCalledWith(
+        "The local model install completed from verified ZIP bytes."
+      )
+    );
   });
 
   it("pages every governed role while rendering only one bounded role page", async () => {
@@ -1502,6 +1553,32 @@ describe("AuditionsWorkspace", () => {
 
   it("removes only an exact inactive model revision through the governed action", async () => {
     const api = createApi();
+    let releaseRefresh: () => void = () => undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations)
+      .mockResolvedValueOnce(
+        ok({
+          correlationId: "correlation-initial-remove-pronunciations",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        })
+      )
+      .mockImplementationOnce(async () => {
+        await refreshGate;
+        return ok({
+          correlationId: "correlation-refreshed-remove-pronunciations",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        });
+      });
     const workspace = workspaceSnapshot();
     const currentInstallation = workspace.modelInstallations[0];
     if (currentInstallation === undefined) {
@@ -1534,13 +1611,30 @@ describe("AuditionsWorkspace", () => {
       })
     );
     const user = userEvent.setup();
-    renderWorkspace(api);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Remove inactive model" })
+    const onNotice = vi.fn();
+    render(
+      <AuditionsWorkspace
+        project={projectDetail()}
+        api={api}
+        connected
+        onNotice={onNotice}
+        onError={vi.fn()}
+      />
     );
+
+    const remove = await screen.findByRole("button", {
+      name: "Remove inactive model"
+    });
+    await user.click(remove);
     await waitFor(() =>
       expect(api.auditions.performModelPackageAction).toHaveBeenCalledTimes(1)
+    );
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(2)
+    );
+    expect(remove).toBeDisabled();
+    expect(onNotice).not.toHaveBeenCalledWith(
+      "The model remove operation completed."
     );
     const removeModelInput =
       vi.mocked(api.auditions.performModelPackageAction).mock.calls[0]?.[0];
@@ -1555,6 +1649,15 @@ describe("AuditionsWorkspace", () => {
           "User requested governed removal of this exact inactive local model package.",
         idempotencyKey: removeModelInput?.idempotencyKey
       });
+    await act(async () => {
+      releaseRefresh();
+      await refreshGate;
+    });
+    await waitFor(() =>
+      expect(onNotice).toHaveBeenCalledWith(
+        "The model remove operation completed."
+      )
+    );
   });
 });
 

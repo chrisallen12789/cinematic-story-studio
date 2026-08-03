@@ -567,19 +567,24 @@ export function AuditionsWorkspace({
   async function perform<T>(
     key: string,
     operation: () => Promise<DesktopResult<T>>,
-    successMessage: string
+    successMessage: string,
+    afterSuccess?: () => Promise<void>
   ): Promise<T | null> {
     if (!connected || busy !== null) return null;
     setBusy(key);
     onError(null);
-    const result = await operation();
-    setBusy(null);
-    if (!result.ok) {
-      onError(result.error);
-      return null;
+    try {
+      const result = await operation();
+      if (!result.ok) {
+        onError(result.error);
+        return null;
+      }
+      await afterSuccess?.();
+      onNotice(successMessage);
+      return result.value;
+    } finally {
+      setBusy(null);
     }
-    onNotice(successMessage);
-    return result.value;
   }
 
   async function loadModelPage(direction: PageDirection) {
@@ -1138,7 +1143,7 @@ export function AuditionsWorkspace({
     item: (typeof models)[number],
     action: "verify" | "activate" | "deactivate" | "repair" | "remove"
   ) {
-    const result = await perform(
+    await perform(
       `model-${action}-${item.modelPackageId}`,
       () =>
         api.auditions.performModelPackageAction({
@@ -1154,9 +1159,9 @@ export function AuditionsWorkspace({
               : `User requested the governed ${action} operation.`,
           idempotencyKey: idempotency(`model-${action}`)
         }),
-      `The model ${action} operation completed.`
+      `The model ${action} operation completed.`,
+      loadWorkspace
     );
-    if (result !== null) await loadWorkspace();
   }
 
   async function selectLocalModelPackage(
@@ -1176,29 +1181,32 @@ export function AuditionsWorkspace({
     if (!connected || busy !== null) return;
     setBusy(`model-${operation}-${item.modelPackageId}`);
     onError(null);
-    const result = await api.auditions.selectLocalModelPackage({
-      projectId,
-      modelPackageId: item.modelPackageId,
-      expectedManifestFingerprint: item.manifestFingerprint,
-      expectedInstallationRevision:
-        item.installation?.installationRevision ?? null,
-      operation,
-      acknowledgeRestrictedLocalUse: true,
-      reason,
-      idempotencyKey: idempotency(`model-${operation}`)
-    });
-    setBusy(null);
-    if (!result.ok) {
-      onError(result.error);
-      return;
+    try {
+      const result = await api.auditions.selectLocalModelPackage({
+        projectId,
+        modelPackageId: item.modelPackageId,
+        expectedManifestFingerprint: item.manifestFingerprint,
+        expectedInstallationRevision:
+          item.installation?.installationRevision ?? null,
+        operation,
+        acknowledgeRestrictedLocalUse: true,
+        reason,
+        idempotencyKey: idempotency(`model-${operation}`)
+      });
+      if (!result.ok) {
+        onError(result.error);
+        return;
+      }
+      if (result.value === null) {
+        onNotice("No local model package was selected.");
+        return;
+      }
+      setRestrictedModelUseAcknowledged(false);
+      await loadWorkspace();
+      onNotice(`The local model ${operation} completed from verified ZIP bytes.`);
+    } finally {
+      setBusy(null);
     }
-    if (result.value === null) {
-      onNotice("No local model package was selected.");
-      return;
-    }
-    setRestrictedModelUseAcknowledged(false);
-    onNotice(`The local model ${operation} completed from verified ZIP bytes.`);
-    await loadWorkspace();
   }
 
   async function decide(

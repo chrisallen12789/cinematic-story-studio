@@ -3628,6 +3628,7 @@ class AuditionRepository:
                 audition_session,
                 include_activation=False,
             ),
+            require_current_pronunciation=False,
         )
         expected = self._build_governed_local_voice_activation(
             session,
@@ -5082,6 +5083,7 @@ class AuditionRepository:
         project_id: str,
         role_id: str,
         evidence: Mapping[str, Any],
+        require_current_pronunciation: bool = True,
     ) -> dict[str, Any]:
         def mismatch(code: str, message: str) -> NoReturn:
             raise ServiceError(409, code, message)
@@ -5376,7 +5378,23 @@ class AuditionRepository:
         ):
             mismatch("AUDITION_RIGHTS_INVALID", "The voice-rights evidence is not current.")
 
-        dictionary = self._current_dictionary(session, project_id)
+        dictionary = (
+            self._current_dictionary(session, project_id)
+            if require_current_pronunciation
+            else session.scalar(
+                select(PronunciationDictionaryRow)
+                .where(
+                    PronunciationDictionaryRow.project_id == project_id,
+                    PronunciationDictionaryRow.dictionary_id
+                    == evidence.get("pronunciationDictionaryId"),
+                    PronunciationDictionaryRow.revision
+                    == evidence.get("pronunciationDictionaryRevision"),
+                    PronunciationDictionaryRow.dictionary_fingerprint
+                    == evidence.get("pronunciationDictionaryFingerprint"),
+                )
+                .limit(1)
+            )
+        )
         if (
             dictionary is None
             or dictionary.dictionary_id != evidence.get("pronunciationDictionaryId")
@@ -13519,8 +13537,10 @@ class AuditionRepository:
             stored = (
                 details.get("governedLocalVoiceActivation") if isinstance(details, dict) else None
             )
+            # The frozen v5 provider source domain includes session-owned
+            # governed activation authority; activation has no separate row type.
             return (
-                "activation",
+                "provider",
                 audition_session.id,
                 request_fingerprint(stored),
                 _governed_voice_inventory()["inventoryFingerprint"],
@@ -13529,7 +13549,7 @@ class AuditionRepository:
             )
         if audition_session.provider_id == KOKORO_PROVIDER_ID and activation is None:
             return (
-                "activation",
+                "provider",
                 audition_session.id,
                 request_fingerprint(None),
                 _governed_voice_inventory()["inventoryFingerprint"],

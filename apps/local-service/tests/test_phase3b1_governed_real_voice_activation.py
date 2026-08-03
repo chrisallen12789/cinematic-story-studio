@@ -45,6 +45,7 @@ from cinematic_story_service.models import (
     ApprovedCastSnapshotRow,
     AudioArtifactRow,
     AuditionClipRow,
+    AuditionEvidenceInvalidationRow,
     AuditionReviewDecisionRow,
     AuditionSessionRow,
     CastAssignmentRow,
@@ -576,6 +577,66 @@ def _create_and_generate_real_clip(
     assert clip["audioArtifact"]["channels"] == 1
     assert clip["audioArtifact"]["sampleWidthBytes"] == 2
     return audition_session, clip
+
+
+def _approve_project_pronunciation(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    *,
+    project_id: str,
+    pronunciation: str,
+    key: str,
+    supersedes_entry_id: str | None,
+) -> dict[str, Any]:
+    dictionary = _workspace(client, auth_headers, project_id)["currentDictionary"]
+    assert dictionary is not None
+    created = client.post(
+        f"/api/v1/projects/{project_id}/pronunciations/entries",
+        headers=auth_headers,
+        json={
+            "expectedDictionaryRevision": dictionary["revision"],
+            "expectedDictionaryFingerprint": dictionary["dictionaryFingerprint"],
+            "writtenForm": "Harbor",
+            "language": "en",
+            "locale": None,
+            "scope": "project",
+            "scopeId": None,
+            "representation": "provider_neutral",
+            "pronunciation": pronunciation,
+            "ipa": None,
+            "providerId": None,
+            "providerCompiledValue": None,
+            "caseSensitive": False,
+            "matchRule": "whole_word",
+            "priority": 100,
+            "reason": "Review repository-owned synthetic pronunciation evidence.",
+            "supersedesEntryId": supersedes_entry_id,
+            "idempotencyKey": f"{key}-create",
+        },
+    )
+    assert created.status_code == 200, created.text
+    pending = created.json()
+    assert pending["entry"]["verificationState"] == "pending"
+    decided = client.post(
+        (
+            f"/api/v1/projects/{project_id}/pronunciations/entries/"
+            f"{pending['entry']['entryId']}/decisions"
+        ),
+        headers=auth_headers,
+        json={
+            "decision": "approve",
+            "expectedEntryRevision": pending["entry"]["revision"],
+            "expectedEntryFingerprint": pending["entry"]["entryFingerprint"],
+            "expectedDictionaryRevision": pending["dictionary"]["revision"],
+            "expectedDictionaryFingerprint": pending["dictionary"]["dictionaryFingerprint"],
+            "rationale": "Approve the reviewed repository-owned synthetic pronunciation.",
+            "idempotencyKey": f"{key}-approve",
+        },
+    )
+    assert decided.status_code == 200, decided.text
+    result = decided.json()
+    assert result["entry"]["verificationState"] == "approved"
+    return cast(dict[str, Any], result)
 
 
 def _create_and_generate_fixture_clip(
@@ -1198,6 +1259,164 @@ def test_undecided_listening_disposition_is_idempotent_and_restart_safe(
         )
         assert restored_review["state"] == "changes_requested"
         assert workspace["voiceReadinessSnapshot"] is None
+
+
+def test_real_pronunciation_and_activation_invalidation_project_workspace_idempotently(
+    app: FastAPI,
+    client: TestClient,
+    auth_headers: dict[str, str],
+    settings: ServiceSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id, _run, (narrator_role_id, _character_role_id) = (
+        _prepare_real_narrator_and_character_cast(client, auth_headers)
+    )
+    calls = _activate_real_provider(
+        app,
+        settings,
+        monkeypatch,
+        project_id=project_id,
+    )
+    original = _approve_project_pronunciation(
+        client,
+        auth_headers,
+        project_id=project_id,
+        pronunciation="HAR-bor",
+        key="phase3b1-workspace-harbor-original",
+        supersedes_entry_id=None,
+    )
+    audition_session, clip = _create_and_generate_real_clip(
+        client,
+        auth_headers,
+        project_id=project_id,
+        role_id=narrator_role_id,
+        key="phase3b1-workspace-harbor-probe",
+        text="Harbor lanterns glowed beside the quiet water.",
+        test_activation_failures=False,
+        generation_errors=[],
+    )
+    assert len(calls) == 1
+    frozen_activation = audition_session["governedLocalVoiceActivation"]
+
+    changed = _approve_project_pronunciation(
+        client,
+        auth_headers,
+        project_id=project_id,
+        pronunciation="HAR-bore",
+        key="phase3b1-workspace-harbor-supersession",
+        supersedes_entry_id=original["entry"]["entryId"],
+    )
+    assert changed["entry"]["supersedesEntryId"] == original["entry"]["entryId"]
+    assert changed["invalidatedClipIds"] == [clip["auditionClipId"]]
+    assert changed["invalidatedClipCount"] == 1
+    assert changed["invalidatedClipIdsTruncated"] is False
+    assert changed["preservedClipIds"] == []
+    assert changed["preservedClipCount"] == 0
+    assert changed["preservedClipIdsTruncated"] is False
+    assert changed["invalidatedGateIds"] == [
+        "pronunciation_review",
+        "voice_readiness_review",
+    ]
+
+    projected_roles: list[dict[str, Any]] = []
+    for _attempt in range(3):
+        response = client.get(
+            f"/api/v1/projects/{project_id}/auditions/workspace",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        workspace = response.json()["workspace"]
+        assert workspace["currentDictionary"] == changed["dictionary"]
+        role = next(
+            value
+            for value in workspace["roles"]["items"]
+            if value["roleId"] == narrator_role_id
+        )
+        assert role["latestSessionId"] == audition_session["auditionSessionId"]
+        assert role["latestClipId"] == clip["auditionClipId"]
+        assert role["generationRequest"] is None
+        assert role["sessionEvidence"] is not None
+        assert role["sessionEvidence"]["pronunciationDictionaryRevision"] == (
+            changed["dictionary"]["revision"]
+        )
+        assert role["sessionEvidence"]["pronunciationDictionaryFingerprint"] == (
+            changed["dictionary"]["dictionaryFingerprint"]
+        )
+        projected_roles.append(role)
+    assert projected_roles[1:] == projected_roles[:-1]
+
+    auditions = cast(AuditionRepository, app.state.auditions)
+    with auditions.database.session() as database_session:
+        invalidations = list(
+            database_session.scalars(
+                select(AuditionEvidenceInvalidationRow).where(
+                    AuditionEvidenceInvalidationRow.clip_id == clip["auditionClipId"]
+                )
+            )
+        )
+        persisted_session = database_session.get(
+            AuditionSessionRow,
+            audition_session["auditionSessionId"],
+        )
+        assert persisted_session is not None
+        assert persisted_session.state == "invalidated"
+        assert auditions._governed_local_voice_activation_wire(
+            database_session,
+            persisted_session,
+        ) == frozen_activation
+    assert [(value.source_kind, value.reason_code) for value in invalidations] == [
+        ("pronunciation_entry", "PRONUNCIATION_ENTRY_CHANGED")
+    ]
+
+    with auditions.database.session() as database_session:
+        persisted_session = database_session.get(
+            AuditionSessionRow,
+            audition_session["auditionSessionId"],
+        )
+        assert persisted_session is not None
+        provenance = parse_json(persisted_session.provenance_json, {})
+        assert isinstance(provenance, dict)
+        details = provenance.get("details")
+        assert isinstance(details, dict)
+        assert details.pop("governedLocalVoiceActivation") == frozen_activation
+        persisted_session.provenance_json = canonical_json(provenance)
+
+    activation_drift_roles: list[dict[str, Any]] = []
+    for _attempt in range(3):
+        response = client.get(
+            f"/api/v1/projects/{project_id}/auditions/workspace",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        workspace = response.json()["workspace"]
+        role = next(
+            value
+            for value in workspace["roles"]["items"]
+            if value["roleId"] == narrator_role_id
+        )
+        assert role["latestSessionId"] == audition_session["auditionSessionId"]
+        assert role["latestClipId"] == clip["auditionClipId"]
+        assert role["generationRequest"] is None
+        activation_drift_roles.append(role)
+    assert activation_drift_roles[1:] == activation_drift_roles[:-1]
+
+    with auditions.database.session() as database_session:
+        invalidations = list(
+            database_session.scalars(
+                select(AuditionEvidenceInvalidationRow)
+                .where(AuditionEvidenceInvalidationRow.clip_id == clip["auditionClipId"])
+                .order_by(AuditionEvidenceInvalidationRow.created_at)
+            )
+        )
+    assert [(value.source_kind, value.reason_code) for value in invalidations] == [
+        ("pronunciation_entry", "PRONUNCIATION_ENTRY_CHANGED"),
+        ("provider", "GOVERNED_LOCAL_VOICE_ACTIVATION_CHANGED"),
+    ]
+    activation_invalidation = invalidations[1]
+    assert activation_invalidation.source_record_id == audition_session["auditionSessionId"]
+    assert activation_invalidation.previous_fingerprint != (
+        activation_invalidation.current_fingerprint
+    )
 
 
 def test_real_narrator_and_character_product_path_requires_activation_and_listening(

@@ -233,37 +233,32 @@ describe("AuditionsWorkspace", () => {
     }
   );
 
-  it("refreshes a terminal audition job once across fresh session identities", async () => {
+  it("retains a restored terminal audition job without polling or reloading", async () => {
     const api = createApi();
     const session = {
       ...auditionSession(),
       jobId: "audition-job-1"
     };
-    vi.mocked(api.auditions.listSessions).mockImplementation(async () =>
+    vi.mocked(api.auditions.listSessions).mockResolvedValue(
       ok({
         correlationId: "correlation-sessions-terminal",
         projectId: "project-1",
         pageSize: 1,
         total: 1,
-        items: [{ ...session }]
+        items: [session]
       })
     );
-    vi.mocked(api.jobs.get)
-      .mockResolvedValueOnce(
-        ok({
-          correlationId: "job-terminal",
-          job: auditionJob("succeeded", 1, "complete")
-        })
-      )
-      .mockResolvedValue(fail("NOT_CONFIGURED"));
+    const terminalJob = auditionJob("succeeded", 1, "complete");
 
-    renderWorkspace(api);
+    renderWorkspace(api, { ...projectDetail(), jobs: [terminalJob] });
 
+    const inspector = await screen.findByTestId("audition-job-inspector");
+    expect(await within(inspector).findByText("Complete")).toBeVisible();
+    expect(within(inspector).getByText("Succeeded")).toBeVisible();
     await waitFor(() =>
-      expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(2)
-    );
-    await waitFor(() =>
-      expect(api.auditions.listSessions).toHaveBeenCalledTimes(2)
+      expect(
+        screen.getByRole("button", { name: "Refresh evidence" })
+      ).toBeEnabled()
     );
     await act(async () => {
       await new Promise<void>((resolve) => {
@@ -271,8 +266,214 @@ describe("AuditionsWorkspace", () => {
       });
     });
 
+    expect(api.jobs.get).not.toHaveBeenCalled();
+    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(1);
+    expect(api.auditions.listSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps full hydration busy and disables evidence refresh until it completes", async () => {
+    const api = createApi();
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations).mockImplementationOnce(
+      async () => {
+        await hydrationGate;
+        return ok({
+          correlationId: "correlation-pronunciations-deferred",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        });
+      }
+    );
+
+    renderWorkspace(api);
+
+    await screen.findByRole("heading", {
+      name: "Auditions & Pronunciation"
+    });
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(1)
+    );
+    const workspace = document.querySelector(".auditions-workspace");
+    expect(workspace).toHaveAttribute("aria-busy", "true");
+    expect(workspace).toHaveAttribute("inert");
+    expect(screen.getByText("Refresh evidence")).toBeDisabled();
+    const generateButton = screen.getAllByText("Generate audition")[0];
+    if (!(generateButton instanceof HTMLButtonElement)) {
+      throw new Error("The audition-generation control was unavailable.");
+    }
+    fireEvent.click(generateButton);
+    expect(api.auditions.generate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      releaseHydration();
+      await hydrationGate;
+    });
+    await waitFor(() => expect(workspace).toHaveAttribute("aria-busy", "false"));
+    expect(
+      screen.getByRole("button", { name: "Refresh evidence" })
+    ).toBeEnabled();
+  });
+
+  it("serializes a terminal-job refresh behind an active workspace hydration", async () => {
+    const api = createApi();
+    const session = {
+      ...auditionSession(),
+      jobId: "audition-job-1"
+    };
+    vi.mocked(api.auditions.listSessions).mockResolvedValue(
+      ok({
+        correlationId: "correlation-sessions-serialized",
+        projectId: "project-1",
+        pageSize: 1,
+        total: 1,
+        items: [session]
+      })
+    );
+    vi.mocked(api.jobs.get).mockResolvedValue(
+      ok({
+        correlationId: "job-terminal-serialized",
+        job: auditionJob("succeeded", 1, "complete")
+      })
+    );
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations).mockImplementationOnce(
+      async () => {
+        await hydrationGate;
+        return ok({
+          correlationId: "correlation-pronunciations-serialized",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        });
+      }
+    );
+
+    renderWorkspace(api);
+
+    await waitFor(() => expect(api.jobs.get).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(1)
+    );
+    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      releaseHydration();
+      await hydrationGate;
+    });
+    await waitFor(() =>
+      expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh evidence" })
+      ).toBeEnabled()
+    );
     expect(api.jobs.get).toHaveBeenCalledTimes(1);
-    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds a queued hydration to the new project during a deferred rerender", async () => {
+    const api = createApi();
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations).mockImplementationOnce(
+      async () => {
+        await hydrationGate;
+        return ok({
+          correlationId: "correlation-pronunciations-old-project",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [
+            {
+              ...pronunciationEntry(),
+              writtenForm: "Old project only"
+            }
+          ]
+        });
+      }
+    );
+    const onNotice = vi.fn();
+    const onError = vi.fn();
+    const firstProject = projectDetail();
+    const secondProject: ProjectDetail = {
+      ...projectDetail(),
+      project: {
+        ...projectDetail().project,
+        projectId: "project-2",
+        name: "Second synthetic project"
+      }
+    };
+    const rendered = render(
+      <AuditionsWorkspace
+        project={firstProject}
+        api={api}
+        connected
+        onNotice={onNotice}
+        onError={onError}
+      />
+    );
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(1)
+    );
+
+    rendered.rerender(
+      <AuditionsWorkspace
+        project={secondProject}
+        api={api}
+        connected
+        onNotice={onNotice}
+        onError={onError}
+      />
+    );
+    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      releaseHydration();
+      await hydrationGate;
+    });
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(2)
+    );
+    expect(api.auditions.getWorkspace).toHaveBeenNthCalledWith(2, {
+      projectId: "project-2",
+      roleLimit: 12
+    });
+    expect(api.auditions.listModelPackages).toHaveBeenLastCalledWith({
+      projectId: "project-2",
+      limit: 50
+    });
+    expect(api.auditions.listSessions).toHaveBeenLastCalledWith({
+      projectId: "project-2",
+      limit: 50
+    });
+    expect(api.auditions.listClips).toHaveBeenLastCalledWith({
+      projectId: "project-2",
+      limit: 50
+    });
+    expect(api.auditions.listPronunciations).toHaveBeenLastCalledWith({
+      projectId: "project-2",
+      limit: 50,
+      expectedDictionaryRevision: 1,
+      expectedDictionaryFingerprint: digest
+    });
+    expect(screen.queryByText("Old project only")).not.toBeInTheDocument();
   });
 
   it("creates an explicit governed pronunciation-test script", async () => {
@@ -611,6 +812,9 @@ describe("AuditionsWorkspace", () => {
     const user = userEvent.setup();
     renderWorkspace(api);
     await screen.findByText("Harbor");
+    await waitFor(() =>
+      expect(screen.getByText("Refresh evidence")).toBeEnabled()
+    );
 
     await user.type(
       screen.getByLabelText("Pronunciation decision rationale"),
@@ -1661,10 +1865,13 @@ describe("AuditionsWorkspace", () => {
   });
 });
 
-function renderWorkspace(api: CinematicStoryDesktopApi) {
+function renderWorkspace(
+  api: CinematicStoryDesktopApi,
+  project: ProjectDetail = projectDetail()
+) {
   return render(
     <AuditionsWorkspace
-      project={projectDetail()}
+      project={project}
       api={api}
       connected
       onNotice={vi.fn()}

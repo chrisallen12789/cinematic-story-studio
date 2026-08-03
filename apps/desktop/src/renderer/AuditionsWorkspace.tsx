@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -74,6 +75,12 @@ interface ReviewHistoryState {
 interface ReviewHistoryCollection {
   readonly projectId: string;
   readonly byScope: Readonly<Record<string, ReviewHistoryState>>;
+}
+
+interface WorkspaceLoadRequest {
+  readonly projectId: string;
+  readonly generation: number;
+  readonly hydrate: (generation: number) => Promise<void>;
 }
 
 const collectionPageLimit = 50;
@@ -251,8 +258,19 @@ export function AuditionsWorkspace({
   >(null);
   const [jobPollExhausted, setJobPollExhausted] = useState(false);
   const [jobRefreshToken, setJobRefreshToken] = useState(0);
+  const [jobPollingSuppressed, setJobPollingSuppressed] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const loadGeneration = useRef(0);
+  const currentProjectId = useRef<string | null>(projectId);
+  const workspaceLoadPromise = useRef<Promise<void> | null>(null);
+  const workspaceLoadRequest = useRef<WorkspaceLoadRequest | null>(null);
+
+  useLayoutEffect(() => {
+    currentProjectId.current = projectId;
+    return () => {
+      currentProjectId.current = null;
+    };
+  }, [projectId]);
 
   const replaceSessionPage = useCallback(
     (items: readonly AuditionSession[]) => {
@@ -332,33 +350,50 @@ export function AuditionsWorkspace({
     let disposed = false;
     queueMicrotask(() => {
       if (disposed) return;
-      setInspectedJobId(selectedSessionJobId);
-      setJobStatus(
+      const restoredJob =
         selectedSessionJobId === null
           ? null
-          : (project.jobs?.find((job) => job.jobId === selectedSessionJobId) ??
-              null)
+          : (project.jobs?.find(
+              (job) => job.jobId === selectedSessionJobId
+            ) ?? null);
+      const restoredJobIsTerminal =
+        restoredJob !== null &&
+        restoredJob.projectId === projectId &&
+        restoredJob.target.type === "audition_session" &&
+        restoredJob.target.id === selectedSession?.auditionSessionId &&
+        terminalJobStates.has(restoredJob.state);
+      setInspectedJobId(selectedSessionJobId);
+      setJobStatus(restoredJob);
+      setJobLoading(
+        selectedSessionJobId !== null && !restoredJobIsTerminal
       );
-      setJobLoading(selectedSessionJobId !== null);
+      setJobPollingSuppressed(restoredJobIsTerminal);
       setJobControlBusy(null);
       setJobPollExhausted(false);
     });
     return () => {
       disposed = true;
     };
-  }, [project.jobs, selectedSession?.auditionSessionId, selectedSessionJobId]);
+  }, [
+    project.jobs,
+    projectId,
+    selectedSession?.auditionSessionId,
+    selectedSessionJobId
+  ]);
 
-  const loadWorkspace = useCallback(async (generation = loadGeneration.current) => {
-    setLoading(true);
+  const hydrateWorkspace = useCallback(async (generation: number) => {
+    const requestIsCurrent = () =>
+      generation === loadGeneration.current &&
+      projectId === currentProjectId.current;
+    if (!requestIsCurrent()) return;
     onError(null);
     const overview = await api.auditions.getWorkspace({
       projectId,
       roleLimit: rolePageSize
     });
-    if (generation !== loadGeneration.current) return;
+    if (!requestIsCurrent()) return;
     if (!overview.ok) {
       onError(overview.error);
-      setLoading(false);
       return;
     }
     const next = overview.value.workspace;
@@ -371,23 +406,11 @@ export function AuditionsWorkspace({
       )
     );
 
-    const requests: [
-      ReturnType<CinematicStoryDesktopApi["auditions"]["listModelPackages"]>,
-      ReturnType<CinematicStoryDesktopApi["auditions"]["listSessions"]>,
-      ReturnType<CinematicStoryDesktopApi["auditions"]["listClips"]>
-    ] = [
-      api.auditions.listModelPackages({
-        projectId,
-        limit: collectionPageLimit
-      }),
-      api.auditions.listSessions({
-        projectId,
-        limit: collectionPageLimit
-      }),
-      api.auditions.listClips({ projectId, limit: collectionPageLimit })
-    ];
-    const [modelResult, sessionResult, clipResult] = await Promise.all(requests);
-    if (generation !== loadGeneration.current) return;
+    const modelResult = await api.auditions.listModelPackages({
+      projectId,
+      limit: collectionPageLimit
+    });
+    if (!requestIsCurrent()) return;
     if (modelResult.ok) {
       setModels(
         modelResult.value.items.map((item) => ({
@@ -415,6 +438,12 @@ export function AuditionsWorkspace({
       setModelPage(emptyCollectionPage());
       onError(modelResult.error);
     }
+
+    const sessionResult = await api.auditions.listSessions({
+      projectId,
+      limit: collectionPageLimit
+    });
+    if (!requestIsCurrent()) return;
     if (sessionResult.ok) {
       replaceSessionPage(sessionResult.value.items);
       setSessionPage(
@@ -429,6 +458,12 @@ export function AuditionsWorkspace({
       setSessionPage(emptyCollectionPage());
       onError(sessionResult.error);
     }
+
+    const clipResult = await api.auditions.listClips({
+      projectId,
+      limit: collectionPageLimit
+    });
+    if (!requestIsCurrent()) return;
     if (clipResult.ok) {
       replaceClipPage(clipResult.value.items);
       setClipPage(
@@ -452,27 +487,25 @@ export function AuditionsWorkspace({
         expectedDictionaryFingerprint:
           next.currentDictionary.dictionaryFingerprint
       });
-      if (generation === loadGeneration.current) {
-        if (pronunciationResult.ok) {
-          replacePronunciationPage(pronunciationResult.value.items);
-          setPronunciationPage(
-            firstCollectionPage(
-              pronunciationResult.value.items.length,
-              pronunciationResult.value.total,
-              pronunciationResult.value.nextCursor ?? null
-            )
-          );
-        } else {
-          setPronunciations([]);
-          setPronunciationPage(emptyCollectionPage());
-          onError(pronunciationResult.error);
-        }
+      if (!requestIsCurrent()) return;
+      if (pronunciationResult.ok) {
+        replacePronunciationPage(pronunciationResult.value.items);
+        setPronunciationPage(
+          firstCollectionPage(
+            pronunciationResult.value.items.length,
+            pronunciationResult.value.total,
+            pronunciationResult.value.nextCursor ?? null
+          )
+        );
+      } else {
+        setPronunciations([]);
+        setPronunciationPage(emptyCollectionPage());
+        onError(pronunciationResult.error);
       }
     } else {
       setPronunciations([]);
       setPronunciationPage(emptyCollectionPage());
     }
-    if (generation === loadGeneration.current) setLoading(false);
   }, [
     api,
     onError,
@@ -481,6 +514,48 @@ export function AuditionsWorkspace({
     replacePronunciationPage,
     replaceSessionPage
   ]);
+
+  const loadWorkspace = useCallback(
+    (generation = loadGeneration.current): Promise<void> => {
+      const activeLoad = workspaceLoadPromise.current;
+      if (
+        projectId !== currentProjectId.current ||
+        generation !== loadGeneration.current
+      ) {
+        return activeLoad ?? Promise.resolve();
+      }
+      workspaceLoadRequest.current = {
+        projectId,
+        generation,
+        hydrate: hydrateWorkspace
+      };
+      if (workspaceLoadPromise.current !== null) {
+        return workspaceLoadPromise.current;
+      }
+
+      const run = (async () => {
+        setLoading(true);
+        try {
+          while (workspaceLoadRequest.current !== null) {
+            const request = workspaceLoadRequest.current;
+            workspaceLoadRequest.current = null;
+            if (
+              request.projectId === currentProjectId.current &&
+              request.generation === loadGeneration.current
+            ) {
+              await request.hydrate(request.generation);
+            }
+          }
+        } finally {
+          workspaceLoadPromise.current = null;
+          setLoading(false);
+        }
+      })();
+      workspaceLoadPromise.current = run;
+      return run;
+    },
+    [hydrateWorkspace, projectId]
+  );
 
   useEffect(() => {
     const generation = ++loadGeneration.current;
@@ -495,7 +570,8 @@ export function AuditionsWorkspace({
     if (
       !connected ||
       inspectedJobId === null ||
-      selectedSessionEvidenceId === null
+      selectedSessionEvidenceId === null ||
+      jobPollingSuppressed
     ) {
       queueMicrotask(() => {
         if (!disposed) setJobLoading(false);
@@ -532,6 +608,7 @@ export function AuditionsWorkspace({
       }
       setJobStatus(job);
       if (terminalJobStates.has(job.state)) {
+        setJobPollingSuppressed(true);
         void loadWorkspace();
         return;
       }
@@ -557,6 +634,7 @@ export function AuditionsWorkspace({
     api,
     connected,
     inspectedJobId,
+    jobPollingSuppressed,
     jobRefreshToken,
     loadWorkspace,
     onError,
@@ -570,7 +648,7 @@ export function AuditionsWorkspace({
     successMessage: string,
     afterSuccess?: () => Promise<void>
   ): Promise<T | null> {
-    if (!connected || busy !== null) return null;
+    if (!connected || busy !== null || loading) return null;
     setBusy(key);
     onError(null);
     try {
@@ -810,6 +888,7 @@ export function AuditionsWorkspace({
     entry: PronunciationEntry,
     decision: "approve" | "request_changes" | "reject"
   ) {
+    if (loading) return;
     const dictionary = workspace?.currentDictionary;
     const rationale = pronunciationDecisionRationales[entry.entryId]?.trim();
     if (dictionary === null || dictionary === undefined) return;
@@ -912,6 +991,7 @@ export function AuditionsWorkspace({
   }
 
   async function savePronunciationTest() {
+    if (loading) return;
     const text = pronunciationTestText.trim();
     if (text.length === 0 || selectedSession === null || workspace === null) {
       return;
@@ -1025,6 +1105,7 @@ export function AuditionsWorkspace({
       `Audition generation was queued for ${role.displayLabel}.`
     );
     if (result !== null) {
+      setJobPollingSuppressed(false);
       setInspectedJobId(result.jobId);
       setJobStatus(null);
       setJobRefreshToken((current) => current + 1);
@@ -1037,6 +1118,7 @@ export function AuditionsWorkspace({
   ) {
     if (
       !connected ||
+      loading ||
       selectedSession === null ||
       jobStatus === null ||
       jobControlBusy !== null
@@ -1066,6 +1148,7 @@ export function AuditionsWorkspace({
       return;
     }
     setJobStatus(job);
+    setJobPollingSuppressed(false);
     setInspectedJobId(job.jobId);
     setJobRefreshToken((current) => current + 1);
     onNotice(`The audition job ${action} result is ${humanize(job.state)}.`);
@@ -1073,6 +1156,7 @@ export function AuditionsWorkspace({
   }
 
   async function createSession(role: AuditionRoleStatus) {
+    if (loading) return;
     if (role.sessionEvidence === null) return;
     const restrictedActivation = restrictedActivationForRole(role);
     if (restrictedActivation === null) return;
@@ -1168,6 +1252,7 @@ export function AuditionsWorkspace({
     item: (typeof models)[number],
     operation: "install" | "repair"
   ) {
+    if (loading) return;
     const reason = modelPackageReason.trim();
     if (!restrictedModelUseAcknowledged || reason.length === 0) {
       onError({
@@ -1214,6 +1299,7 @@ export function AuditionsWorkspace({
     decision: "approve" | "request_changes" | "reject",
     listeningDisposition?: "undecided"
   ) {
+    if (loading) return;
     const rationale = reviewRationales[review.reviewId]?.trim();
     if (rationale === undefined || rationale.length === 0) {
       onError({
@@ -1321,6 +1407,7 @@ export function AuditionsWorkspace({
   }
 
   async function loadAudio(clip: AuditionClip) {
+    if (loading) return;
     if (
       clip.audioArtifact.availability !== "present" ||
       !clip.audioArtifact.playbackEligible
@@ -1368,6 +1455,7 @@ export function AuditionsWorkspace({
   }
 
   async function clearAuditionCache() {
+    if (loading) return;
     const reason = cacheClearReason.trim();
     if (reason.length === 0) {
       onError({
@@ -1463,7 +1551,11 @@ export function AuditionsWorkspace({
   const rolePageCount = Math.max(1, Math.ceil(rolePage.total / rolePageSize));
 
   return (
-    <section className="auditions-workspace">
+    <section
+      className="auditions-workspace"
+      aria-busy={loading}
+      inert={loading}
+    >
       <header className="auditions-heading">
         <div>
           <span className="eyebrow">Phase 3B · local speech</span>
@@ -1476,7 +1568,7 @@ export function AuditionsWorkspace({
         <button
           type="button"
           onClick={() => void loadWorkspace()}
-          disabled={!connected || busy !== null}
+          disabled={!connected || busy !== null || loading}
         >
           Refresh evidence
         </button>
@@ -2100,9 +2192,10 @@ export function AuditionsWorkspace({
                 <strong>Job {shortId(inspectedJobId)}</strong>
                 <button
                   type="button"
-                  onClick={() =>
-                    setJobRefreshToken((current) => current + 1)
-                  }
+                  onClick={() => {
+                    setJobPollingSuppressed(false);
+                    setJobRefreshToken((current) => current + 1);
+                  }}
                   disabled={!connected || jobLoading || jobControlBusy !== null}
                 >
                   Refresh job

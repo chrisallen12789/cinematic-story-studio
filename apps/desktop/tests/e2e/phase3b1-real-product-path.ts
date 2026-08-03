@@ -86,6 +86,7 @@ const governedInventoryFingerprint =
 const pronunciationTerm = "Harbor";
 const supersedingPronunciation = "HAR-bore";
 const generationTimeoutMs = 300_000;
+const workspaceHydrationTimeoutMs = 120_000;
 const projectContextReadRetryLimit = 5;
 const projectContextReadRetryDelayMs = 250;
 const retryableProjectContextReadCodes = new Set([
@@ -1464,14 +1465,29 @@ Final decision: ____________________
 
 async function proveComparisonPlaybackUi(page: Page): Promise<void> {
   await openAuditions(page);
+  const workspace = page.locator(".auditions-workspace");
   const refresh = page.getByRole("button", {
     name: "Refresh evidence",
     exact: true
   });
   try {
-    await expect(refresh).toBeEnabled({ timeout: 30_000 });
+    await expect(refresh).toBeEnabled({
+      timeout: workspaceHydrationTimeoutMs
+    });
     await throwIfVisibleRendererError(page);
-    await refresh.click();
+    await Promise.all([
+      expect(workspace).toHaveAttribute("aria-busy", "true", {
+        timeout: workspaceHydrationTimeoutMs
+      }),
+      refresh.click()
+    ]);
+    await expect(workspace).toHaveAttribute("aria-busy", "false", {
+      timeout: workspaceHydrationTimeoutMs
+    });
+    await expect(refresh).toBeEnabled({
+      timeout: workspaceHydrationTimeoutMs
+    });
+    await throwIfVisibleRendererError(page);
     const realCards = page.locator(".clip-card").filter({
       hasText: "Real-provider clip"
     });
@@ -1647,9 +1663,29 @@ async function activeProjectId(page: Page): Promise<string> {
 
 async function openAuditions(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Auditions", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Auditions & Pronunciation", exact: true })
-  ).toBeVisible({ timeout: 30_000 });
+  const workspace = page.locator(".auditions-workspace");
+  const refresh = page.getByRole("button", {
+    name: "Refresh evidence",
+    exact: true
+  });
+  try {
+    await expect(
+      page.getByRole("heading", {
+        name: "Auditions & Pronunciation",
+        exact: true
+      })
+    ).toBeVisible({ timeout: workspaceHydrationTimeoutMs });
+    await expect(workspace).toHaveAttribute("aria-busy", "false", {
+      timeout: workspaceHydrationTimeoutMs
+    });
+    await expect(refresh).toBeEnabled({
+      timeout: workspaceHydrationTimeoutMs
+    });
+    await throwIfVisibleRendererError(page);
+  } catch (error) {
+    await throwIfVisibleRendererError(page);
+    throw error;
+  }
 }
 
 async function readWorkspace(

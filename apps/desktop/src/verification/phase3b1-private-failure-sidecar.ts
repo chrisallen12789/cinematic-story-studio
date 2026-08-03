@@ -13,7 +13,7 @@ import type { RejectedLaunchBaselineObservation } from "./packaged-launch-reject
 
 export type { RejectedLaunchBaselineObservation } from "./packaged-launch-rejection";
 
-export const phase3b1PrivateFailureSidecarSchemaVersion = 1 as const;
+export const phase3b1PrivateFailureSidecarSchemaVersion = 2 as const;
 export const maximumPhase3b1PrivateFailureSidecarBytes = 64 * 1024;
 
 export const phase3b1PrivateFailureStages = Object.freeze([
@@ -39,13 +39,23 @@ export const phase3b1PrivateFailureCodes = Object.freeze([
   "launch_timeout",
   "launch_rejected",
   "inventory_failure",
+  "first_window_timeout",
+  "single_instance_lock_not_held",
+  "startup_probe_failed",
   "other"
+] as const);
+
+export const phase3b1PrivateFailureStartupObservationPhases = Object.freeze([
+  "after_root_ownership",
+  "after_first_window_failure"
 ] as const);
 
 export type Phase3b1PrivateFailureStage =
   (typeof phase3b1PrivateFailureStages)[number];
 export type Phase3b1PrivateFailureCode =
   (typeof phase3b1PrivateFailureCodes)[number];
+export type Phase3b1PrivateFailureStartupObservationPhase =
+  (typeof phase3b1PrivateFailureStartupObservationPhases)[number];
 
 export type Phase3b1PrivateFailureJsonValue =
   | null
@@ -66,6 +76,14 @@ export interface Phase3b1PrivateFailureClaims {
   readonly productionReadinessClaimed: false;
 }
 
+export interface Phase3b1PrivateFailureStartupObservation {
+  readonly phase: Phase3b1PrivateFailureStartupObservationPhase;
+  readonly recordedAt: string;
+  readonly appReady: boolean;
+  readonly singleInstanceLockHeld: boolean;
+  readonly browserWindowCount: number;
+}
+
 export interface Phase3b1PrivateFailureSidecar {
   readonly schemaVersion: typeof phase3b1PrivateFailureSidecarSchemaVersion;
   readonly result: "failed";
@@ -76,9 +94,13 @@ export interface Phase3b1PrivateFailureSidecar {
   readonly stage: Phase3b1PrivateFailureStage;
   readonly failureCode: Phase3b1PrivateFailureCode;
   readonly configuredLaunchTimeoutMs: number;
+  readonly configuredFirstWindowTimeoutMs: number;
   readonly startedAt: string;
+  readonly launchReturnedAt: string | null;
+  readonly firstWindowWaitStartedAt: string | null;
   readonly failedAt: string;
   readonly recordedAt: string;
+  readonly startupObservations: readonly Phase3b1PrivateFailureStartupObservation[];
   readonly syntheticGateCompleted: boolean;
   readonly ownershipEstablished: boolean;
   readonly ownedProcessExitClaimed: boolean;
@@ -101,8 +123,12 @@ export interface WritePhase3b1PrivateFailureSidecarInput {
   readonly stage: Phase3b1PrivateFailureStage;
   readonly failureCode: Phase3b1PrivateFailureCode;
   readonly configuredLaunchTimeoutMs: number;
+  readonly configuredFirstWindowTimeoutMs: number;
   readonly startedAt: string;
+  readonly launchReturnedAt: string | null;
+  readonly firstWindowWaitStartedAt: string | null;
   readonly failedAt: string;
+  readonly startupObservations: readonly Phase3b1PrivateFailureStartupObservation[];
   readonly syntheticGateCompleted: boolean;
   readonly ownershipEstablished: boolean;
   readonly ownedProcessExitClaimed: boolean;
@@ -146,6 +172,15 @@ const MAXIMUM_OBSERVATION_ARRAY_LENGTH = 1024;
 const MAXIMUM_OBSERVATION_OBJECT_KEYS = 256;
 const MAXIMUM_OBSERVATION_KEY_LENGTH = 128;
 const MAXIMUM_OBSERVATION_STRING_LENGTH = 4096;
+const MAXIMUM_STARTUP_OBSERVATIONS = 2;
+const MAXIMUM_BROWSER_WINDOW_COUNT = 256;
+const STARTUP_OBSERVATION_KEYS = Object.freeze([
+  "phase",
+  "recordedAt",
+  "appReady",
+  "singleInstanceLockHeld",
+  "browserWindowCount"
+] as const);
 const claims: Phase3b1PrivateFailureClaims = Object.freeze({
   humanListeningClaimed: false,
   naturalnessClaimed: false,
@@ -246,21 +281,43 @@ function createSidecarValue(
   if (!phase3b1PrivateFailureCodes.includes(input.failureCode)) {
     throw new Error("The private failure code was invalid.");
   }
-  if (
-    !Number.isSafeInteger(input.configuredLaunchTimeoutMs) ||
-    input.configuredLaunchTimeoutMs < 1 ||
-    input.configuredLaunchTimeoutMs > 10 * 60 * 1000
-  ) {
-    throw new Error("The configured launch timeout was invalid.");
-  }
+  const configuredLaunchTimeoutMs = requireBoundedTimeout(
+    input.configuredLaunchTimeoutMs,
+    "launch"
+  );
+  const configuredFirstWindowTimeoutMs = requireBoundedTimeout(
+    input.configuredFirstWindowTimeoutMs,
+    "first-window"
+  );
   const startedAt = requireIsoTimestamp(input.startedAt, "start timestamp");
+  const launchReturnedAt = requireNullableIsoTimestamp(
+    input.launchReturnedAt,
+    "launch-return timestamp"
+  );
+  const firstWindowWaitStartedAt = requireNullableIsoTimestamp(
+    input.firstWindowWaitStartedAt,
+    "first-window wait timestamp"
+  );
   const failedAt = requireIsoTimestamp(input.failedAt, "failure timestamp");
   if (
-    Date.parse(startedAt) > Date.parse(failedAt) ||
-    Date.parse(failedAt) > Date.parse(recordedAt)
+    timestampAfter(startedAt, launchReturnedAt ?? failedAt) ||
+    (launchReturnedAt !== null &&
+      timestampAfter(launchReturnedAt, firstWindowWaitStartedAt ?? failedAt)) ||
+    (firstWindowWaitStartedAt !== null && launchReturnedAt === null) ||
+    timestampAfter(firstWindowWaitStartedAt ?? startedAt, failedAt) ||
+    timestampAfter(failedAt, recordedAt)
   ) {
     throw new Error("The private failure timestamps were out of order.");
   }
+  const startupObservations = requireStartupObservations(
+    input.startupObservations,
+    {
+      startedAt,
+      launchReturnedAt,
+      firstWindowWaitStartedAt,
+      failedAt
+    }
+  );
   if (input.ownedProcessExitClaimed && !input.ownershipEstablished) {
     throw new Error(
       "Owned-process exit cannot be claimed without established ownership."
@@ -293,10 +350,14 @@ function createSidecarValue(
     launch: input.launch,
     stage: input.stage,
     failureCode: input.failureCode,
-    configuredLaunchTimeoutMs: input.configuredLaunchTimeoutMs,
+    configuredLaunchTimeoutMs,
+    configuredFirstWindowTimeoutMs,
     startedAt,
+    launchReturnedAt,
+    firstWindowWaitStartedAt,
     failedAt,
     recordedAt,
+    startupObservations,
     syntheticGateCompleted: input.syntheticGateCompleted,
     ownershipEstablished: input.ownershipEstablished,
     ownedProcessExitClaimed: input.ownedProcessExitClaimed,
@@ -304,6 +365,160 @@ function createSidecarValue(
     rejectedLaunchBaselineObservation,
     claims
   };
+}
+
+function requireBoundedTimeout(value: number, label: string): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > 10 * 60 * 1000
+  ) {
+    throw new Error(`The configured ${label} timeout was invalid.`);
+  }
+  return value;
+}
+
+function requireNullableIsoTimestamp(
+  value: string | null,
+  label: string
+): string | null {
+  return value === null ? null : requireIsoTimestamp(value, label);
+}
+
+function timestampAfter(left: string, right: string): boolean {
+  return Date.parse(left) > Date.parse(right);
+}
+
+function requireStartupObservations(
+  value: unknown,
+  timestamps: {
+    readonly startedAt: string;
+    readonly launchReturnedAt: string | null;
+    readonly firstWindowWaitStartedAt: string | null;
+    readonly failedAt: string;
+  }
+): readonly Phase3b1PrivateFailureStartupObservation[] {
+  if (!Array.isArray(value) || value.length > MAXIMUM_STARTUP_OBSERVATIONS) {
+    throw new Error("The private failure startup observations were invalid.");
+  }
+
+  const observations = value.map((item: unknown) =>
+    requireStartupObservation(item)
+  );
+  let priorRecordedAt: string | null = null;
+  let priorPhaseIndex = -1;
+  for (const observation of observations) {
+    const phaseIndex =
+      phase3b1PrivateFailureStartupObservationPhases.indexOf(
+        observation.phase
+      );
+    if (
+      timestampAfter(timestamps.startedAt, observation.recordedAt) ||
+      timestampAfter(observation.recordedAt, timestamps.failedAt) ||
+      (priorRecordedAt !== null &&
+        timestampAfter(priorRecordedAt, observation.recordedAt)) ||
+      phaseIndex <= priorPhaseIndex
+    ) {
+      throw new Error(
+        "The private failure startup observations were out of order."
+      );
+    }
+    if (
+      timestamps.launchReturnedAt === null ||
+      timestampAfter(timestamps.launchReturnedAt, observation.recordedAt)
+    ) {
+      throw new Error(
+        "The private failure startup observation preceded the launch return."
+      );
+    }
+    if (
+      observation.phase === "after_root_ownership" &&
+      timestamps.firstWindowWaitStartedAt !== null &&
+      timestampAfter(
+        observation.recordedAt,
+        timestamps.firstWindowWaitStartedAt
+      )
+    ) {
+      throw new Error(
+        "The root-ownership observation followed the first-window wait."
+      );
+    }
+    if (
+      observation.phase === "after_first_window_failure" &&
+      (timestamps.firstWindowWaitStartedAt === null ||
+        timestampAfter(
+          timestamps.firstWindowWaitStartedAt,
+          observation.recordedAt
+        ))
+    ) {
+      throw new Error(
+        "The first-window failure observation preceded its wait."
+      );
+    }
+    priorRecordedAt = observation.recordedAt;
+    priorPhaseIndex = phaseIndex;
+  }
+  return Object.freeze(observations);
+}
+
+function requireStartupObservation(
+  value: unknown
+): Phase3b1PrivateFailureStartupObservation {
+  if (!isPlainRecord(value)) {
+    throw new Error("The private failure startup observation was invalid.");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== STARTUP_OBSERVATION_KEYS.length ||
+    keys.some(
+      (key) =>
+        typeof key !== "string" ||
+        !STARTUP_OBSERVATION_KEYS.includes(
+          key as (typeof STARTUP_OBSERVATION_KEYS)[number]
+        )
+    ) ||
+    STARTUP_OBSERVATION_KEYS.some((key) => {
+      const descriptor = descriptors[key];
+      return descriptor === undefined || !("value" in descriptor);
+    })
+  ) {
+    throw new Error(
+      "The private failure startup observation fields were invalid."
+    );
+  }
+
+  const phase = descriptors.phase?.value as unknown;
+  const recordedAtValue = descriptors.recordedAt?.value as unknown;
+  const appReady = descriptors.appReady?.value as unknown;
+  const singleInstanceLockHeld =
+    descriptors.singleInstanceLockHeld?.value as unknown;
+  const browserWindowCount = descriptors.browserWindowCount?.value as unknown;
+  if (
+    typeof phase !== "string" ||
+    !phase3b1PrivateFailureStartupObservationPhases.includes(
+      phase as Phase3b1PrivateFailureStartupObservationPhase
+    ) ||
+    typeof recordedAtValue !== "string" ||
+    typeof appReady !== "boolean" ||
+    typeof singleInstanceLockHeld !== "boolean" ||
+    !Number.isSafeInteger(browserWindowCount) ||
+    (browserWindowCount as number) < 0 ||
+    (browserWindowCount as number) > MAXIMUM_BROWSER_WINDOW_COUNT
+  ) {
+    throw new Error("The private failure startup observation was invalid.");
+  }
+
+  return Object.freeze({
+    phase: phase as Phase3b1PrivateFailureStartupObservationPhase,
+    recordedAt: requireIsoTimestamp(
+      recordedAtValue,
+      "startup observation timestamp"
+    ),
+    appReady,
+    singleInstanceLockHeld,
+    browserWindowCount: browserWindowCount as number
+  });
 }
 
 function sanitizeObservationRecord(

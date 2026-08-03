@@ -90,6 +90,7 @@ import {
 } from "../../src/verification/packaged-process-inventory";
 import {
   observeRelevantProcessBaselineAfterRejectedLaunch,
+  packagedElectronFirstWindowTimeout,
   packagedElectronLaunchTimeout,
   type PackagedElectronLaunchPurpose,
   type RejectedLaunchBaselineObservation
@@ -97,7 +98,8 @@ import {
 import {
   writePhase3b1PrivateFailureSidecar,
   type Phase3b1PrivateFailureCode,
-  type Phase3b1PrivateFailureStage
+  type Phase3b1PrivateFailureStage,
+  type Phase3b1PrivateFailureStartupObservation
 } from "../../src/verification/phase3b1-private-failure-sidecar";
 import {
   observeStableOwnedProcessNetworkEndpoints,
@@ -149,6 +151,7 @@ const correctionReason = "packaged fixture correction";
 const ownershipSampleIntervalMs = 100;
 const ownershipSampleDeadlineMs = 10_000;
 const gracefulApplicationShutdownTimeoutMs = 30_000;
+const phase3b1StartupProbeTimeoutMs = 10_000;
 
 test.describe("packaged desktop verification", () => {
   test.skip(
@@ -249,6 +252,12 @@ test.describe("packaged desktop verification", () => {
     let phase3b1Stage: Phase3b1PrivateFailureStage | null = null;
     let phase3b1CurrentLaunch: 3 | 4 | null = null;
     let phase3b1StartedAt: string | null = null;
+    let phase3b1LaunchReturnedAt: string | null = null;
+    let phase3b1FirstWindowWaitStartedAt: string | null = null;
+    let phase3b1OperationFailedAt: string | null = null;
+    let phase3b1ExplicitFailureCode: Phase3b1PrivateFailureCode | null = null;
+    let phase3b1StartupObservations:
+      Phase3b1PrivateFailureStartupObservation[] = [];
     let phase3b1RejectedLaunchObservation:
       | RejectedLaunchBaselineObservation
       | null = null;
@@ -318,24 +327,117 @@ test.describe("packaged desktop verification", () => {
       failureCode = packagedFailureCode(stage, undefined);
       await writeMachineResult("failed", false);
     };
+    const beginPhase3b1Launch = (launch: 3 | 4) => {
+      phase3b1CurrentLaunch = launch;
+      phase3b1StartedAt = new Date().toISOString();
+      phase3b1LaunchReturnedAt = null;
+      phase3b1FirstWindowWaitStartedAt = null;
+      phase3b1OperationFailedAt = null;
+      phase3b1ExplicitFailureCode = null;
+      phase3b1StartupObservations = [];
+      phase3b1CurrentLaunchOwnershipEstablished = false;
+      phase3b1CurrentLaunchOwnedProcessExitClaimed = false;
+      phase3b1RejectedLaunchObservation = null;
+    };
+    const observePhase3b1Startup = async (
+      application: ElectronApplication,
+      phase: Phase3b1PrivateFailureStartupObservation["phase"]
+    ): Promise<Phase3b1PrivateFailureStartupObservation> => {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      try {
+        const state = await Promise.race([
+          application.evaluate(({ app, BrowserWindow }) => ({
+            appReady: app.isReady(),
+            singleInstanceLockHeld: app.hasSingleInstanceLock(),
+            browserWindowCount: BrowserWindow.getAllWindows().length
+          })),
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(() => {
+              reject(
+                new Error("The bounded Electron startup probe timed out.")
+              );
+            }, phase3b1StartupProbeTimeoutMs);
+          })
+        ]);
+        if (
+          typeof state.appReady !== "boolean" ||
+          typeof state.singleInstanceLockHeld !== "boolean" ||
+          !Number.isSafeInteger(state.browserWindowCount) ||
+          state.browserWindowCount < 0 ||
+          state.browserWindowCount > 256
+        ) {
+          throw new Error("The Electron startup probe result was invalid.");
+        }
+        const observation: Phase3b1PrivateFailureStartupObservation = {
+          phase,
+          recordedAt: new Date().toISOString(),
+          appReady: state.appReady,
+          singleInstanceLockHeld: state.singleInstanceLockHeld,
+          browserWindowCount: state.browserWindowCount
+        };
+        phase3b1StartupObservations.push(observation);
+        return observation;
+      } finally {
+        if (timeout !== null) {
+          clearTimeout(timeout);
+        }
+      }
+    };
+    const waitForPhase3b1FirstWindow = async (
+      application: ElectronApplication
+    ): Promise<Page> => {
+      let initialObservation: Phase3b1PrivateFailureStartupObservation;
+      try {
+        initialObservation = await observePhase3b1Startup(
+          application,
+          "after_root_ownership"
+        );
+      } catch (error) {
+        phase3b1ExplicitFailureCode = "startup_probe_failed";
+        throw error;
+      }
+      if (!initialObservation.singleInstanceLockHeld) {
+        phase3b1ExplicitFailureCode = "single_instance_lock_not_held";
+        throw new Error(
+          "The owned Electron root did not hold the single-instance lock."
+        );
+      }
+      phase3b1FirstWindowWaitStartedAt = new Date().toISOString();
+      try {
+        return await application.firstWindow({
+          timeout: packagedElectronFirstWindowTimeout("phase3b1_real")
+        });
+      } catch (error) {
+        if (error instanceof Error && error.name === "TimeoutError") {
+          phase3b1ExplicitFailureCode = "first_window_timeout";
+        }
+        try {
+          await observePhase3b1Startup(
+            application,
+            "after_first_window_failure"
+          );
+        } catch {
+          // The primary first-window failure remains authoritative.
+        }
+        throw error;
+      }
+    };
     const launchPhase3b1Packaged = async (
       launch: 3 | 4,
       isolatedPaths: IsolatedPaths,
       shutdownEvidencePath: string,
       beforeLaunch: readonly ProcessIdentity[]
     ): Promise<ElectronApplication> => {
-      phase3b1CurrentLaunch = launch;
-      phase3b1CurrentLaunchOwnershipEstablished = false;
-      phase3b1CurrentLaunchOwnedProcessExitClaimed = false;
-      phase3b1RejectedLaunchObservation = null;
       phase3b1Stage = launch === 3 ? "launch_3" : "launch_4";
       try {
-        return await launchPackaged(
+        const application = await launchPackaged(
           packaged.executablePath,
           isolatedPaths,
           shutdownEvidencePath,
           "phase3b1_real"
         );
+        phase3b1LaunchReturnedAt = new Date().toISOString();
+        return application;
       } catch (launchError) {
         phase3b1Stage =
           launch === 3
@@ -452,7 +554,9 @@ test.describe("packaged desktop verification", () => {
         packaged
       );
       await checkpointStage("readiness_1");
-      const firstPage = await first.firstWindow();
+      const firstPage = await first.firstWindow({
+        timeout: packagedElectronFirstWindowTimeout("synthetic_fixture")
+      });
       await expect(
         firstPage.getByText("Backend ready", { exact: true }).first()
       ).toBeVisible({ timeout: 45_000 });
@@ -727,7 +831,9 @@ test.describe("packaged desktop verification", () => {
         packaged
       );
       await checkpointStage("readiness_2");
-      const secondPage = await second.firstWindow();
+      const secondPage = await second.firstWindow({
+        timeout: packagedElectronFirstWindowTimeout("synthetic_fixture")
+      });
       await expect(
         secondPage.getByText("Backend ready", { exact: true }).first()
       ).toBeVisible({ timeout: 45_000 });
@@ -928,8 +1034,7 @@ test.describe("packaged desktop verification", () => {
         thirdShutdownEvidencePath !== null &&
         fourthShutdownEvidencePath !== null
       ) {
-        phase3b1StartedAt = new Date().toISOString();
-        phase3b1CurrentLaunch = 3;
+        beginPhase3b1Launch(3);
         phase3b1Stage = "prelaunch_inventory_3";
         const beforeThirdLaunch = await queryRelevantProcesses();
         third = await launchPhase3b1Packaged(
@@ -952,7 +1057,7 @@ test.describe("packaged desktop verification", () => {
         }
         phase3b1CurrentLaunchOwnershipEstablished = true;
         phase3b1Stage = "readiness_3";
-        const thirdPage = await third.firstWindow();
+        const thirdPage = await waitForPhase3b1FirstWindow(third);
         await expect(
           thirdPage.getByText("Backend ready", { exact: true }).first()
         ).toBeVisible({ timeout: 45_000 });
@@ -997,10 +1102,7 @@ test.describe("packaged desktop verification", () => {
         third = null;
         thirdOwnership = null;
 
-        phase3b1CurrentLaunch = 4;
-        phase3b1CurrentLaunchOwnershipEstablished = false;
-        phase3b1CurrentLaunchOwnedProcessExitClaimed = false;
-        phase3b1RejectedLaunchObservation = null;
+        beginPhase3b1Launch(4);
         phase3b1Stage = "prelaunch_inventory_4";
         const beforeFourthLaunch = await queryRelevantProcesses();
         fourth = await launchPhase3b1Packaged(
@@ -1023,7 +1125,7 @@ test.describe("packaged desktop verification", () => {
         }
         phase3b1CurrentLaunchOwnershipEstablished = true;
         phase3b1Stage = "readiness_4";
-        const fourthPage = await fourth.firstWindow();
+        const fourthPage = await waitForPhase3b1FirstWindow(fourth);
         await expect(
           fourthPage.getByText("Backend ready", { exact: true }).first()
         ).toBeVisible({ timeout: 45_000 });
@@ -1112,6 +1214,7 @@ test.describe("packaged desktop verification", () => {
         );
       }
     } catch (error) {
+      phase3b1OperationFailedAt = new Date().toISOString();
       operationError =
         error instanceof Error
           ? error
@@ -1279,15 +1382,26 @@ test.describe("packaged desktop verification", () => {
               `apps/desktop/release/${packaged.version}/win-unpacked/${appExecutableName}`,
             launch: phase3b1CurrentLaunch,
             stage: privateFailureStage,
-            failureCode: phase3b1PrivateFailureCode(
-              privateFailureStage,
-              operationError
-            ),
+            failureCode:
+              phase3b1ExplicitFailureCode ??
+              phase3b1PrivateFailureCode(
+                privateFailureStage,
+                operationError
+              ),
             configuredLaunchTimeoutMs: packagedElectronLaunchTimeout(
               "phase3b1_real"
             ),
+            configuredFirstWindowTimeoutMs:
+              packagedElectronFirstWindowTimeout("phase3b1_real"),
             startedAt: phase3b1StartedAt,
-            failedAt: completedAt,
+            launchReturnedAt: phase3b1LaunchReturnedAt,
+            firstWindowWaitStartedAt:
+              phase3b1FirstWindowWaitStartedAt,
+            failedAt:
+              operationError === null
+                ? completedAt
+                : (phase3b1OperationFailedAt ?? completedAt),
+            startupObservations: phase3b1StartupObservations,
             syntheticGateCompleted,
             ownershipEstablished:
               phase3b1CurrentLaunchOwnershipEstablished,

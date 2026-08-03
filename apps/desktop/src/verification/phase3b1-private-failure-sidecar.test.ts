@@ -32,7 +32,7 @@ afterEach(async () => {
 });
 
 describe("Phase 3B.1 private failure sidecar", () => {
-  it("publishes schema 1 with only the exact governed failure keys", async () => {
+  it("publishes schema 2 with only the exact governed failure keys", async () => {
     const roots = await createEvidenceRoots();
     const input = sidecarInput(roots);
 
@@ -66,9 +66,13 @@ describe("Phase 3B.1 private failure sidecar", () => {
       "stage",
       "failureCode",
       "configuredLaunchTimeoutMs",
+      "configuredFirstWindowTimeoutMs",
       "startedAt",
+      "launchReturnedAt",
+      "firstWindowWaitStartedAt",
       "failedAt",
       "recordedAt",
+      "startupObservations",
       "syntheticGateCompleted",
       "ownershipEstablished",
       "ownedProcessExitClaimed",
@@ -116,6 +120,174 @@ describe("Phase 3B.1 private failure sidecar", () => {
     expect(await readdir(path.join(roots.privateRoot, "failures"))).toEqual([
       result.fileName
     ]);
+  });
+
+  it("records bounded startup probes and the governed startup codes", async () => {
+    const roots = await createEvidenceRoots();
+    const startupObservations = [
+      {
+        phase: "after_root_ownership" as const,
+        recordedAt: "2026-08-02T23:20:02.000Z",
+        appReady: true,
+        singleInstanceLockHeld: true,
+        browserWindowCount: 0
+      },
+      {
+        phase: "after_first_window_failure" as const,
+        recordedAt: "2026-08-02T23:22:02.000Z",
+        appReady: true,
+        singleInstanceLockHeld: true,
+        browserWindowCount: 0
+      }
+    ];
+
+    const result = await writePhase3b1PrivateFailureSidecar(
+      {
+        ...sidecarInput(roots),
+        stage: "readiness_3",
+        failureCode: "first_window_timeout",
+        configuredFirstWindowTimeoutMs: 120_000,
+        launchReturnedAt: "2026-08-02T23:20:01.000Z",
+        firstWindowWaitStartedAt: "2026-08-02T23:20:03.000Z",
+        startupObservations,
+        rejectedLaunchBaselineObservation: null
+      },
+      { now: () => recordedAt }
+    );
+
+    expect(result.value.configuredFirstWindowTimeoutMs).toBe(120_000);
+    expect(result.value.launchReturnedAt).toBe(
+      "2026-08-02T23:20:01.000Z"
+    );
+    expect(result.value.firstWindowWaitStartedAt).toBe(
+      "2026-08-02T23:20:03.000Z"
+    );
+    expect(result.value.startupObservations).toEqual(startupObservations);
+
+    for (const failureCode of [
+      "single_instance_lock_not_held",
+      "startup_probe_failed"
+    ] as const) {
+      const codeResult = await writePhase3b1PrivateFailureSidecar(
+        {
+          ...sidecarInput(roots),
+          stage: "root_ownership_3",
+          failureCode,
+          rejectedLaunchBaselineObservation: null
+        },
+        { now: () => recordedAt }
+      );
+      expect(codeResult.value.failureCode).toBe(failureCode);
+    }
+  });
+
+  it("rejects non-exact or unbounded startup observations", async () => {
+    const roots = await createEvidenceRoots();
+    const validObservation = {
+      phase: "after_root_ownership" as const,
+      recordedAt: "2026-08-02T23:20:02.000Z",
+      appReady: true,
+      singleInstanceLockHeld: true,
+      browserWindowCount: 0
+    };
+    const startupInput = {
+      ...sidecarInput(roots),
+      launchReturnedAt: "2026-08-02T23:20:01.000Z",
+      firstWindowWaitStartedAt: "2026-08-02T23:20:03.000Z",
+      rejectedLaunchBaselineObservation: null
+    };
+
+    await expect(
+      writePhase3b1PrivateFailureSidecar({
+        ...startupInput,
+        startupObservations: [
+          validObservation,
+          {
+            ...validObservation,
+            phase: "after_first_window_failure",
+            recordedAt: "2026-08-02T23:20:04.000Z"
+          },
+          {
+            ...validObservation,
+            phase: "after_first_window_failure",
+            recordedAt: "2026-08-02T23:20:05.000Z"
+          }
+        ]
+      })
+    ).rejects.toThrow("startup observations were invalid");
+
+    await expect(
+      writePhase3b1PrivateFailureSidecar({
+        ...startupInput,
+        startupObservations: [
+          { ...validObservation, browserWindowCount: 257 }
+        ]
+      })
+    ).rejects.toThrow("startup observation was invalid");
+
+    await expect(
+      writePhase3b1PrivateFailureSidecar({
+        ...startupInput,
+        startupObservations: [
+          { ...validObservation, extra: "not governed" }
+        ]
+      } as unknown as WritePhase3b1PrivateFailureSidecarInput)
+    ).rejects.toThrow("observation fields were invalid");
+  });
+
+  it("rejects missing or chronologically invalid startup timestamps", async () => {
+    const roots = await createEvidenceRoots();
+    const validObservation = {
+      phase: "after_root_ownership" as const,
+      recordedAt: "2026-08-02T23:20:02.000Z",
+      appReady: true,
+      singleInstanceLockHeld: true,
+      browserWindowCount: 0
+    };
+
+    await expect(
+      writePhase3b1PrivateFailureSidecar({
+        ...sidecarInput(roots),
+        configuredFirstWindowTimeoutMs: undefined
+      } as unknown as WritePhase3b1PrivateFailureSidecarInput)
+    ).rejects.toThrow("first-window timeout was invalid");
+
+    await expect(
+      writePhase3b1PrivateFailureSidecar({
+        ...sidecarInput(roots),
+        launchReturnedAt: "2026-08-02T23:20:02.000Z",
+        firstWindowWaitStartedAt: "2026-08-02T23:20:01.000Z"
+      })
+    ).rejects.toThrow("timestamps were out of order");
+
+    await expect(
+      writePhase3b1PrivateFailureSidecar({
+        ...sidecarInput(roots),
+        launchReturnedAt: "2026-08-02T23:20:01.000Z",
+        firstWindowWaitStartedAt: "2026-08-02T23:20:03.000Z",
+        startupObservations: [
+          {
+            ...validObservation,
+            phase: "after_first_window_failure",
+            recordedAt: "2026-08-02T23:20:02.000Z"
+          }
+        ]
+      })
+    ).rejects.toThrow("preceded its wait");
+
+    await expect(
+      writePhase3b1PrivateFailureSidecar({
+        ...sidecarInput(roots),
+        launchReturnedAt: "2026-08-02T23:20:01.000Z",
+        firstWindowWaitStartedAt: "2026-08-02T23:20:03.000Z",
+        startupObservations: [
+          {
+            ...validObservation,
+            recordedAt: "2026-08-02T23:20:04.000Z"
+          }
+        ]
+      })
+    ).rejects.toThrow("followed the first-window wait");
   });
 
   it("rejects roots that are not canonical direct children", async () => {
@@ -317,8 +489,12 @@ function sidecarInput(
     stage: "launch_3",
     failureCode: "launch_timeout",
     configuredLaunchTimeoutMs: 120_000,
+    configuredFirstWindowTimeoutMs: 120_000,
     startedAt: "2026-08-02T23:20:00.000Z",
+    launchReturnedAt: null,
+    firstWindowWaitStartedAt: null,
     failedAt: "2026-08-02T23:29:59.000Z",
+    startupObservations: [],
     syntheticGateCompleted: true,
     ownershipEstablished: false,
     ownedProcessExitClaimed: false,

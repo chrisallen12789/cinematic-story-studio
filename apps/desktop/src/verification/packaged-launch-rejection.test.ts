@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  packagedElectronFirstWindowTimeout,
+  packagedElectronFirstWindowTimeoutMs,
   packagedElectronLaunchTimeout,
   packagedElectronLaunchTimeoutMs,
   observeRelevantProcessBaselineAfterRejectedLaunch
@@ -25,6 +27,17 @@ describe("packaged launch rejection evidence", () => {
     });
     expect(packagedElectronLaunchTimeout("synthetic_fixture")).toBe(45_000);
     expect(packagedElectronLaunchTimeout("phase3b1_real")).toBe(120_000);
+  });
+
+  it("keeps fixture first windows at 45 seconds and real first windows at 120 seconds", () => {
+    expect(packagedElectronFirstWindowTimeoutMs).toEqual({
+      synthetic_fixture: 45_000,
+      phase3b1_real: 120_000
+    });
+    expect(packagedElectronFirstWindowTimeout("synthetic_fixture")).toBe(
+      45_000
+    );
+    expect(packagedElectronFirstWindowTimeout("phase3b1_real")).toBe(120_000);
   });
 
   it("proves only two consecutive delta-free allow-listed observations", async () => {

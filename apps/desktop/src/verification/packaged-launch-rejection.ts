@@ -14,6 +14,11 @@ export const packagedElectronLaunchTimeoutMs = Object.freeze({
   phase3b1_real: 120_000
 });
 
+export const packagedElectronFirstWindowTimeoutMs = Object.freeze({
+  synthetic_fixture: 45_000,
+  phase3b1_real: 120_000
+});
+
 export type PackagedElectronLaunchPurpose =
   keyof typeof packagedElectronLaunchTimeoutMs;
 
@@ -79,6 +84,12 @@ export function packagedElectronLaunchTimeout(
   purpose: PackagedElectronLaunchPurpose
 ): number {
   return packagedElectronLaunchTimeoutMs[purpose];
+}
+
+export function packagedElectronFirstWindowTimeout(
+  purpose: PackagedElectronLaunchPurpose
+): number {
+  return packagedElectronFirstWindowTimeoutMs[purpose];
 }
 
 /**

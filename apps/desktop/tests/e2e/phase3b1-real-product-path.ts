@@ -754,7 +754,7 @@ async function installVerifyAndActivateExactPackage(
   if (exact.installation === null || exact.installation.status === "removed") {
     const modelRow = await findExactModelPackageRow(
       page,
-      realModelPackageId,
+      realModelId,
       realModelPackageFingerprint
     );
     const installButton = modelRow.getByRole("button", {
@@ -845,7 +845,7 @@ async function installVerifyAndActivateExactPackage(
 
 async function findExactModelPackageRow(
   page: Page,
-  modelPackageId: string,
+  modelId: string,
   manifestFingerprint: string
 ): Promise<Locator> {
   const modelTable = page.getByRole("table", {
@@ -868,7 +868,7 @@ async function findExactModelPackageRow(
     const matchingRows = modelTable
       .locator("tbody tr")
       .filter({
-        has: page.getByText(modelPackageId, { exact: true })
+        has: page.getByText(modelId, { exact: true })
       })
       .filter({
         has: page.getByTitle(manifestFingerprint, { exact: true })

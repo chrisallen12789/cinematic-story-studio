@@ -1067,7 +1067,6 @@ describe("AuditionsWorkspace", () => {
     const modelTable = screen.getByRole("table", {
       name: "Installed model packages and verification"
     });
-    expect(within(modelTable).getByText("kokoro-package-1")).toBeVisible();
     expect(within(modelTable).getByTitle(otherDigest)).toBeVisible();
     const installControls = screen.getByRole("group", {
       name: "Local model ZIP install & repair"

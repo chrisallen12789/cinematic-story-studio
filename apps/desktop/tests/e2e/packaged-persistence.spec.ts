@@ -89,6 +89,17 @@ import {
   type ProcessIdentity
 } from "../../src/verification/packaged-process-inventory";
 import {
+  observeRelevantProcessBaselineAfterRejectedLaunch,
+  packagedElectronLaunchTimeout,
+  type PackagedElectronLaunchPurpose,
+  type RejectedLaunchBaselineObservation
+} from "../../src/verification/packaged-launch-rejection";
+import {
+  writePhase3b1PrivateFailureSidecar,
+  type Phase3b1PrivateFailureCode,
+  type Phase3b1PrivateFailureStage
+} from "../../src/verification/phase3b1-private-failure-sidecar";
+import {
   observeStableOwnedProcessNetworkEndpoints,
   type OwnedProcessNetworkObservation
 } from "../../src/verification/owned-process-network-observation";
@@ -128,6 +139,7 @@ const encodedFixturePath = path.resolve(
   desktopRoot,
   "../../fixtures/synthetic-story/sample-story.docx.base64"
 );
+const localRendersRoot = path.resolve(desktopRoot, "../../local-renders");
 const packagedExecutableEnvironment = "CSS_PACKAGED_E2E_EXECUTABLE";
 const evidencePathEnvironment = "CSS_PACKAGED_E2E_EVIDENCE_PATH";
 const resultPathEnvironment = "CSS_PACKAGED_E2E_RESULT_PATH";
@@ -233,6 +245,17 @@ test.describe("packaged desktop verification", () => {
     let failureStage: PackagedFailureStage | null = null;
     let failureCode: PackagedFailureCode | null = null;
     let currentStage: PackagedFailureStage = "isolation_setup";
+    let syntheticGateCompleted = false;
+    let phase3b1Stage: Phase3b1PrivateFailureStage | null = null;
+    let phase3b1CurrentLaunch: 3 | 4 | null = null;
+    let phase3b1StartedAt: string | null = null;
+    let phase3b1RejectedLaunchObservation:
+      | RejectedLaunchBaselineObservation
+      | null = null;
+    let phase3b1CurrentLaunchOwnershipEstablished = false;
+    let phase3b1CurrentLaunchOwnedProcessExitClaimed = false;
+    let phase3b1IsolationCleanupAllowed = true;
+    const phase3b1UnownedApplications = new WeakSet<ElectronApplication>();
     let screenshotCaptured = false;
     let importReviewEvidence: PackagedImportReviewEvidence | null = null;
     let storyAnalysisEvidence: PackagedStoryAnalysisEvidence | null = null;
@@ -294,6 +317,59 @@ test.describe("packaged desktop verification", () => {
       failureStage = stage;
       failureCode = packagedFailureCode(stage, undefined);
       await writeMachineResult("failed", false);
+    };
+    const launchPhase3b1Packaged = async (
+      launch: 3 | 4,
+      isolatedPaths: IsolatedPaths,
+      shutdownEvidencePath: string,
+      beforeLaunch: readonly ProcessIdentity[]
+    ): Promise<ElectronApplication> => {
+      phase3b1CurrentLaunch = launch;
+      phase3b1CurrentLaunchOwnershipEstablished = false;
+      phase3b1CurrentLaunchOwnedProcessExitClaimed = false;
+      phase3b1RejectedLaunchObservation = null;
+      phase3b1Stage = launch === 3 ? "launch_3" : "launch_4";
+      try {
+        return await launchPackaged(
+          packaged.executablePath,
+          isolatedPaths,
+          shutdownEvidencePath,
+          "phase3b1_real"
+        );
+      } catch (launchError) {
+        phase3b1Stage =
+          launch === 3
+            ? "post_rejection_inventory_3"
+            : "post_rejection_inventory_4";
+        const observation =
+          await observeRelevantProcessBaselineAfterRejectedLaunch({
+            baseline: beforeLaunch,
+            queryCurrent: (deadlineAt) => queryRelevantProcesses(deadlineAt),
+            deadlineAt:
+              monotonicNow() +
+              defaultProcessInventoryPolicy.totalDeadlineMs
+          });
+        phase3b1RejectedLaunchObservation = observation;
+        if (
+          observation.baselineDeltaStatus === "observed_absent" &&
+          observation.consecutiveDeltaFreeObservations ===
+            observation.requiredConsecutiveDeltaFreeObservations
+        ) {
+          phase3b1Stage = launch === 3 ? "launch_3" : "launch_4";
+          throw launchError;
+        }
+        phase3b1IsolationCleanupAllowed = false;
+        throw new AggregateError(
+          [
+            launchError,
+            new Error(
+              "The allow-listed relevant-process baseline was not proved restored after Playwright rejected the Electron launch."
+            )
+          ],
+          "The Phase 3B.1 Electron launch was rejected and its relevant-process baseline was not restored.",
+          { cause: launchError }
+        );
+      }
     };
     try {
       await Promise.all([
@@ -366,7 +442,8 @@ test.describe("packaged desktop verification", () => {
       first = await launchPackaged(
         packaged.executablePath,
         { ...isolatedPaths },
-        firstShutdownEvidencePath
+        firstShutdownEvidencePath,
+        "synthetic_fixture"
       );
       await checkpointStage("root_ownership_1");
       firstOwnership = await establishRootOwnership(
@@ -640,7 +717,8 @@ test.describe("packaged desktop verification", () => {
       second = await launchPackaged(
         packaged.executablePath,
         { ...isolatedPaths },
-        secondShutdownEvidencePath
+        secondShutdownEvidencePath,
+        "synthetic_fixture"
       );
       await checkpointStage("root_ownership_2");
       secondOwnership = await establishRootOwnership(
@@ -842,6 +920,7 @@ test.describe("packaged desktop verification", () => {
       phase3Workflow.flowRecorder.complete();
       second = null;
       secondOwnership = null;
+      syntheticGateCompleted = true;
 
       if (
         phase3b1Inputs !== null &&
@@ -849,21 +928,35 @@ test.describe("packaged desktop verification", () => {
         thirdShutdownEvidencePath !== null &&
         fourthShutdownEvidencePath !== null
       ) {
+        phase3b1StartedAt = new Date().toISOString();
+        phase3b1CurrentLaunch = 3;
+        phase3b1Stage = "prelaunch_inventory_3";
         const beforeThirdLaunch = await queryRelevantProcesses();
-        third = await launchPackaged(
-          packaged.executablePath,
+        third = await launchPhase3b1Packaged(
+          3,
           { ...isolatedPaths },
-          thirdShutdownEvidencePath
+          thirdShutdownEvidencePath,
+          beforeThirdLaunch
         );
-        thirdOwnership = await establishRootOwnership(
-          third,
-          beforeThirdLaunch,
-          packaged
-        );
+        phase3b1Stage = "root_ownership_3";
+        try {
+          thirdOwnership = await establishRootOwnership(
+            third,
+            beforeThirdLaunch,
+            packaged
+          );
+        } catch (error) {
+          phase3b1UnownedApplications.add(third);
+          phase3b1IsolationCleanupAllowed = false;
+          throw error;
+        }
+        phase3b1CurrentLaunchOwnershipEstablished = true;
+        phase3b1Stage = "readiness_3";
         const thirdPage = await third.firstWindow();
         await expect(
           thirdPage.getByText("Backend ready", { exact: true }).first()
         ).toBeVisible({ timeout: 45_000 });
+        phase3b1Stage = "workflow_3";
         thirdOwnership = await expandOwnership(thirdOwnership, true);
         thirdOwnershipSampler = startOwnershipSampler(thirdOwnership);
         const phase3b1Workflow = await runPhase3b1RealProductPathWorkflow(
@@ -885,6 +978,7 @@ test.describe("packaged desktop verification", () => {
             phase3b1Workflow.liveRuntimeInstance.workerPid,
             phase3b1Workflow.liveRuntimeInstance.parentPid
           );
+        phase3b1Stage = "shutdown_3";
         const thirdExitProof = await closeOwnedElectron(
           third,
           thirdOwnership,
@@ -899,24 +993,41 @@ test.describe("packaged desktop verification", () => {
           thirdOwnership,
           thirdExitProof
         );
+        phase3b1CurrentLaunchOwnedProcessExitClaimed = true;
         third = null;
         thirdOwnership = null;
 
+        phase3b1CurrentLaunch = 4;
+        phase3b1CurrentLaunchOwnershipEstablished = false;
+        phase3b1CurrentLaunchOwnedProcessExitClaimed = false;
+        phase3b1RejectedLaunchObservation = null;
+        phase3b1Stage = "prelaunch_inventory_4";
         const beforeFourthLaunch = await queryRelevantProcesses();
-        fourth = await launchPackaged(
-          packaged.executablePath,
+        fourth = await launchPhase3b1Packaged(
+          4,
           { ...isolatedPaths },
-          fourthShutdownEvidencePath
+          fourthShutdownEvidencePath,
+          beforeFourthLaunch
         );
-        fourthOwnership = await establishRootOwnership(
-          fourth,
-          beforeFourthLaunch,
-          packaged
-        );
+        phase3b1Stage = "root_ownership_4";
+        try {
+          fourthOwnership = await establishRootOwnership(
+            fourth,
+            beforeFourthLaunch,
+            packaged
+          );
+        } catch (error) {
+          phase3b1UnownedApplications.add(fourth);
+          phase3b1IsolationCleanupAllowed = false;
+          throw error;
+        }
+        phase3b1CurrentLaunchOwnershipEstablished = true;
+        phase3b1Stage = "readiness_4";
         const fourthPage = await fourth.firstWindow();
         await expect(
           fourthPage.getByText("Backend ready", { exact: true }).first()
         ).toBeVisible({ timeout: 45_000 });
+        phase3b1Stage = "restore_4";
         fourthOwnership = await expandOwnership(fourthOwnership, true);
         fourthOwnershipSampler = startOwnershipSampler(fourthOwnership);
         const phase3b1RestartEvidence = await provePhase3b1RestartPersistence(
@@ -927,6 +1038,7 @@ test.describe("packaged desktop verification", () => {
         fourthOwnershipSampler = null;
         await completedFourthOwnershipSampler.stop();
         fourthOwnership = await expandOwnership(fourthOwnership, true);
+        phase3b1Stage = "shutdown_4";
         const fourthExitProof = await closeOwnedElectron(
           fourth,
           fourthOwnership,
@@ -937,12 +1049,14 @@ test.describe("packaged desktop verification", () => {
           fourthOwnership,
           fourthExitProof
         );
+        phase3b1CurrentLaunchOwnedProcessExitClaimed = true;
         fourth = null;
         fourthOwnership = null;
 
         if (isolationRoot === null) {
           throw new Error("The isolated private replay state was unavailable.");
         }
+        phase3b1Stage = "private_evidence_generation";
         await preservePhase3b1PrivateReplayState(
           isolationRoot,
           phase3b1Workflow.listeningPackage,
@@ -1002,12 +1116,14 @@ test.describe("packaged desktop verification", () => {
         error instanceof Error
           ? error
           : new Error("Packaged verification failed.");
-      failureStage = currentStage;
-      failureCode = packagedFailureCode(currentStage, error);
-      try {
-        await writeMachineResult("failed", false);
-      } catch (checkpointError) {
-        cleanupErrors.push(checkpointError);
+      if (!syntheticGateCompleted) {
+        failureStage = currentStage;
+        failureCode = packagedFailureCode(currentStage, error);
+        try {
+          await writeMachineResult("failed", false);
+        } catch (checkpointError) {
+          cleanupErrors.push(checkpointError);
+        }
       }
     } finally {
       for (const sampler of [
@@ -1028,6 +1144,12 @@ test.describe("packaged desktop verification", () => {
         [second, secondOwnership, secondShutdownEvidencePath],
         [first, firstOwnership, firstShutdownEvidencePath]
       ] as const) {
+        if (
+          application !== null &&
+          phase3b1UnownedApplications.has(application)
+        ) {
+          continue;
+        }
         try {
           await closeOwnedElectron(
             application,
@@ -1038,7 +1160,11 @@ test.describe("packaged desktop verification", () => {
           cleanupErrors.push(error);
         }
       }
-      if (isolationRoot !== null) {
+      if (
+        isolationRoot !== null &&
+        phase3b1IsolationCleanupAllowed &&
+        cleanupErrors.length === 0
+      ) {
         try {
           assertOwnedTemporaryRoot(isolationRoot);
           await rm(isolationRoot, {
@@ -1051,13 +1177,19 @@ test.describe("packaged desktop verification", () => {
           cleanupErrors.push(error);
         }
       }
-      const cleanupCompleted = cleanupErrors.length === 0;
-      if (operationError === null && !cleanupCompleted) {
+      const cleanupCompleted =
+        cleanupErrors.length === 0 && phase3b1IsolationCleanupAllowed;
+      if (!syntheticGateCompleted && operationError === null && !cleanupCompleted) {
         failureStage = "cleanup";
         failureCode = "CLEANUP_FAILED";
       }
       const completedAt = new Date().toISOString();
-      if (operationError === null && cleanupCompleted) {
+      if (syntheticGateCompleted && !cleanupCompleted) {
+        failureStage = "cleanup";
+        failureCode = "CLEANUP_FAILED";
+      }
+      let syntheticEvidenceGenerated = false;
+      if (syntheticGateCompleted && cleanupCompleted) {
         failureStage = "evidence_generation";
         failureCode = "EVIDENCE_GENERATION_FAILED";
         if (
@@ -1106,6 +1238,7 @@ test.describe("packaged desktop verification", () => {
                 runtimeExits: phase3bRuntimeExits
               })
             );
+            syntheticEvidenceGenerated = true;
           } catch (error) {
             cleanupErrors.push(error);
           }
@@ -1113,8 +1246,9 @@ test.describe("packaged desktop verification", () => {
       }
       try {
         await writeMachineResult(
-          operationError === null &&
+          syntheticGateCompleted &&
             cleanupCompleted &&
+            syntheticEvidenceGenerated &&
             cleanupErrors.length === 0
             ? "passed"
             : "failed",
@@ -1123,6 +1257,52 @@ test.describe("packaged desktop verification", () => {
         );
       } catch (error) {
         cleanupErrors.push(error);
+      }
+      if (
+        syntheticGateCompleted &&
+        phase3b1Inputs !== null &&
+        phase3b1SourceHead !== null &&
+        phase3b1StartedAt !== null &&
+        phase3b1CurrentLaunch !== null &&
+        phase3b1Stage !== null &&
+        (operationError !== null || !cleanupCompleted)
+      ) {
+        const privateFailureStage =
+          operationError === null ? "cleanup" : phase3b1Stage;
+        try {
+          const sidecar = await writePhase3b1PrivateFailureSidecar({
+            expectedLocalRendersParent: localRendersRoot,
+            privateRoot: phase3b1Inputs.privateEvidenceRoot,
+            sourceHeadSha: phase3b1SourceHead,
+            applicationVersion: packaged.version,
+            executableRelativePath:
+              `apps/desktop/release/${packaged.version}/win-unpacked/${appExecutableName}`,
+            launch: phase3b1CurrentLaunch,
+            stage: privateFailureStage,
+            failureCode: phase3b1PrivateFailureCode(
+              privateFailureStage,
+              operationError
+            ),
+            configuredLaunchTimeoutMs: packagedElectronLaunchTimeout(
+              "phase3b1_real"
+            ),
+            startedAt: phase3b1StartedAt,
+            failedAt: completedAt,
+            syntheticGateCompleted,
+            ownershipEstablished:
+              phase3b1CurrentLaunchOwnershipEstablished,
+            ownedProcessExitClaimed:
+              phase3b1CurrentLaunchOwnedProcessExitClaimed,
+            cleanupCompleted,
+            rejectedLaunchBaselineObservation:
+              phase3b1RejectedLaunchObservation
+          });
+          process.stdout.write(
+            `PHASE3B1_PRIVATE_FAILURE_SIDECAR=local-renders/phase3b1-real-product-path/${sidecar.relativePath}\n`
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
     }
     if (operationError !== null) {
@@ -1409,10 +1589,31 @@ function reviewEvidence(card: Locator, label: string): Locator {
     .locator("dd");
 }
 
+function phase3b1PrivateFailureCode(
+  stage: Phase3b1PrivateFailureStage,
+  error: Error | null
+): Phase3b1PrivateFailureCode {
+  if (stage === "launch_3" || stage === "launch_4") {
+    return error?.name === "TimeoutError"
+      ? "launch_timeout"
+      : "launch_rejected";
+  }
+  if (
+    stage === "prelaunch_inventory_3" ||
+    stage === "prelaunch_inventory_4" ||
+    stage === "post_rejection_inventory_3" ||
+    stage === "post_rejection_inventory_4"
+  ) {
+    return "inventory_failure";
+  }
+  return "other";
+}
+
 async function launchPackaged(
   executablePath: string,
   isolatedPaths: IsolatedPaths,
-  shutdownEvidencePath: string
+  shutdownEvidencePath: string,
+  purpose: PackagedElectronLaunchPurpose
 ): Promise<ElectronApplication> {
   const environment: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -1437,7 +1638,7 @@ async function launchPackaged(
     executablePath,
     cwd: path.dirname(executablePath),
     env: environment,
-    timeout: 45_000
+    timeout: packagedElectronLaunchTimeout(purpose)
   });
 }
 

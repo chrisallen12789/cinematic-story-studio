@@ -1064,6 +1064,16 @@ describe("AuditionsWorkspace", () => {
     const install = await screen.findByRole("button", {
       name: "Choose ZIP & install"
     });
+    const installControls = screen.getByRole("group", {
+      name: "Local model ZIP install & repair"
+    });
+    expect(
+      within(installControls).getByRole("textbox", {
+        name: "Install or repair reason"
+      })
+    ).toHaveValue(
+      "Use these exact local model bytes only for restricted local auditions."
+    );
     expect(install).toBeDisabled();
     await user.click(
       screen.getByRole("checkbox", {

@@ -1795,9 +1795,10 @@ export function AuditionsWorkspace({
               unknown usage rights. They are for local auditions only and are
               not approved for redistribution or production export.
             </label>
-            <label>
+            <label htmlFor="model-package-install-reason">
               Install or repair reason
               <textarea
+                id="model-package-install-reason"
                 value={modelPackageReason}
                 maxLength={1_000}
                 onChange={(event) => setModelPackageReason(event.target.value)}

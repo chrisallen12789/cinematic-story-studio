@@ -751,6 +751,36 @@ async function installVerifyAndActivateExactPackage(
     throw new Error("The exact allow-listed Kokoro package manifest was unavailable.");
   }
   if (exact.installation === null || exact.installation.status === "removed") {
+    const modelTable = page.getByRole("table", {
+      name: "Installed model packages and verification",
+      exact: true
+    });
+    await expect(modelTable).toBeVisible({ timeout: 30_000 });
+    const modelRows = modelTable
+      .getByRole("row")
+      .filter({ hasText: realModelId });
+    await expect(modelRows).toHaveCount(1, { timeout: 30_000 });
+    const installButton = modelRows.getByRole("button", {
+      name: "Choose ZIP & install",
+      exact: true
+    });
+    await expect(installButton).toBeVisible({ timeout: 30_000 });
+    const installControls = page.getByRole("group", {
+      name: "Local model ZIP install & repair",
+      exact: true
+    });
+    const restrictedUseAcknowledgement = installControls.getByRole(
+      "checkbox",
+      {
+        name: /model and voice bytes may have restricted or unknown usage rights/u
+      }
+    );
+    const installReason = installControls.getByRole("textbox", {
+      name: "Install or repair reason",
+      exact: true
+    });
+    await expect(restrictedUseAcknowledgement).toBeVisible({ timeout: 30_000 });
+    await expect(installReason).toBeVisible({ timeout: 30_000 });
     await application.evaluate(({ dialog }, selectedPackage) => {
       dialog.showOpenDialog = () =>
         Promise.resolve({
@@ -759,22 +789,15 @@ async function installVerifyAndActivateExactPackage(
           bookmarks: []
         });
     }, modelPackageZip);
-    await page
-      .getByLabel(/model and voice bytes may have restricted or unknown usage rights/u)
-      .check();
-    await page
-      .getByLabel("Install or repair reason", { exact: true })
-      .fill("Install the exact allow-listed package for a bounded private local audition.");
-    const modelRow = page
-      .getByRole("row")
-      .filter({ hasText: realModelId })
-      .first();
-    await expect(
-      modelRow.getByRole("button", { name: "Choose ZIP & install", exact: true })
-    ).toBeEnabled({ timeout: 30_000 });
-    await modelRow
-      .getByRole("button", { name: "Choose ZIP & install", exact: true })
-      .click();
+    await restrictedUseAcknowledgement.check();
+    await installReason.fill(
+      "Install the exact allow-listed package for a bounded private local audition."
+    );
+    await expect(installReason).toHaveValue(
+      "Install the exact allow-listed package for a bounded private local audition."
+    );
+    await expect(installButton).toBeEnabled({ timeout: 30_000 });
+    await installButton.click();
     await expect(
       page.getByText(
         "The local model install completed from verified ZIP bytes.",

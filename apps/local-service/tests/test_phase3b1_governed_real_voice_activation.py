@@ -496,6 +496,9 @@ def _create_and_generate_real_clip(
     acknowledgement = activation["acknowledgement"]
     assert acknowledgement["actor"] == {"classification": "human", "actorId": "local_user"}
     assert acknowledgement["warningFingerprint"] == inventory["warningFingerprint"]
+    assert acknowledgement["inventoryRecordId"] == inventory["items"][0]["inventoryRecordId"]
+    assert acknowledgement["inventoryFingerprint"] == inventory["inventoryFingerprint"]
+    assert acknowledgement["inventoryFingerprint"] != inventory["items"][0]["inventoryFingerprint"]
     assert acknowledgement["modelPackageFingerprint"] == KOKORO_LOCAL_ONNX_MANIFEST.fingerprint
     assert acknowledgement["voiceTensorSha256"] == (
         "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b"

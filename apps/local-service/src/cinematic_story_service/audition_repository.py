@@ -3527,7 +3527,7 @@ class AuditionRepository:
             "warningText": _GOVERNED_PRIVATE_AUDITION_WARNING,
             "warningFingerprint": _GOVERNED_PRIVATE_AUDITION_WARNING_FINGERPRINT,
             "inventoryRecordId": inventory_record["inventoryRecordId"],
-            "inventoryFingerprint": inventory_record["inventoryFingerprint"],
+            "inventoryFingerprint": _GOVERNED_VOICE_INVENTORY_FINGERPRINT,
             "providerId": manifest.provider_id,
             "providerVersion": manifest.provider_version,
             "modelId": manifest.model_id,

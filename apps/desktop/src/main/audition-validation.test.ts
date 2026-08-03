@@ -2104,6 +2104,24 @@ describe("Phase 3B desktop audition validation", () => {
     expect(() =>
       validateCreateAuditionSessionResponse(
         {
+          correlationId: "correlation-real-session-record-fingerprint",
+          session: {
+            ...session,
+            governedLocalVoiceActivation: {
+              ...activation,
+              acknowledgement: {
+                ...activation.acknowledgement,
+                inventoryFingerprint: voice.inventoryFingerprint
+              }
+            }
+          }
+        },
+        request
+      )
+    ).toThrow("requested acknowledgement");
+    expect(() =>
+      validateCreateAuditionSessionResponse(
+        {
           correlationId: "correlation-real-session-unsafe-activation",
           session: {
             ...session,

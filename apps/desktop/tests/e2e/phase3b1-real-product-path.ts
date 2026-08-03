@@ -33,6 +33,10 @@ import {
 } from "@playwright/test";
 
 import {
+  Phase3b1RendererError
+} from "../../src/verification/phase3b1-renderer-error-evidence";
+
+import {
   assignPhase3b1RealVoiceForPrivateAuditions,
   type Phase3b1RealVoiceAssignmentEvidence
 } from "./phase3-voice-casting";
@@ -1464,29 +1468,59 @@ async function proveComparisonPlaybackUi(page: Page): Promise<void> {
     name: "Refresh evidence",
     exact: true
   });
-  await expect(refresh).toBeEnabled({ timeout: 30_000 });
-  await refresh.click();
-  const realCards = page.locator(".clip-card").filter({
-    hasText: "Real-provider clip"
-  });
-  await expect(realCards).toHaveCount(8, { timeout: 30_000 });
-  await expect(realCards.first()).toBeVisible({ timeout: 30_000 });
-  await realCards.first().getByRole("button", { name: "Load audio", exact: true }).click();
-  await expect(
-    page.getByText("The authenticated audition audio is ready.", { exact: true })
-  ).toBeVisible({ timeout: 30_000 });
-  const player = page.getByLabel("Audition clip player", { exact: true });
-  await expect(player).toHaveAttribute("src", /^blob:/u);
-  for (const control of ["Pause", "Seek +5s", "Replay", "Stop"] as const) {
-    await expect(page.getByRole("button", { name: control, exact: true })).toBeEnabled();
+  try {
+    await expect(refresh).toBeEnabled({ timeout: 30_000 });
+    await throwIfVisibleRendererError(page);
+    await refresh.click();
+    const realCards = page.locator(".clip-card").filter({
+      hasText: "Real-provider clip"
+    });
+    await expect(realCards).toHaveCount(8, { timeout: 30_000 });
+    await expect(realCards.first()).toBeVisible({ timeout: 30_000 });
+    await realCards
+      .first()
+      .getByRole("button", { name: "Load audio", exact: true })
+      .click();
+    await expect(
+      page.getByText("The authenticated audition audio is ready.", { exact: true })
+    ).toBeVisible({ timeout: 30_000 });
+    const player = page.getByLabel("Audition clip player", { exact: true });
+    await expect(player).toHaveAttribute("src", /^blob:/u);
+    for (const control of ["Pause", "Seek +5s", "Replay", "Stop"] as const) {
+      await expect(
+        page.getByRole("button", { name: control, exact: true })
+      ).toBeEnabled();
+    }
+    await page.getByRole("button", { name: "Pause", exact: true }).click();
+    await page.getByRole("button", { name: "Seek +5s", exact: true }).click();
+    await page.getByRole("button", { name: "Replay", exact: true }).click();
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(
+      realCards.first().getByTestId(/^listened-exact-clip-/u)
+    ).not.toBeChecked();
+  } catch (error) {
+    await throwIfVisibleRendererError(page);
+    throw error;
   }
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
-  await page.getByRole("button", { name: "Seek +5s", exact: true }).click();
-  await page.getByRole("button", { name: "Replay", exact: true }).click();
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
-  await expect(
-    realCards.first().getByTestId(/^listened-exact-clip-/u)
-  ).not.toBeChecked();
+}
+
+async function throwIfVisibleRendererError(page: Page): Promise<void> {
+  const alerts = page.locator('.notice.error[role="alert"]:visible');
+  const alertCount = await alerts.count();
+  if (alertCount === 0) return;
+  if (alertCount !== 1) {
+    throw new Error(
+      "Phase 3B.1 comparison playback found an ambiguous renderer error alert."
+    );
+  }
+  const codes = alerts.first().locator("strong");
+  if ((await codes.count()) !== 1) {
+    throw new Error(
+      "Phase 3B.1 comparison playback did not expose exactly one typed renderer error code."
+    );
+  }
+  const code = (await codes.first().textContent())?.trim();
+  throw new Phase3b1RendererError(code);
 }
 
 function assertHumanListeningPending(

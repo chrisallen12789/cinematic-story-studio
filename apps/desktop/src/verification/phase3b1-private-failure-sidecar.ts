@@ -10,10 +10,13 @@ import {
 import path from "node:path";
 
 import type { RejectedLaunchBaselineObservation } from "./packaged-launch-rejection";
+import {
+  requirePhase3b1RendererErrorCode
+} from "./phase3b1-renderer-error-evidence";
 
 export type { RejectedLaunchBaselineObservation } from "./packaged-launch-rejection";
 
-export const phase3b1PrivateFailureSidecarSchemaVersion = 2 as const;
+export const phase3b1PrivateFailureSidecarSchemaVersion = 3 as const;
 export const maximumPhase3b1PrivateFailureSidecarBytes = 64 * 1024;
 
 export const phase3b1PrivateFailureStages = Object.freeze([
@@ -93,6 +96,7 @@ export interface Phase3b1PrivateFailureSidecar {
   readonly launch: 3 | 4;
   readonly stage: Phase3b1PrivateFailureStage;
   readonly failureCode: Phase3b1PrivateFailureCode;
+  readonly rendererErrorCode: string | null;
   readonly configuredLaunchTimeoutMs: number;
   readonly configuredFirstWindowTimeoutMs: number;
   readonly startedAt: string;
@@ -122,6 +126,7 @@ export interface WritePhase3b1PrivateFailureSidecarInput {
   readonly launch: 3 | 4;
   readonly stage: Phase3b1PrivateFailureStage;
   readonly failureCode: Phase3b1PrivateFailureCode;
+  readonly rendererErrorCode: string | null;
   readonly configuredLaunchTimeoutMs: number;
   readonly configuredFirstWindowTimeoutMs: number;
   readonly startedAt: string;
@@ -281,6 +286,10 @@ function createSidecarValue(
   if (!phase3b1PrivateFailureCodes.includes(input.failureCode)) {
     throw new Error("The private failure code was invalid.");
   }
+  const rendererErrorCode =
+    input.rendererErrorCode === null
+      ? null
+      : requirePhase3b1RendererErrorCode(input.rendererErrorCode);
   const configuredLaunchTimeoutMs = requireBoundedTimeout(
     input.configuredLaunchTimeoutMs,
     "launch"
@@ -350,6 +359,7 @@ function createSidecarValue(
     launch: input.launch,
     stage: input.stage,
     failureCode: input.failureCode,
+    rendererErrorCode,
     configuredLaunchTimeoutMs,
     configuredFirstWindowTimeoutMs,
     startedAt,

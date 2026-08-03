@@ -33,7 +33,7 @@ afterEach(async () => {
 });
 
 describe("Phase 3B.1 private failure sidecar", () => {
-  it("publishes schema 2 with only the exact governed failure keys", async () => {
+  it("publishes schema 3 with only the exact governed failure keys", async () => {
     const roots = await createEvidenceRoots();
     const input = sidecarInput(roots);
 
@@ -66,6 +66,7 @@ describe("Phase 3B.1 private failure sidecar", () => {
       "launch",
       "stage",
       "failureCode",
+      "rendererErrorCode",
       "configuredLaunchTimeoutMs",
       "configuredFirstWindowTimeoutMs",
       "startedAt",
@@ -121,6 +122,33 @@ describe("Phase 3B.1 private failure sidecar", () => {
     expect(await readdir(path.join(roots.privateRoot, "failures"))).toEqual([
       result.fileName
     ]);
+  });
+
+  it("records only a bounded typed renderer error code", async () => {
+    const roots = await createEvidenceRoots();
+    const result = await writePhase3b1PrivateFailureSidecar({
+      ...sidecarInput(roots),
+      rendererErrorCode: "PROJECT_CONTEXT_CHANGED"
+    });
+
+    expect(result.value.rendererErrorCode).toBe("PROJECT_CONTEXT_CHANGED");
+
+    for (const rendererErrorCode of [
+      "",
+      "project_context_changed",
+      "PROJECT CONTEXT CHANGED",
+      "PROJECT/CONTEXT/CHANGED",
+      "C:\\private\\error",
+      `A${"B".repeat(128)}`
+    ]) {
+      const invalidRoots = await createEvidenceRoots();
+      await expect(
+        writePhase3b1PrivateFailureSidecar({
+          ...sidecarInput(invalidRoots),
+          rendererErrorCode
+        })
+      ).rejects.toThrow("renderer error code was invalid");
+    }
   });
 
   it("records bounded startup probes and the governed startup codes", async () => {
@@ -490,6 +518,7 @@ function sidecarInput(
     launch: 3,
     stage: "launch_3",
     failureCode: "launch_timeout",
+    rendererErrorCode: null,
     configuredLaunchTimeoutMs: 120_000,
     configuredFirstWindowTimeoutMs: 120_000,
     startedAt: "2026-08-02T23:20:00.000Z",

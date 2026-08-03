@@ -102,6 +102,9 @@ import {
   type Phase3b1PrivateFailureStartupObservation
 } from "../../src/verification/phase3b1-private-failure-sidecar";
 import {
+  phase3b1RendererErrorCodeFromError
+} from "../../src/verification/phase3b1-renderer-error-evidence";
+import {
   observeStableOwnedProcessNetworkEndpoints,
   type OwnedProcessNetworkObservation
 } from "../../src/verification/owned-process-network-observation";
@@ -1388,6 +1391,8 @@ test.describe("packaged desktop verification", () => {
                 privateFailureStage,
                 operationError
               ),
+            rendererErrorCode:
+              phase3b1RendererErrorCodeFromError(operationError),
             configuredLaunchTimeoutMs: packagedElectronLaunchTimeout(
               "phase3b1_real"
             ),

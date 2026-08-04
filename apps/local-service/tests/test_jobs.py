@@ -1124,6 +1124,19 @@ def test_concurrent_different_keys_cannot_create_duplicate_active_job(tmp_path: 
             assert len(active) == 1
 
 
+def test_empty_queue_claim_does_not_seek_writer_ownership(tmp_path: Path) -> None:
+    database, jobs, _worker, _projects = _extraction_job_harness(tmp_path)
+    try:
+        with database.engine.connect() as writer:
+            writer.exec_driver_sql("BEGIN IMMEDIATE")
+            try:
+                assert jobs.claim_next() is None
+            finally:
+                writer.rollback()
+    finally:
+        database.close()
+
+
 def test_two_repositories_cannot_double_claim_one_queued_job(tmp_path: Path) -> None:
     app = create_app(
         ServiceSettings(

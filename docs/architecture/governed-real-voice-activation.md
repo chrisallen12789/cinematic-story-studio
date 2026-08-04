@@ -81,6 +81,15 @@ listening disposition is stored inside the existing human
 restart projection retain `undecided` exactly, and readiness remains blocked;
 it is never rewritten as `needs_changes` or approval.
 
+Each clip projection carries the immutable per-role review bound to that exact
+clip and only that review's latest decision. The service permits a new human
+decision on a historical Kokoro per-role review only when the exact session,
+activation, clip, artifact, review evidence, and hashes remain intact and no
+newer review in that role already has a human decision. The new row must extend
+the scope-wide supersession chain. Current review and Voice Readiness queries
+still require exact current-review identity, so historical outcomes remain
+auditable without regaining authority.
+
 ## Private listening package
 
 The local real-product E2E writes an ignored package beneath an approved local
@@ -91,13 +100,26 @@ text, pronunciation value, model byte, tensor byte, database, credential, or
 personal path. CI never receives this package.
 
 After proving restart restoration and exact process exit, the gate moves the
-isolated `APPDATA` and `LOCALAPPDATA` trees into a separately ignored sibling
-desktop-state directory and writes a relative-path PowerShell replay launcher
-into the redacted listening package. This keeps authenticated in-product replay
-possible at the human checkpoint without placing the private database, model
-installation, audio, caches, or any personal path in committed or hosted
-evidence. The canonical ignored parent, staging directory, final package, and
-state target are reparse/symlink checked before each write or move.
+isolated `APPDATA` and `LOCALAPPDATA` trees beneath the application-owned,
+bounded `%LOCALAPPDATA%\CSS-P3B1\<opaque-id>` root and writes a fixed-data
+PowerShell replay launcher into the redacted listening package. A 12-character
+lowercase hexadecimal ID bounds path growth and cannot express traversal. The
+generator rejects every retained path above 240 characters before mutation;
+this prevents the replay move itself from making previously accessible
+script, audio, or model files inaccessible to ordinary Windows APIs.
+
+A private contract binds the listening-index SHA-256, package name, state ID,
+state-sentinel SHA-256, application version, and exact size and SHA-256 of the
+desktop executable, `resources/app.asar` product code, and embedded service
+executable. The launcher verifies that contract,
+the index and sentinel hashes, the canonical state root, isolated directories,
+both executable fingerprints, and the executable working directory before
+launch. Binding drift fails closed. No cleanup deletes a stale lock marker;
+live ownership is determined by the OS lock and exact process identity, while
+tests close only the proven Electron tree and verify its exact service PIDs are
+gone. This keeps authenticated in-product replay possible without placing the
+private database, model installation, audio, caches, or any personal path in
+committed or hosted evidence.
 
 ## CI boundary
 

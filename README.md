@@ -13,8 +13,9 @@ rights-restricted private product audition. It adds one exact governed real
 voice inventory record, explicit restricted-use activation, exact-clip
 listening attestations, and a private local listening package. It does not
 claim consent, commercial clearance, subjective quality, or production
-eligibility. Human listening remains mandatory and pending. Phase 3C and Phase
-4 have not started.
+eligibility. Initial listening is recorded privately with three acceptable and
+three needs-changes outcomes; corrective/current-authority listening remains
+mandatory and pending. Phase 3C and Phase 4 have not started.
 
 The repository is public. Never commit private manuscripts, credentials, generated audio, project databases, downloaded models, caches, logs containing story text, or machine-specific configuration.
 
@@ -53,6 +54,7 @@ The supported root commands are:
 | `pnpm test` | Run schema/tooling tests, service Pytest, and desktop Vitest without cloud credentials. |
 | `pnpm build` | Build contracts, a PyInstaller service, renderer/main/preload, and an unpackaged electron-builder directory. |
 | `pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged:phase3b1-real` | From a frozen clean commit and exact already-local ignored package ZIP, run the packaged fixture gate plus the private governed real-provider product-path gate. It performs no download. |
+| `pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged:phase3b1-replay` | With an explicit ignored private listening-package path, verify the generated replay entry point, retained project, exact clips, authenticated playback, decisions, restart persistence, and owned-process exit. |
 
 The development build is written to `apps/desktop/release/0.1.0/win-unpacked`. It is an unsigned, unpackaged CI/development artifact, not a release installer.
 

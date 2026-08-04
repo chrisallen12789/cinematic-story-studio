@@ -14,9 +14,10 @@ release. These boundaries remain deliberate:
 - Automated WAV, duration, hash, non-silence, clipping, cache, and process
   checks do not establish intelligibility, naturalness, expression, listener
   comfort, long-form suitability, or artistic quality.
-- Human listening is mandatory and remains pending until the repository owner
-  listens to the exact private clips and records current exact-clip
-  dispositions. CI cannot perform or claim that decision.
+- Human listening is mandatory. The repository owner listened to the initial
+  six private clips and recorded three acceptable and three needs-changes
+  dispositions locally. Corrective/current-authority listening remains pending;
+  CI cannot perform or claim that decision.
 - Hosted CI contains no real model, tensor, or generated real-provider audio.
   It proves fixture lifecycle behavior, synthetic governed metadata, and
   absent-package fail-closed behavior only.
@@ -34,11 +35,18 @@ release. These boundaries remain deliberate:
   must regenerate and re-review current evidence; old approval is never
   silently restored.
 - The generated listening package is intentionally private, ignored, and
-  local. Its separately ignored desktop-state sibling is retained only so the
-  exact authenticated clips can be replayed after automated shutdown; it may
+  local. Its matching state is retained beneath the bounded application-owned
+  `%LOCALAPPDATA%\CSS-P3B1\<opaque-id>` root only so exact authenticated clips
+  and append-only decisions can be replayed after automated shutdown. It may
   contain a synthetic-project database, model installation, audio, and caches.
-  Neither directory is committed or uploaded, and loss of either requires a
-  new exact product-path run.
+  Contract/index/sentinel and executable hashes bind the two locations; neither
+  is committed or uploaded, and loss or binding drift requires a new exact
+  product-path run.
+- A needs-changes listening outcome records a correction requirement; it does
+  not itself choose a replacement pronunciation, pacing, segmentation, or
+  prosody direction. Pronunciation-dictionary corrections remain governed
+  Phase 3B.1 inputs. Performance direction, broader pacing/prosody design, and
+  long-form segmentation remain Phase 3C work and are not implemented here.
 
 Phase 3C and Phase 4 have not started. Production readiness, public release,
 signing, updates, marketplace distribution, and legal clearance remain out of

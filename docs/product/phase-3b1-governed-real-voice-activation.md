@@ -132,6 +132,15 @@ a real-role approval only while its exact acceptable attestation and all bound
 evidence remain current. Automated product-path verification deliberately
 leaves the human listening decision pending.
 
+The private comparison view may append a decision to an older real-provider
+clip's exact immutable per-role review so a bounded listening set can retain
+every human outcome. Those writes must advance in review-revision order within
+the role and preserve the existing scope-wide decision supersession chain.
+They remain historical evidence only: an acceptable disposition on a
+superseded clip cannot authorize the current per-role review or Voice
+Readiness, and a needs-changes or unacceptable disposition is never promoted
+to approval.
+
 ## Evidence separation
 
 - Hosted CI uses deterministic fixture audio and synthetic Phase 3B.1 metadata.
@@ -166,12 +175,57 @@ gate. Optional launches three and four install the selected ZIP through the
 native Electron dialog boundary, generate real local clips, restore them, and
 prove exact owned-process exit. The completed private package is written below
 `local-renders/phase3b1-real-product-path`. It includes a generated relative-path
-PowerShell launcher and retains the matching isolated desktop state in a
-separate ignored sibling directory so the exact authenticated clips remain
-replayable in the Auditions workspace after the automated process-exit proof.
-That private state may contain a local database, model installation, audio, and
-caches; it is never committed or uploaded. A failed staging or replay-state
-directory is preserved for diagnosis.
+PowerShell launcher. The matching isolated desktop state is retained beneath
+the bounded application-owned root
+`%LOCALAPPDATA%\CSS-P3B1\<12-lowercase-hex-id>` rather than beneath the deep
+repository render path. The generator rejects traversal, links, non-canonical
+roots, and any retained path above its conservative 240-character ceiling
+before moving state.
+
+The replay contract binds the listening-index hash, opaque state ID, state
+sentinel hash, application version, and exact byte size and SHA-256 of the
+packaged desktop executable, its `resources/app.asar` product code, and the
+embedded service. The launcher revalidates all of those bindings, its canonical
+state root, and the three directories backing
+the isolated `APPDATA`, `LOCALAPPDATA`, `TEMP`, and `TMP` variables before it
+starts the exact application with the executable's directory as its working
+directory. Any mismatch fails closed. That private state may contain a local
+database, model installation, audio, and caches; it is never committed or
+uploaded. A failed package, staging directory, or replay state is preserved for
+diagnosis rather than destructively cleaned.
+
+Run the committed replay gate only with one explicit ignored private package:
+
+```powershell
+$env:CSS_PHASE3B1_PRIVATE_REPLAY_PACKAGE = "<absolute-ignored-package-directory>"
+pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged:phase3b1-replay
+```
+
+The package-local `listening-decisions.json` has this exact redacted shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "evidenceClassification": "private_human_listening_expectations",
+  "decisions": [
+    {
+      "opaqueFileName": "<opaque-wav-name>",
+      "auditionClipId": "<exact-clip-id>",
+      "audioSha256": "<exact-audio-sha256>",
+      "disposition": "<acceptable-or-needs_changes>",
+      "rationale": "<authorized-private-rationale>"
+    }
+  ]
+}
+```
+
+The six rows supply only opaque names, exact clip IDs and audio hashes,
+dispositions, and rationales. Actor identity and decision times are never
+accepted from that file; the service derives and persists them.
+After authorized listening, the one-time recording run additionally sets
+`CSS_PHASE3B1_RECORD_PRIVATE_DECISIONS=1`. Omit that variable for the subsequent
+immutable restart-verification run. The replay refuses any live relevant
+application or service process and never terminates it.
 
 See the [Phase 3B.1 known limitations](../architecture/phase-3b1-known-limitations.md)
 and [Phase 3B.1 verification record](../evidence/phase-3b1-verification.md).

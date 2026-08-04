@@ -9,9 +9,9 @@ Required stopping status after final frozen-head local and hosted closure:
 Phase 3B.1 activates one narrowly governed Kokoro/ONNX path for restricted,
 private local voice auditions. It does not establish naturalness, artistic
 quality, performer consent, commercial-use clearance, production readiness, or
-export eligibility. No human-listening decision is recorded, and Phase 3B.1
-produced and records no full-book rendering. Phase 3C and Phase 4 were not
-started.
+export eligibility. No private human-listening decision is committed or
+uploaded, and Phase 3B.1 produced and records no full-book rendering. Phase 3C
+and Phase 4 were not started.
 
 Three evidence classes remain separate:
 
@@ -23,8 +23,10 @@ Three evidence classes remain separate:
    exact locally built desktop executable. It proves real ONNX inference through
    the desktop product path, authenticated playback, restart restoration,
    cache behavior, targeted invalidation, process ownership, and clean exit.
-3. Human listening is a later private decision. Automated signal checks and
-   playback automation are not human listening and cannot approve a voice.
+3. Human listening and its append-only clip decisions are private local
+   evidence. Automated signal checks and playback automation are not human
+   listening and cannot approve a voice. Mixed historical outcomes do not
+   authorize a current review or aggregate readiness.
 
 Generated real-provider models, voice tensors, audio, databases, caches,
 private manifests, isolated desktop state, and listening packages are ignored
@@ -127,7 +129,42 @@ That run also proved:
 - no force-kill, no remaining owned PID, and no unrelated process inspection or
   termination; and
 - a private listening package containing six opaque WAVs, a redacted index,
-  scorecard, replay launcher, and retained isolated desktop state.
+  scorecard, and replay launcher, plus separately retained isolated desktop
+  state beneath the bounded application-owned local-data root.
+
+## Replay closure boundary
+
+The first generated launcher moved its retained state from a short temporary
+root into a deep repository sibling. Exact managed script, WAV, model-directory
+and model-file paths then reached 289, 286, 279 and 305 characters. The files
+still existed through Windows extended paths, but ordinary Python `pathlib`
+access failed during private script-storage reconciliation. The embedded
+service exited with the fixed `CSS_ERROR startup_failed` diagnostic. Electron
+then aborted the same startup generation and incorrectly replaced that concrete
+early-exit result with `SERVICE_START_CANCELLED`.
+
+The corrected design preserves the failed package/state and uses a separate
+copy beneath `%LOCALAPPDATA%\CSS-P3B1\<12-lowercase-hex-id>`. Generation rejects
+any path above 240 characters before moving state. The private replay contract
+binds the listening index, opaque state sentinel, desktop executable,
+`resources/app.asar` product code, and embedded service by exact SHA-256 and
+size; the launcher verifies every binding
+before start. Dedicated Windows replay begins with no relevant process, proves
+the exact project, clips, authenticated playback and private decisions after a
+restart, exercises live-duplicate and stale-lock-marker behavior, and closes
+only the exact owned Electron/service tree.
+
+The committed local replay gate is:
+
+```powershell
+$env:CSS_PHASE3B1_PRIVATE_REPLAY_PACKAGE = "<absolute-ignored-package-directory>"
+pnpm --filter @cinematic-story-studio/desktop run test:e2e:packaged:phase3b1-replay
+```
+
+An authorized one-time recording run also sets
+`CSS_PHASE3B1_RECORD_PRIVATE_DECISIONS=1`; the frozen restart-verification run
+omits it. Both the package and its private decision input remain ignored and
+local.
 
 Process-scoped endpoint inventory and the worker's Python socket denial are
 bounded defense-in-depth evidence; they are not a complete firewall or packet
@@ -154,6 +191,7 @@ results and therefore are not additive totals.
 | Build and frozen service | Exact staged PyInstaller service and version-scoped unpacked Electron application; frozen-service runtime tests against those bytes |
 | Packaged Electron E2E | Complete deterministic Phase 0-3B lifecycle against the exact built executable |
 | Real local product path | Exact ignored package, actual ONNX inference, six private clips, authenticated playback, restart, cache, invalidation, process ownership, and private listening-package creation |
+| Private replay closure | Exact launcher and package/state/app/service bindings; bounded state path; no-process, duplicate and stale-marker cases; project/clip/playback/decision restoration; exact owned-process exit |
 | Repository/security closure | Tracked-content scan, clean-tree check, Git object check, and pinned Gitleaks scan |
 
 An interrupted test is never counted as passed or failed. A result is reused
@@ -191,12 +229,13 @@ databases, caches, credentials, personal paths, and other prohibited material.
 
 ## Mandatory human-listening checkpoint
 
-Automated verification deliberately leaves the listening decision count at
-zero, Voice Readiness blocked, and production export ineligible. Chris must use
-the private replay package and scorecard to listen to every candidate and make
-the explicit human dispositions. Until then, no candidate may be described as
-accepted, natural, high quality, consented, commercially cleared, production
-ready, or export eligible.
+The public automated product-path evidence deliberately leaves its listening
+decision count at zero. Subsequent human outcomes and their exact actor/time,
+clip/artifact hashes, and rationale remain in ignored private state rather than
+this repository. Mixed acceptable and needs-changes evidence keeps Voice
+Readiness blocked; it does not establish generalized naturalness or quality,
+consent, commercial clearance, production readiness, or export eligibility.
+Corrective audition evidence and its human decision remain pending.
 
 The stopping state is therefore:
 

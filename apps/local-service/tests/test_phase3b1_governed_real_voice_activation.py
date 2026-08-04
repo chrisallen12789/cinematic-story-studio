@@ -47,6 +47,7 @@ from cinematic_story_service.models import (
     AuditionClipRow,
     AuditionEvidenceInvalidationRow,
     AuditionReviewDecisionRow,
+    AuditionReviewRecordRow,
     AuditionSessionRow,
     CastAssignmentRow,
     CastingRunRow,
@@ -1259,6 +1260,392 @@ def test_undecided_listening_disposition_is_idempotent_and_restart_safe(
         )
         assert restored_review["state"] == "changes_requested"
         assert workspace["voiceReadinessSnapshot"] is None
+
+
+def test_historical_real_listening_decisions_are_exact_ordered_and_restart_safe(
+    settings: ServiceSettings,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_app = create_app(settings)
+    with TestClient(first_app) as first:
+        project_id, _run, (narrator_role_id, _character_role_id) = (
+            _prepare_real_narrator_and_character_cast(first, auth_headers)
+        )
+        _activate_real_provider(
+            first_app,
+            settings,
+            monkeypatch,
+            project_id=project_id,
+        )
+        generation_errors: list[BaseException] = []
+        worker = first_app.state.worker
+        audition_runner = worker.audition_runner
+
+        def capture_generation_error(job: dict[str, Any], jobs: Any) -> None:
+            try:
+                audition_runner(job, jobs)
+            except BaseException as exc:
+                generation_errors.append(exc)
+                raise
+
+        monkeypatch.setattr(worker, "audition_runner", capture_generation_error)
+        older_session, older_clip = _create_and_generate_real_clip(
+            first,
+            auth_headers,
+            project_id=project_id,
+            role_id=narrator_role_id,
+            key="phase3b1-historical-listening-older",
+            text="The first bounded synthetic audition remains reviewable.",
+            test_activation_failures=False,
+            generation_errors=generation_errors,
+        )
+        current_session, current_clip = _create_and_generate_real_clip(
+            first,
+            auth_headers,
+            project_id=project_id,
+            role_id=narrator_role_id,
+            key="phase3b1-historical-listening-current",
+            text="The second bounded synthetic audition is now current.",
+            test_activation_failures=False,
+            generation_errors=generation_errors,
+        )
+        cache_repeat_session, cache_repeat_clip = _create_and_generate_real_clip(
+            first,
+            auth_headers,
+            project_id=project_id,
+            role_id=narrator_role_id,
+            key="phase3b1-historical-listening-cache-repeat",
+            text="The second bounded synthetic audition is now current.",
+            test_activation_failures=False,
+            generation_errors=generation_errors,
+        )
+        older_review = older_clip["review"]
+        current_review = current_clip["review"]
+        cache_repeat_review = cache_repeat_clip["review"]
+        assert cache_repeat_clip["cacheStatus"] == "verified_hit"
+        assert older_review["evidence"]["auditionClipId"] == older_clip["auditionClipId"]
+        assert current_review["evidence"]["auditionClipId"] == current_clip["auditionClipId"]
+        assert cache_repeat_review["evidence"]["auditionClipId"] == (
+            cache_repeat_clip["auditionClipId"]
+        )
+        assert (
+            older_review["revision"]
+            < current_review["revision"]
+            < cache_repeat_review["revision"]
+        )
+        assert older_review["latestDecision"] is None
+        assert current_review["latestDecision"] is None
+        assert cache_repeat_review["latestDecision"] is None
+
+        older_url = (
+            f"/api/v1/projects/{project_id}/audition-reviews/per_role_audition_review/"
+            f"{older_review['reviewId']}/decisions"
+        )
+        older_attestation = {
+            "auditionClipId": older_clip["auditionClipId"],
+            "auditionClipRevision": older_clip["revision"],
+            "auditionClipFingerprint": older_clip["clipFingerprint"],
+            "audioArtifactId": older_clip["audioArtifact"]["audioArtifactId"],
+            "audioArtifactSha256": older_clip["audioArtifact"]["sha256"],
+            "listened": True,
+            "disposition": "acceptable",
+        }
+        older_payload = {
+            "expectedReviewRevision": older_review["revision"],
+            "expectedEvidenceFingerprint": older_review["evidence"]["evidenceFingerprint"],
+            "decision": "approve",
+            "rationale": "Listened to this exact historical private audition; acceptable.",
+            "supersedesDecisionId": None,
+            "listeningAttestation": older_attestation,
+            "idempotencyKey": "phase3b1-historical-listening-older-decision",
+        }
+        mismatches = (
+            (
+                "clip-id",
+                {"auditionClipId": current_clip["auditionClipId"]},
+            ),
+            (
+                "clip-revision",
+                {"auditionClipRevision": older_clip["revision"] + 1},
+            ),
+            (
+                "clip-fingerprint",
+                {"auditionClipFingerprint": current_clip["clipFingerprint"]},
+            ),
+            (
+                "artifact-id",
+                {"audioArtifactId": current_clip["audioArtifact"]["audioArtifactId"]},
+            ),
+            (
+                "artifact-sha256",
+                {"audioArtifactSha256": current_clip["audioArtifact"]["sha256"]},
+            ),
+        )
+        for label, mismatch in mismatches:
+            mismatched = first.post(
+                older_url,
+                headers=auth_headers,
+                json={
+                    **older_payload,
+                    "listeningAttestation": {**older_attestation, **mismatch},
+                    "idempotencyKey": f"phase3b1-historical-listening-mismatched-{label}",
+                },
+            )
+            assert mismatched.status_code == 409, mismatched.text
+            assert mismatched.json()["error"]["code"] == (
+                "AUDITION_LISTENING_ATTESTATION_CHANGED"
+            )
+
+        decided_older = first.post(older_url, headers=auth_headers, json=older_payload)
+        assert decided_older.status_code == 200, decided_older.text
+        older_decision = decided_older.json()["decision"]
+        older_persisted_attestation = older_decision["listeningAttestation"]
+        assert older_decision["reviewId"] == older_review["reviewId"]
+        assert older_decision["actor"] == {"classification": "human", "actorId": "local_user"}
+        assert older_decision["decidedAt"].endswith("Z")
+        assert older_persisted_attestation["actor"] == older_decision["actor"]
+        assert older_persisted_attestation["recordedAt"] == older_decision["decidedAt"]
+        assert older_persisted_attestation["rationale"] == older_payload["rationale"]
+        assert (
+            older_persisted_attestation["audioArtifactSha256"]
+            == (older_clip["audioArtifact"]["sha256"])
+        )
+        assert decided_older.json()["review"]["reviewId"] == older_review["reviewId"]
+        assert decided_older.json()["review"]["latestDecision"] == older_decision
+        assert decided_older.json()["voiceReadinessSnapshot"] is None
+        replay = first.post(older_url, headers=auth_headers, json=older_payload)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["decision"] == older_decision
+        assert replay.json()["review"] == decided_older.json()["review"]
+        assert replay.json()["voiceReadinessSnapshot"] is None
+        conflict = first.post(
+            older_url,
+            headers=auth_headers,
+            json={**older_payload, "rationale": "Conflicting replay payload."},
+        )
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+        restored_older_clip = next(
+            value
+            for value in _clips(
+                first,
+                auth_headers,
+                project_id=project_id,
+                session_id=older_session["auditionSessionId"],
+            )
+            if value["auditionClipId"] == older_clip["auditionClipId"]
+        )
+        restored_current_clip = next(
+            value
+            for value in _clips(
+                first,
+                auth_headers,
+                project_id=project_id,
+                session_id=current_session["auditionSessionId"],
+            )
+            if value["auditionClipId"] == current_clip["auditionClipId"]
+        )
+        assert restored_older_clip["review"]["latestDecision"] == older_decision
+        assert restored_older_clip["review"]["state"] == "approved"
+        assert restored_current_clip["review"]["latestDecision"] is None
+        assert restored_current_clip["review"]["state"] == "pending"
+
+        after_historical_approval = _workspace(first, auth_headers, project_id)
+        current_projection = next(
+            value
+            for value in after_historical_approval["reviews"]
+            if value["gateId"] == "per_role_audition_review" and value["roleId"] == narrator_role_id
+        )
+        assert current_projection["reviewId"] == cache_repeat_review["reviewId"]
+        assert current_projection["state"] == "pending"
+        assert current_projection["latestDecision"] == older_decision
+        assert after_historical_approval["voiceReadinessSnapshot"] is None
+
+        auditions = cast(AuditionRepository, first_app.state.auditions)
+        current_url = (
+            f"/api/v1/projects/{project_id}/audition-reviews/per_role_audition_review/"
+            f"{current_review['reviewId']}/decisions"
+        )
+        current_attestation = {
+            "auditionClipId": current_clip["auditionClipId"],
+            "auditionClipRevision": current_clip["revision"],
+            "auditionClipFingerprint": current_clip["clipFingerprint"],
+            "audioArtifactId": current_clip["audioArtifact"]["audioArtifactId"],
+            "audioArtifactSha256": current_clip["audioArtifact"]["sha256"],
+            "listened": True,
+            "disposition": "needs_changes",
+        }
+        with auditions.database.immediate_session() as database_session:
+            older_decision_row = database_session.get(
+                AuditionReviewDecisionRow,
+                older_decision["decisionId"],
+            )
+            assert older_decision_row is not None
+            older_decision_row.evidence_fingerprint = "0" * 64
+        corrupted_prior_attestation = first.post(
+            current_url,
+            headers=auth_headers,
+            json={
+                "expectedReviewRevision": current_review["revision"],
+                "expectedEvidenceFingerprint": current_review["evidence"][
+                    "evidenceFingerprint"
+                ],
+                "decision": "request_changes",
+                "rationale": "Reject corrupted prior listening authority.",
+                "supersedesDecisionId": older_decision["decisionId"],
+                "listeningAttestation": current_attestation,
+                "idempotencyKey": "phase3b1-historical-listening-corrupt-prior",
+            },
+        )
+        assert corrupted_prior_attestation.status_code == 500
+        assert corrupted_prior_attestation.json()["error"]["code"] == (
+            "AUDITION_LISTENING_ATTESTATION_INVALID"
+        )
+        with auditions.database.immediate_session() as database_session:
+            older_decision_row = database_session.get(
+                AuditionReviewDecisionRow,
+                older_decision["decisionId"],
+            )
+            assert older_decision_row is not None
+            older_decision_row.evidence_fingerprint = older_decision["evidenceFingerprint"]
+
+        with auditions.database.immediate_session() as database_session:
+            cache_repeat_review_row = database_session.get(
+                AuditionReviewRecordRow,
+                cache_repeat_review["reviewId"],
+            )
+            assert cache_repeat_review_row is not None
+            appended = auditions._append_audition_review_invalidation(
+                database_session,
+                project_id=project_id,
+                review=cache_repeat_review_row,
+                rationale="Synthetic newer system invalidation for ordering coverage.",
+            )
+            assert appended is True
+            system_invalidation = database_session.scalar(
+                select(AuditionReviewDecisionRow)
+                .where(
+                    AuditionReviewDecisionRow.project_id == project_id,
+                    AuditionReviewDecisionRow.gate_id == "per_role_audition_review",
+                    AuditionReviewDecisionRow.scope_key == narrator_role_id,
+                )
+                .order_by(
+                    AuditionReviewDecisionRow.revision.desc(),
+                    AuditionReviewDecisionRow.id.desc(),
+                )
+                .limit(1)
+            )
+            assert system_invalidation is not None
+            assert system_invalidation.review_record_id == cache_repeat_review["reviewId"]
+            assert system_invalidation.actor_classification == "system"
+            system_invalidation_id = system_invalidation.id
+
+        current_payload = {
+            "expectedReviewRevision": current_review["revision"],
+            "expectedEvidenceFingerprint": current_review["evidence"]["evidenceFingerprint"],
+            "decision": "request_changes",
+            "rationale": "Listened to this exact current private audition; changes required.",
+            "supersedesDecisionId": system_invalidation_id,
+            "listeningAttestation": current_attestation,
+            "idempotencyKey": "phase3b1-historical-listening-current-decision",
+        }
+        decided_current = first.post(current_url, headers=auth_headers, json=current_payload)
+        assert decided_current.status_code == 200, decided_current.text
+        current_decision = decided_current.json()["decision"]
+        assert current_decision["supersedesDecisionId"] == system_invalidation_id
+        assert current_decision["actor"] == {
+            "classification": "human",
+            "actorId": "local_user",
+        }
+        assert current_decision["decidedAt"].endswith("Z")
+        assert current_decision["listeningAttestation"]["recordedAt"] == (
+            current_decision["decidedAt"]
+        )
+
+        out_of_order = first.post(
+            older_url,
+            headers=auth_headers,
+            json={
+                **older_payload,
+                "supersedesDecisionId": current_decision["decisionId"],
+                "idempotencyKey": "phase3b1-historical-listening-out-of-order",
+            },
+        )
+        assert out_of_order.status_code == 409, out_of_order.text
+        assert out_of_order.json()["error"]["code"] == "AUDITION_REVIEW_SEQUENCE_CHANGED"
+
+        decided_clips = {
+            value["auditionClipId"]: value
+            for audition_session in (
+                older_session,
+                current_session,
+                cache_repeat_session,
+            )
+            for value in _clips(
+                first,
+                auth_headers,
+                project_id=project_id,
+                session_id=audition_session["auditionSessionId"],
+            )
+        }
+        assert decided_clips[older_clip["auditionClipId"]]["review"]["latestDecision"] == (
+            older_decision
+        )
+        assert decided_clips[current_clip["auditionClipId"]]["review"]["latestDecision"] == (
+            current_decision
+        )
+        assert decided_clips[cache_repeat_clip["auditionClipId"]]["review"][
+            "latestDecision"
+        ]["decisionId"] == system_invalidation_id
+
+    with TestClient(create_app(settings)) as restarted:
+        history = restarted.get(
+            f"/api/v1/projects/{project_id}/audition-review-decisions",
+            headers=auth_headers,
+            params={
+                "gateId": "per_role_audition_review",
+                "roleId": narrator_role_id,
+                "limit": 200,
+            },
+        )
+        assert history.status_code == 200, history.text
+        restored_by_id = {value["decisionId"]: value for value in history.json()["items"]}
+        assert restored_by_id[older_decision["decisionId"]] == older_decision
+        assert restored_by_id[current_decision["decisionId"]] == current_decision
+        restarted_older_clip = next(
+            value
+            for value in _clips(
+                restarted,
+                auth_headers,
+                project_id=project_id,
+                session_id=older_session["auditionSessionId"],
+            )
+            if value["auditionClipId"] == older_clip["auditionClipId"]
+        )
+        assert restarted_older_clip["review"]["latestDecision"] == older_decision
+        restarted_current_clip = next(
+            value
+            for value in _clips(
+                restarted,
+                auth_headers,
+                project_id=project_id,
+                session_id=current_session["auditionSessionId"],
+            )
+            if value["auditionClipId"] == current_clip["auditionClipId"]
+        )
+        assert restarted_current_clip["review"]["latestDecision"] == current_decision
+        restarted_workspace = _workspace(restarted, auth_headers, project_id)
+        restarted_current_review = next(
+            value
+            for value in restarted_workspace["reviews"]
+            if value["gateId"] == "per_role_audition_review" and value["roleId"] == narrator_role_id
+        )
+        assert restarted_current_review["reviewId"] == cache_repeat_review["reviewId"]
+        assert restarted_current_review["state"] == "pending"
+        assert restarted_current_review["latestDecision"] == current_decision
+        assert restarted_workspace["voiceReadinessSnapshot"] is None
 
 
 def test_real_pronunciation_and_activation_invalidation_project_workspace_idempotently(

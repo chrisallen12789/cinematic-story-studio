@@ -1327,7 +1327,7 @@ export function AuditionsWorkspace({
           expectedEvidenceFingerprint: review.evidence.evidenceFingerprint,
           decision,
           rationale,
-          supersedesDecisionId: review.latestDecision?.decisionId ?? null,
+          supersedesDecisionId: latestScopeDecisionId(review),
           ...(listeningAttestation === undefined
             ? {}
             : { listeningAttestation }),
@@ -1343,11 +1343,138 @@ export function AuditionsWorkspace({
     }
   }
 
+  async function decideExactClip(
+    clip: AuditionClip,
+    disposition:
+      | "acceptable"
+      | "unacceptable"
+      | "needs_changes"
+      | "undecided"
+  ) {
+    if (loading) return;
+    const review = exactClipReviewBinding(clip);
+    if (review === null || clip.providerClass !== "real_local") {
+      onError({
+        code: "EXACT_REAL_AUDITION_REVIEW_REQUIRED",
+        message:
+          "This clip does not carry an exact governed real-local review binding.",
+        retryable: true
+      });
+      return;
+    }
+    if (!listenedClipIds.includes(clip.auditionClipId)) {
+      onError({
+        code: "HUMAN_LISTENING_ATTESTATION_REQUIRED",
+        message:
+          "Explicitly confirm that you listened to this exact clip before recording its human decision.",
+        retryable: false
+      });
+      return;
+    }
+    const rationale = reviewRationales[review.reviewId]?.trim();
+    if (rationale === undefined || rationale.length === 0) {
+      onError({
+        code: "REVIEW_RATIONALE_REQUIRED",
+        message: "Add a rationale before recording an audition decision.",
+        retryable: false
+      });
+      return;
+    }
+    const decision =
+      disposition === "acceptable"
+        ? "approve"
+        : disposition === "unacceptable"
+          ? "reject"
+          : "request_changes";
+    const result = await perform(
+      `clip-review-${review.reviewId}`,
+      () =>
+        api.auditions.decideReview({
+          projectId,
+          gateId: review.gateId,
+          roleId: review.roleId,
+          reviewId: review.reviewId,
+          expectedReviewRevision: review.revision,
+          expectedEvidenceFingerprint: review.evidence.evidenceFingerprint,
+          decision,
+          rationale,
+          supersedesDecisionId: latestScopeDecisionId(review),
+          listeningAttestation: {
+            auditionClipId: clip.auditionClipId,
+            auditionClipRevision: clip.revision,
+            auditionClipFingerprint: clip.clipFingerprint,
+            audioArtifactId: clip.audioArtifact.audioArtifactId,
+            audioArtifactSha256: clip.audioArtifact.sha256,
+            listened: true,
+            disposition
+          },
+          idempotencyKey: idempotency("exact-clip-review")
+        }),
+      "The exact-clip listening decision was recorded."
+    );
+    if (result !== null) await loadWorkspace();
+  }
+
+  function latestScopeDecisionId(review: AuditionReview): string | null {
+    return (
+      workspace?.reviews.find(
+        (candidate) =>
+          candidate.gateId === review.gateId &&
+          candidate.roleId === review.roleId
+      )?.latestDecision?.decisionId ?? null
+    );
+  }
+
+  function exactClipReviewBinding(clip: AuditionClip): AuditionReview | null {
+    const review = clip.review as AuditionReview | null | undefined;
+    if (
+      review == null ||
+      review.projectId !== clip.projectId ||
+      review.gateId !== "per_role_audition_review" ||
+      review.roleId !== clip.roleId ||
+      review.evidence.projectId !== clip.projectId ||
+      review.evidence.gateId !== "per_role_audition_review" ||
+      review.evidence.roleId !== clip.roleId ||
+      review.evidence.auditionSessionId !== clip.auditionSessionId ||
+      review.evidence.auditionClipId !== clip.auditionClipId ||
+      review.evidence.auditionClipRevision !== clip.revision ||
+      review.evidence.runtimeProfileFingerprint !==
+        clip.runtimeProfileFingerprint ||
+      review.evidence.audioQualityFingerprint !==
+        clip.audioQuality.qualityFingerprint
+    ) {
+      return null;
+    }
+    const decision = review.latestDecision;
+    if (
+      decision !== null &&
+      (decision.reviewId !== review.reviewId ||
+        decision.expectedReviewRevision !== review.revision ||
+        decision.evidenceFingerprint !== review.evidence.evidenceFingerprint)
+    ) {
+      return null;
+    }
+    const attestation = decision?.listeningAttestation;
+    if (
+      attestation !== undefined &&
+      attestation !== null &&
+      (attestation.auditionClipId !== clip.auditionClipId ||
+        attestation.auditionClipRevision !== clip.revision ||
+        attestation.auditionClipFingerprint !== clip.clipFingerprint ||
+        attestation.audioArtifactId !== clip.audioArtifact.audioArtifactId ||
+        attestation.audioArtifactSha256 !== clip.audioArtifact.sha256)
+    ) {
+      return null;
+    }
+    return review;
+  }
+
   function exactReviewClip(review: AuditionReview): AuditionClip | null {
     if (review.evidence.auditionClipId === null) return null;
     return (
       clips.find(
         (clip) =>
+          exactClipReviewBinding(clip)?.reviewId === review.reviewId &&
           clip.auditionClipId === review.evidence.auditionClipId &&
           clip.revision === review.evidence.auditionClipRevision
       ) ?? null
@@ -2397,10 +2524,23 @@ export function AuditionsWorkspace({
           </button>
         </details>
         <div className="clip-list">
-          {clips.map((clip) => (
-            <article className={loadedClipId === clip.auditionClipId ? "clip-card active" : "clip-card"} key={clip.auditionClipId}>
+          {clips.map((clip) => {
+            const exactClipReview = exactClipReviewBinding(clip);
+            const persistedDecision = exactClipReview?.latestDecision ?? null;
+            const persistedListening =
+              persistedDecision?.listeningAttestation ?? null;
+            const clipListeningReady = listenedClipIds.includes(
+              clip.auditionClipId
+            );
+            return (
+              <article
+                className={loadedClipId === clip.auditionClipId ? "clip-card active" : "clip-card"}
+                data-testid={`audition-clip-${clip.auditionClipId}`}
+                key={clip.auditionClipId}
+              >
               <div className="card-title-row"><strong>{clip.roleId}</strong><StatusBadge state={clip.state} /></div>
               <p>{clip.providerClass === "deterministic_fixture" ? "Fixture-provider clip" : "Real-provider clip"} · {humanize(clip.cacheStatus)}</p>
+              <small>Exact clip <code>{clip.auditionClipId}</code></small>
               <dl className="mini-facts"><dt>Duration</dt><dd>{(clip.audioArtifact.durationMilliseconds / 1000).toFixed(2)} s</dd><dt>Format</dt><dd>{clip.audioArtifact.sampleRateHz / 1000} kHz · {clip.audioArtifact.channels === 1 ? "mono" : `${clip.audioArtifact.channels} ch`} · PCM16</dd><dt>Bytes</dt><dd>{clip.audioArtifact.byteSize.toLocaleString()}</dd><dt>Availability</dt><dd>{humanize(clip.audioArtifact.availability)} · {clip.audioArtifact.playbackEligible ? "Playback eligible" : "Playback unavailable"}</dd><dt>QC</dt><dd>{clip.audioQuality.blockingFindingCodes.length === 0 ? "Machine integrity passed" : `${clip.audioQuality.blockingFindingCodes.length} blockers`}</dd></dl>
               <div className="clip-qc-findings">
                 <strong>QC blockers</strong>
@@ -2423,7 +2563,7 @@ export function AuditionsWorkspace({
                   />
                   Compare
                 </label>
-                {clip.providerClass === "real_local" ? (
+                {clip.providerClass === "real_local" && exactClipReview !== null ? (
                   <label className="listened-exact-clip-check">
                     <input
                       type="checkbox"
@@ -2443,12 +2583,100 @@ export function AuditionsWorkspace({
                   </label>
                 ) : (
                   <small className="quiet">
-                    Fixture lifecycle clip / listening attestation omitted.
+                    {clip.providerClass === "deterministic_fixture"
+                      ? "Fixture lifecycle clip / listening attestation omitted."
+                      : "Exact governed review binding unavailable; human controls are disabled."}
                   </small>
                 )}
               </div>
-            </article>
-          ))}
+              {clip.providerClass === "real_local" && exactClipReview !== null ? (
+                <div className="pronunciation-test-control exact-clip-listening-decision">
+                  {persistedListening === null ? (
+                    <small className="quiet">
+                      No persisted human listening decision for this exact clip.
+                    </small>
+                  ) : (
+                    <div
+                      data-testid={`persisted-listening-decision-${clip.auditionClipId}`}
+                    >
+                      <strong>
+                        Recorded listening: {humanize(persistedListening.disposition)}
+                      </strong>
+                      <p>{persistedDecision?.rationale}</p>
+                      <small>
+                        {persistedListening.actor.actorId} · {persistedListening.recordedAt} · immutable
+                      </small>
+                    </div>
+                  )}
+                  <label>
+                    Exact-clip decision rationale
+                    <textarea
+                      value={reviewRationales[exactClipReview.reviewId] ?? ""}
+                      maxLength={4000}
+                      onChange={(event) =>
+                        setReviewRationales((current) => ({
+                          ...current,
+                          [exactClipReview.reviewId]: event.target.value
+                        }))
+                      }
+                    />
+                  </label>
+                  <div className="button-cluster">
+                    <button
+                      type="button"
+                      onClick={() => void decideExactClip(clip, "acceptable")}
+                      disabled={
+                        busy !== null ||
+                        !clipListeningReady ||
+                        persistedListening !== null ||
+                        exactClipReview.blockerCodes.length > 0
+                      }
+                    >
+                      Record acceptable
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void decideExactClip(clip, "needs_changes")
+                      }
+                      disabled={
+                        busy !== null ||
+                        !clipListeningReady ||
+                        persistedListening !== null
+                      }
+                    >
+                      Record needs changes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void decideExactClip(clip, "undecided")}
+                      disabled={
+                        busy !== null ||
+                        !clipListeningReady ||
+                        persistedListening !== null
+                      }
+                    >
+                      Record undecided
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void decideExactClip(clip, "unacceptable")
+                      }
+                      disabled={
+                        busy !== null ||
+                        !clipListeningReady ||
+                        persistedListening !== null
+                      }
+                    >
+                      Record unacceptable
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              </article>
+            );
+          })}
         </div>
         <CollectionPageControl
           label="audition clips"

@@ -3606,6 +3606,7 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
       "cacheProof",
       "audioArtifact",
       "audioQuality",
+      "review",
       "state",
       "clipFingerprint",
       "revision",
@@ -3617,7 +3618,7 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
   );
   contractVersion(value.contractVersion, "audition clip");
   ownedProject(value.projectId, expectedProjectId);
-  identifier(value.auditionClipId, "auditionClipId");
+  const auditionClipId = identifier(value.auditionClipId, "auditionClipId");
   const auditionSessionId = identifier(
     value.auditionSessionId,
     "auditionSessionId"
@@ -3663,7 +3664,11 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
   sha256(value.pronunciationPlanFingerprint, "pronunciationPlanFingerprint");
   sha256(value.providerControlFingerprint, "providerControlFingerprint");
   const cacheKey = sha256(value.cacheKey, "cacheKey");
-  enumValue(value.cacheStatus, CACHE_STATUSES, "cacheStatus");
+  const cacheStatus = enumValue(
+    value.cacheStatus,
+    CACHE_STATUSES,
+    "cacheStatus"
+  );
   const cacheProof = record(value.cacheProof, "audition cache proof");
   exactKeys(
     cacheProof,
@@ -3702,8 +3707,8 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
     fail("The audition cache proof did not match the exact clip binding.");
   }
   enumValue(value.state, CLIP_STATES, "clip state");
-  positiveInteger(value.revision, "revision");
-  sha256(value.clipFingerprint, "clipFingerprint");
+  const clipRevision = positiveInteger(value.revision, "revision");
+  const clipFingerprint = sha256(value.clipFingerprint, "clipFingerprint");
   timestamp(value.createdAt, "createdAt");
   validateProvenance(value.provenance, "audition clip provenance");
   if (
@@ -3789,7 +3794,7 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
   if (byteSize < minimumPcmWavByteSize) {
     fail("The audio artifact byte size could not contain its declared PCM frames.");
   }
-  sha256(artifact.sha256, "artifact.sha256");
+  const artifactSha256 = sha256(artifact.sha256, "artifact.sha256");
   enumValue(
     artifact.availability,
     new Set(["present", "purged", "corrupt", "quarantined"]),
@@ -3803,6 +3808,9 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
   }
   if (artifact.availability !== "present" && value.state !== "invalidated") {
     fail("A clip with unavailable audio must be invalidated.");
+  }
+  if (cacheStatus === "corrupt_miss" && value.state !== "invalidated") {
+    fail("A clip with invalid cache evidence must be invalidated.");
   }
   const storageKey = identifier(artifact.storageKey, "storageKey");
   if (/[\\/]/u.test(storageKey)) fail("Audio storage keys must not reveal paths.");
@@ -3876,9 +3884,73 @@ function validateClip(raw: unknown, expectedProjectId: string, expectedSessionId
   ) {
     fail("The clipped sample count did not match its warning code.");
   }
-  sha256(quality.qualityFingerprint, "quality.qualityFingerprint");
+  const qualityFingerprint = sha256(
+    quality.qualityFingerprint,
+    "quality.qualityFingerprint"
+  );
   timestamp(quality.measuredAt, "quality.measuredAt");
   validateProvenance(quality.provenance, "audio quality provenance");
+
+  const review = validateReview(value.review, expectedProjectId);
+  const evidence = review.evidence;
+  if (
+    review.gateId !== "per_role_audition_review" ||
+    review.roleId !== roleId ||
+    evidence.auditionSessionId !== auditionSessionId ||
+    evidence.auditionClipId !== auditionClipId ||
+    evidence.auditionClipRevision !== clipRevision ||
+    evidence.runtimeProfileFingerprint !== value.runtimeProfileFingerprint ||
+    evidence.audioQualityFingerprint !== qualityFingerprint
+  ) {
+    fail("The audition clip review did not match its exact governed evidence.");
+  }
+  const exactDecision = review.latestDecision;
+  if (
+    exactDecision !== null &&
+    (exactDecision.reviewId !== review.reviewId ||
+      exactDecision.expectedReviewRevision !== review.revision ||
+      exactDecision.evidenceFingerprint !== evidence.evidenceFingerprint)
+  ) {
+    fail("The audition clip review borrowed a decision from another review.");
+  }
+  const listeningAttestation = exactDecision?.listeningAttestation;
+  if (
+    listeningAttestation !== undefined &&
+    listeningAttestation !== null &&
+    (listeningAttestation.auditionClipId !== auditionClipId ||
+      listeningAttestation.auditionClipRevision !== clipRevision ||
+      listeningAttestation.auditionClipFingerprint !== clipFingerprint ||
+      listeningAttestation.audioArtifactId !== artifactId ||
+      listeningAttestation.audioArtifactSha256 !== artifactSha256)
+  ) {
+    fail("The clip listening decision did not match its exact audio evidence.");
+  }
+  if (
+    providerClass === "real_local" &&
+    exactDecision?.actor.classification === "human" &&
+    (listeningAttestation === undefined || listeningAttestation === null)
+  ) {
+    fail("A human real-local clip decision omitted listening evidence.");
+  }
+  if (
+    providerClass === "deterministic_fixture" &&
+    listeningAttestation !== undefined &&
+    listeningAttestation !== null
+  ) {
+    fail("A fixture clip claimed human listening evidence.");
+  }
+  if (exactDecision !== null) {
+    const expectedClipState =
+      exactDecision.decision === "changes_requested"
+        ? "reviewable"
+        : exactDecision.decision;
+    const independentlyInvalidated =
+      value.state === "invalidated" &&
+      (artifact.availability !== "present" || cacheStatus === "corrupt_miss");
+    if (value.state !== expectedClipState && !independentlyInvalidated) {
+      fail("The audition clip state did not match its exact review decision.");
+    }
+  }
   return raw as AuditionClip;
 }
 
@@ -3923,6 +3995,7 @@ function validateReview(raw: unknown, expectedProjectId: string): AuditionReview
     "review state"
   );
   positiveInteger(value.revision, "revision");
+  const reviewRevision = value.revision as number;
   gateArray(value.prerequisiteGateIds, "prerequisiteGateIds");
   identifierArray(
     value.blockerCodes,
@@ -3945,11 +4018,24 @@ function validateReview(raw: unknown, expectedProjectId: string): AuditionReview
       value.gateId,
       value.roleId
     );
-    const currentDecision =
-      decision.reviewId === value.reviewId &&
-      decision.evidenceFingerprint === evidence.evidenceFingerprint;
+    const currentDecision = decision.reviewId === value.reviewId;
+    if (
+      currentDecision &&
+      (decision.expectedReviewRevision !== reviewRevision ||
+        decision.evidenceFingerprint !== evidence.evidenceFingerprint)
+    ) {
+      fail("The current review decision did not match its immutable review evidence.");
+    }
+    if (
+      !currentDecision &&
+      (decision.expectedReviewRevision >= reviewRevision ||
+        !new Set(["pending", "blocked"]).has(value.state as string))
+    ) {
+      fail("The historical review decision projection was invalid.");
+    }
     const listeningAttestation = decision.listeningAttestation;
     if (
+      currentDecision &&
       listeningAttestation !== undefined &&
       listeningAttestation !== null &&
       (listeningAttestation.auditionClipId !== evidence.auditionClipId ||
@@ -3960,12 +4046,6 @@ function validateReview(raw: unknown, expectedProjectId: string): AuditionReview
     }
     if (currentDecision && decision.decision !== value.state) {
       fail("The current review decision and review state did not match.");
-    }
-    if (
-      !currentDecision &&
-      !new Set(["pending", "blocked"]).has(value.state as string)
-    ) {
-      fail("Stale review evidence retained decision authority.");
     }
   } else if (!new Set(["pending", "blocked"]).has(value.state as string)) {
     fail("The review state claimed authority without an immutable decision.");
@@ -4112,6 +4192,7 @@ function validateReviewDecision(
       value.gateId !== "per_role_audition_review" ||
       actor.classification !== "human" ||
       attestation.actor.actorId !== actor.actorId ||
+      attestation.recordedAt !== value.decidedAt ||
       attestation.rationale !== value.rationale
     ) {
       fail("The listening attestation did not match its human per-role decision.");

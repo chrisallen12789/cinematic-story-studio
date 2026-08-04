@@ -7668,6 +7668,31 @@ class AuditionRepository:
             if latest_review is not None
             else None
         )
+        if (
+            latest_review is None
+            or latest_review.project_id != row.project_id
+            or latest_review.scope_key != row.role_id
+            or latest_review.session_id != row.session_id
+            or latest_review.clip_id != row.id
+            or latest_review.role_id != row.role_id
+        ):
+            raise ServiceError(
+                500,
+                "AUDITION_REVIEW_EVIDENCE_MISSING",
+                "The audition clip review evidence is unavailable.",
+            )
+        if latest_decision is not None and (
+            latest_decision.project_id != latest_review.project_id
+            or latest_decision.review_record_id != latest_review.id
+            or latest_decision.gate_id != latest_review.gate_id
+            or latest_decision.scope_key != latest_review.scope_key
+            or latest_decision.evidence_fingerprint != latest_review.evidence_fingerprint
+        ):
+            raise ServiceError(
+                500,
+                "AUDITION_REVIEW_EVIDENCE_MISSING",
+                "The audition clip review decision evidence is unavailable.",
+            )
         clip_state = "reviewable"
         if latest_decision is not None:
             clip_state = latest_decision.decision
@@ -7792,6 +7817,12 @@ class AuditionRepository:
                 quality,
                 blocking_quality_codes=blocking_quality_codes,
                 warning_codes=quality_warnings,
+            ),
+            "review": self._review_wire(
+                session,
+                latest_review,
+                decision_override=latest_decision,
+                decision_override_provided=True,
             ),
             "state": clip_state,
             "productionExportEligible": False,
@@ -11146,11 +11177,25 @@ class AuditionRepository:
             clip = (
                 session.get(AuditionClipRow, review.clip_id) if review.clip_id is not None else None
             )
+            audition_session = (
+                session.get(AuditionSessionRow, review.session_id)
+                if review.session_id is not None
+                else None
+            )
             evidence = parse_json(review.evidence_json, {})
+            fingerprint_material = (
+                {
+                    key: value
+                    for key, value in evidence.items()
+                    if key != "evidenceFingerprint"
+                }
+                if isinstance(evidence, dict)
+                else None
+            )
             quality = (
                 session.scalar(
                     select(AudioQualityRecordRow)
-                    .where(AudioQualityRecordRow.artifact_id == clip.artifact_id)
+                    .where(AudioQualityRecordRow.clip_id == clip.id)
                     .order_by(
                         AudioQualityRecordRow.revision.desc(),
                         AudioQualityRecordRow.id.desc(),
@@ -11162,14 +11207,24 @@ class AuditionRepository:
             )
             binding_ok = (
                 clip is not None
+                and audition_session is not None
                 and clip.project_id == project_id
+                and audition_session.project_id == project_id
+                and audition_session.role_id == review.role_id
+                and audition_session.id == clip.session_id
+                and review.scope_key == review.role_id
                 and clip.session_id == review.session_id
                 and clip.role_id == review.role_id
                 and isinstance(evidence, dict)
+                and isinstance(fingerprint_material, dict)
+                and evidence.get("evidenceFingerprint") == review.evidence_fingerprint
+                and request_fingerprint(fingerprint_material) == review.evidence_fingerprint
                 and evidence.get("auditionSessionId") == clip.session_id
                 and evidence.get("auditionClipId") == clip.id
                 and evidence.get("auditionClipRevision") == clip.revision
                 and evidence.get("roleId") == clip.role_id
+                and review.required_decision_ids_json
+                == audition_session.phase3a_gate_decision_ids_json
                 and quality is not None
                 and quality.project_id == project_id
                 and evidence.get("audioQualityFingerprint") == quality.quality_fingerprint
@@ -11574,14 +11629,64 @@ class AuditionRepository:
         try:
             value = self._stored_listening_attestation(decision)
             artifact = session.get(AudioArtifactRow, clip.artifact_id)
+            quality = session.scalar(
+                select(AudioQualityRecordRow)
+                .where(AudioQualityRecordRow.clip_id == clip.id)
+                .order_by(
+                    AudioQualityRecordRow.revision.desc(),
+                    AudioQualityRecordRow.id.desc(),
+                )
+                .limit(1)
+            )
+            review_evidence = parse_json(review.evidence_json, None)
+            review_fingerprint_material = (
+                {
+                    key: item
+                    for key, item in review_evidence.items()
+                    if key != "evidenceFingerprint"
+                }
+                if isinstance(review_evidence, dict)
+                else None
+            )
             return (
                 value is not None
                 and review.gate_id == "per_role_audition_review"
+                and review.project_id == audition_session.project_id
+                and review.project_id == clip.project_id
+                and review.scope_key == review.role_id
+                and review.role_id == audition_session.role_id
+                and review.role_id == clip.role_id
                 and review.session_id == audition_session.id
                 and review.clip_id == clip.id
+                and review.required_decision_ids_json
+                == audition_session.phase3a_gate_decision_ids_json
                 and audition_session.provider_id == KOKORO_PROVIDER_ID
+                and clip.project_id == audition_session.project_id
                 and clip.session_id == audition_session.id
+                and decision.project_id == review.project_id
+                and decision.review_record_id == review.id
+                and decision.gate_id == review.gate_id
+                and decision.scope_key == review.scope_key
+                and decision.evidence_fingerprint == review.evidence_fingerprint
+                and decision.actor_classification == "human"
+                and isinstance(review_evidence, dict)
+                and isinstance(review_fingerprint_material, dict)
+                and review_evidence.get("evidenceFingerprint")
+                == review.evidence_fingerprint
+                and request_fingerprint(review_fingerprint_material)
+                == review.evidence_fingerprint
+                and review_evidence.get("auditionSessionId") == audition_session.id
+                and review_evidence.get("auditionClipId") == clip.id
+                and review_evidence.get("auditionClipRevision") == clip.revision
+                and review_evidence.get("roleId") == clip.role_id
+                and quality is not None
+                and quality.project_id == review.project_id
+                and quality.clip_id == clip.id
+                and quality.artifact_id == clip.artifact_id
+                and review_evidence.get("audioQualityFingerprint")
+                == quality.quality_fingerprint
                 and artifact is not None
+                and artifact.project_id == review.project_id
                 and artifact.availability == "present"
                 and value["auditionClipId"] == clip.id
                 and value["auditionClipRevision"] == clip.revision
@@ -11686,19 +11791,42 @@ class AuditionRepository:
                         "character_audition_review": character_review,
                         "pronunciation_review": pronunciation_review,
                     }.get(gate_id)
-                if latest_review is None or latest_review.id != review.id:
+                review_session = (
+                    session.get(AuditionSessionRow, review.session_id)
+                    if review.session_id is not None
+                    else None
+                )
+                real_per_role_review = (
+                    gate_id == "per_role_audition_review"
+                    and review_session is not None
+                    and review_session.provider_id == KOKORO_PROVIDER_ID
+                )
+                historical_real_per_role_review = (
+                    real_per_role_review
+                    and latest_review is not None
+                    and latest_review.id != review.id
+                    and review.revision < latest_review.revision
+                )
+                if latest_review is None or (
+                    latest_review.id != review.id and not historical_real_per_role_review
+                ):
                     raise ServiceError(
                         409,
                         "AUDITION_REVIEW_CHANGED",
                         "The audition review is no longer current.",
                     )
                 if review.session_id is not None:
-                    review_session = session.get(AuditionSessionRow, review.session_id)
                     if review_session is None:
                         raise ServiceError(
                             409,
                             "AUDITION_REVIEW_CHANGED",
                             "The audition review session is unavailable.",
+                        )
+                    if real_per_role_review and review_session.state != "reviewable":
+                        raise ServiceError(
+                            409,
+                            "AUDITION_REVIEW_CHANGED",
+                            "The real audition review session is no longer reviewable.",
                         )
                     self._validate_session_evidence(
                         session,
@@ -11736,6 +11864,72 @@ class AuditionRepository:
                         "AUDITION_REVIEW_DECISION_CHANGED",
                         "The latest review decision changed; refresh before deciding.",
                     )
+                if real_per_role_review:
+                    prior_human_listening_rows = session.execute(
+                        select(AuditionReviewRecordRow, AuditionReviewDecisionRow)
+                        .join(
+                            AuditionReviewDecisionRow,
+                            AuditionReviewDecisionRow.review_record_id
+                            == AuditionReviewRecordRow.id,
+                        )
+                        .join(
+                            AuditionSessionRow,
+                            AuditionSessionRow.id == AuditionReviewRecordRow.session_id,
+                        )
+                        .where(
+                            AuditionReviewRecordRow.project_id == project_id,
+                            AuditionReviewRecordRow.gate_id == "per_role_audition_review",
+                            AuditionReviewRecordRow.scope_key == review.scope_key,
+                            AuditionReviewDecisionRow.project_id == project_id,
+                            AuditionReviewDecisionRow.gate_id
+                            == "per_role_audition_review",
+                            AuditionReviewDecisionRow.scope_key == review.scope_key,
+                            AuditionReviewDecisionRow.actor_classification == "human",
+                            AuditionSessionRow.provider_id == KOKORO_PROVIDER_ID,
+                        )
+                    ).all()
+                    latest_human_listening_review_revision: int | None = None
+                    for decided_review, decided_decision in prior_human_listening_rows:
+                        decided_session = (
+                            session.get(AuditionSessionRow, decided_review.session_id)
+                            if decided_review.session_id is not None
+                            else None
+                        )
+                        decided_clip = (
+                            session.get(AuditionClipRow, decided_review.clip_id)
+                            if decided_review.clip_id is not None
+                            else None
+                        )
+                        if (
+                            decided_session is None
+                            or decided_clip is None
+                            or not self._current_listening_attestation_is_valid(
+                                session,
+                                review=decided_review,
+                                decision=decided_decision,
+                                audition_session=decided_session,
+                                clip=decided_clip,
+                            )
+                        ):
+                            raise ServiceError(
+                                500,
+                                "AUDITION_LISTENING_ATTESTATION_INVALID",
+                                "Stored real-provider review evidence has no exact listening "
+                                "attestation.",
+                            )
+                        latest_human_listening_review_revision = max(
+                            latest_human_listening_review_revision or 0,
+                            decided_review.revision,
+                        )
+                    if (
+                        latest_human_listening_review_revision is not None
+                        and review.revision < latest_human_listening_review_revision
+                    ):
+                        raise ServiceError(
+                            409,
+                            "AUDITION_REVIEW_SEQUENCE_CHANGED",
+                            "A newer real audition review already has a human decision.",
+                        )
                 if request.decision == "approve" and not review.eligible:
                     raise ServiceError(
                         409,
@@ -11982,9 +12176,10 @@ class AuditionRepository:
         row: AuditionReviewRecordRow,
         *,
         decision_override: AuditionReviewDecisionRow | None = None,
+        decision_override_provided: bool = False,
     ) -> dict[str, Any]:
         decision = decision_override
-        if decision is None:
+        if decision is None and not decision_override_provided:
             decision = session.scalar(
                 select(AuditionReviewDecisionRow)
                 .where(
@@ -13149,7 +13344,7 @@ class AuditionRepository:
         quality = (
             session.scalar(
                 select(AudioQualityRecordRow)
-                .where(AudioQualityRecordRow.artifact_id == artifact.id)
+                .where(AudioQualityRecordRow.clip_id == clip.id)
                 .order_by(
                     AudioQualityRecordRow.revision.desc(),
                     AudioQualityRecordRow.id.desc(),

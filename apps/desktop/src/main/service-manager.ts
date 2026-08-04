@@ -14,6 +14,7 @@ import { BackendUnavailableError, DesktopMainError } from "./errors.js";
 import { parseReadyLine, validateHealthResponse } from "./validation.js";
 
 const READY_LINE_MAX_BYTES = 4_096;
+const STARTUP_STDERR_MAX_BYTES = 256;
 const BOOTSTRAP_MAX_BYTES = 512;
 const STARTUP_TIMEOUT_MS = 20_000;
 const HEALTH_TIMEOUT_MS = 2_500;
@@ -322,13 +323,17 @@ export class ServiceManager {
         }
       );
       this.#child = child;
-      child.stderr.resume();
+      const readiness = this.#waitForReadiness(child, nonce, signal);
+      // The bootstrap write is awaited before readiness. Observe readiness
+      // immediately so an early close/abort cannot become an unhandled
+      // rejection while the write is still settling; the original promise is
+      // awaited below and remains the authoritative typed startup result.
+      void readiness.catch(() => undefined);
       const spawnedChild = child;
       child.once("exit", () => {
         this.#handleChildExit(spawnedChild);
       });
       phase = "verification";
-      const readiness = this.#waitForReadiness(child, nonce, signal);
       const bootstrap = createServiceBootstrapRecord(token, nonce);
       await abortable(writeToStdin(child, bootstrap), signal);
       const ready = await withTimeout(
@@ -346,9 +351,13 @@ export class ServiceManager {
 
       const health = await this.#waitForAuthenticatedHealth(
         credentials,
+        child,
         generation,
         signal
       );
+      if (hasChildExited(child)) {
+        throw serviceExitedEarlyError(child, "authenticated_health");
+      }
       this.#assertAttemptActive(generation, signal);
       this.#credentials = credentials;
       this.#setSnapshotForAttempt(
@@ -363,6 +372,9 @@ export class ServiceManager {
         )
       );
       this.#startHealthMonitor();
+      if (hasChildExited(child)) {
+        throw serviceExitedEarlyError(child, "authenticated_health");
+      }
       return this.#snapshot;
     } catch (error) {
       this.#credentials = null;
@@ -387,11 +399,7 @@ export class ServiceManager {
         signal,
         createSnapshot(
           "unavailable",
-          phase === "installation"
-            ? "The local service installation could not be found."
-            : failure.code === "SERVICE_START_TIMEOUT"
-              ? "The local service did not become ready in time."
-              : "The local service could not be verified."
+          startupUnavailableMessage(failure, phase)
         )
       );
       throw failure;
@@ -585,11 +593,15 @@ export class ServiceManager {
   ): Promise<{ port: number; instanceId: string }> {
     return new Promise((resolve, reject) => {
       let pending = Buffer.alloc(0);
+      let stderr = Buffer.alloc(0);
+      let stderrExceeded = false;
       const cleanup = () => {
         child.stdout.off("data", onData);
+        child.stderr.off("data", onStderrData);
         child.off("error", onError);
-        child.off("exit", onExit);
+        child.off("close", onClose);
         signal.removeEventListener("abort", onAbort);
+        child.stderr.resume();
       };
       const fail = (error: Error) => {
         cleanup();
@@ -624,6 +636,20 @@ export class ServiceManager {
           );
         }
       };
+      const onStderrData = (chunk: Buffer | string) => {
+        if (stderrExceeded) {
+          return;
+        }
+        const bytes = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk, "utf8");
+        if (stderr.byteLength + bytes.byteLength > STARTUP_STDERR_MAX_BYTES) {
+          stderr = Buffer.alloc(0);
+          stderrExceeded = true;
+          return;
+        }
+        stderr = Buffer.concat([stderr, bytes]);
+      };
       const onError = () => {
         fail(
           new DesktopMainError(
@@ -633,14 +659,8 @@ export class ServiceManager {
           )
         );
       };
-      const onExit = () => {
-        fail(
-          new DesktopMainError(
-            "SERVICE_EXITED_EARLY",
-            "The local service exited during startup.",
-            true
-          )
-        );
+      const onClose = () => {
+        fail(startupStderrFailure(child, stderr, stderrExceeded));
       };
       const onAbort = () => {
         fail(new ServiceStartCancelledError());
@@ -650,20 +670,25 @@ export class ServiceManager {
         return;
       }
       child.stdout.on("data", onData);
+      child.stderr.on("data", onStderrData);
       child.once("error", onError);
-      child.once("exit", onExit);
+      child.once("close", onClose);
       signal.addEventListener("abort", onAbort, { once: true });
     });
   }
 
   async #waitForAuthenticatedHealth(
     credentials: ServiceCredentials,
+    child: ChildProcessWithoutNullStreams,
     generation: number,
     signal: AbortSignal
   ): Promise<HealthResponse> {
     const deadline = Date.now() + STARTUP_TIMEOUT_MS;
     let lastError: unknown;
     while (Date.now() < deadline) {
+      if (hasChildExited(child)) {
+        throw serviceExitedEarlyError(child, "authenticated_health");
+      }
       this.#assertAttemptActive(generation, signal);
       try {
         const health = await abortable(this.#fetchHealth(credentials), signal);
@@ -800,6 +825,13 @@ export class ServiceManager {
     if (this.#child !== child) {
       return;
     }
+    if (this.#startPromise !== null) {
+      // The active startup operation owns this failure. Its bounded readiness
+      // or health check preserves the original exit context. There is no await
+      // between the final startup exit check and resolving that operation, so
+      // a later exit is handled after #startPromise clears.
+      return;
+    }
     this.#child = null;
     this.#credentials = null;
     this.#clearHealthTimer();
@@ -886,6 +918,106 @@ function createSnapshot(
     checkedAt: new Date().toISOString(),
     health
   };
+}
+
+function startupStderrFailure(
+  child: ChildProcessWithoutNullStreams,
+  stderr: Buffer,
+  exceededLimit: boolean
+): DesktopMainError {
+  if (!exceededLimit) {
+    const diagnostic = stderr.toString("utf8");
+    const match = /^CSS_ERROR ([a-z_]+)\r?\n$/u.exec(diagnostic);
+    switch (match?.[1]) {
+      case "storage_locked":
+        return new DesktopMainError(
+          "STORAGE_LOCKED",
+          "The project storage is already in use by another local service.",
+          true,
+          undefined,
+          startupExitDetails(child, "readiness", "storage_locked", false)
+        );
+      case "incompatible_schema":
+        return new DesktopMainError(
+          "DATABASE_SCHEMA_UNSUPPORTED",
+          "The project database schema is not supported by this service.",
+          false,
+          undefined,
+          startupExitDetails(
+            child,
+            "readiness",
+            "incompatible_schema",
+            false
+          )
+        );
+      case "startup_failed":
+        return new DesktopMainError(
+          "SERVICE_START_FAILED",
+          "The local service could not be verified.",
+          true,
+          undefined,
+          startupExitDetails(child, "readiness", "startup_failed", false)
+        );
+    }
+  }
+  return new DesktopMainError(
+    "SERVICE_EXITED_EARLY",
+    "The local service exited during startup.",
+    true,
+    undefined,
+    startupExitDetails(child, "readiness", "unavailable", exceededLimit)
+  );
+}
+
+function serviceExitedEarlyError(
+  child: ChildProcessWithoutNullStreams,
+  stage: "authenticated_health"
+): DesktopMainError {
+  return new DesktopMainError(
+    "SERVICE_EXITED_EARLY",
+    "The local service exited during startup.",
+    true,
+    undefined,
+    startupExitDetails(child, stage, "unavailable", false)
+  );
+}
+
+function startupExitDetails(
+  child: ChildProcessWithoutNullStreams,
+  stage: "readiness" | "authenticated_health",
+  diagnosticCode:
+    | "storage_locked"
+    | "incompatible_schema"
+    | "startup_failed"
+    | "unavailable",
+  stderrLimitExceeded: boolean
+): Readonly<Record<string, string | number | boolean>> {
+  return {
+    startupStage: stage,
+    exitCode: child.exitCode ?? -1,
+    signalCode: child.signalCode ?? "none",
+    stderrDiagnosticCode: diagnosticCode,
+    stderrLimitExceeded
+  };
+}
+
+function startupUnavailableMessage(
+  failure: DesktopMainError,
+  phase: "installation" | "spawn" | "verification"
+): string {
+  if (phase === "installation") {
+    return "The local service installation could not be found.";
+  }
+  switch (failure.code) {
+    case "STORAGE_LOCKED":
+      return "The project storage is already in use by another local service.";
+    case "DATABASE_SCHEMA_UNSUPPORTED":
+      return "The project database schema is not supported by this service.";
+    case "SERVICE_START_TIMEOUT":
+      return "The local service did not become ready in time.";
+    default:
+      return "The local service could not be verified.";
+  }
 }
 
 export function buildChildEnvironment(

@@ -67,6 +67,9 @@ describe("AuditionsWorkspace", () => {
       screen.getAllByRole("button", { name: "Generate audition" })
     ).toHaveLength(3);
     expect(screen.getByText("Fixture-provider clip · Verified Hit")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Record acceptable" })
+    ).not.toBeInTheDocument();
     for (const gate of [
       "Per-Role Audition Review · role-narrator",
       "Narrator Audition Review",
@@ -230,6 +233,283 @@ describe("AuditionsWorkspace", () => {
       expect(api.jobs.get).toHaveBeenCalledTimes(2);
       expect(vi.mocked(api.auditions.getWorkspace).mock.calls.length)
         .toBeGreaterThanOrEqual(2);
+    }
+  );
+
+  it.each([
+    ["Record acceptable", "approve", "approved", "acceptable"],
+    [
+      "Record needs changes",
+      "request_changes",
+      "changes_requested",
+      "needs_changes"
+    ],
+    ["Record undecided", "request_changes", "changes_requested", "undecided"],
+    ["Record unacceptable", "reject", "rejected", "unacceptable"]
+  ] as const)(
+    "records a historical exact-clip %s decision with the latest scope decision as superseded evidence",
+    async (buttonLabel, requestDecision, persistedDecisionState, disposition) => {
+      const api = createApi();
+      const workspace = realLocalWorkspace(false);
+      const session = realLocalSession(workspace);
+      const baseClip = realLocalClip(workspace);
+      const currentReview = workspace.reviews[0];
+      if (currentReview === undefined) {
+        throw new Error("Missing current real per-role review.");
+      }
+      const scopeLatestDecision = reviewDecision({
+        decisionId: "decision-scope-latest",
+        reviewId: "review-scope-prior",
+        gateId: "per_role_audition_review",
+        roleId: "role-narrator",
+        decision: "invalidated",
+        rationale: "Superseded scope evidence.",
+        decidedAt: "2026-07-31T11:59:00Z",
+        supersedesDecisionId: null,
+        expectedReviewRevision: 1
+      });
+      const historicalReview: AuditionReview = {
+        ...baseClip.review,
+        reviewId: "review-historical-clip",
+        revision: 7,
+        latestDecision: null
+      };
+      const historicalClip: AuditionClip = {
+        ...baseClip,
+        review: historicalReview
+      };
+      const projectedWorkspace: AuditionWorkspaceSnapshot = {
+        ...workspace,
+        reviews: [
+          {
+            ...currentReview,
+            reviewId: "review-current-clip",
+            revision: 8,
+            state: "pending",
+            evidence: {
+              ...currentReview.evidence,
+              auditionClipId: "clip-current",
+              auditionClipRevision: 2,
+              evidenceFingerprint: otherDigest
+            },
+            latestDecision: scopeLatestDecision
+          },
+          ...workspace.reviews.slice(1)
+        ],
+        voiceReadinessSnapshot: null
+      };
+      const rationale = `Historical ${disposition} listening rationale.`;
+      const persistedDecision: AuditionReviewDecision = {
+        ...reviewDecision({
+          decisionId: `decision-${disposition}`,
+          reviewId: historicalReview.reviewId,
+          gateId: historicalReview.gateId,
+          roleId: historicalReview.roleId,
+          decision: persistedDecisionState,
+          rationale,
+          decidedAt: now,
+          supersedesDecisionId: scopeLatestDecision.decisionId,
+          expectedReviewRevision: historicalReview.revision
+        }),
+        listeningAttestation: {
+          auditionClipId: historicalClip.auditionClipId,
+          auditionClipRevision: historicalClip.revision,
+          auditionClipFingerprint: historicalClip.clipFingerprint,
+          audioArtifactId: historicalClip.audioArtifact.audioArtifactId,
+          audioArtifactSha256: historicalClip.audioArtifact.sha256,
+          listened: true,
+          disposition,
+          attestationId: `attestation-${disposition}`,
+          actor: { classification: "human", actorId: "desktop-user" },
+          recordedAt: now,
+          rationale,
+          attestationFingerprint: otherDigest,
+          immutable: true
+        }
+      };
+      const persistedReview: AuditionReview = {
+        ...historicalReview,
+        state: persistedDecisionState,
+        latestDecision: persistedDecision,
+        updatedAt: now
+      };
+      const persistedClip: AuditionClip = {
+        ...historicalClip,
+        review: persistedReview,
+        state:
+          persistedDecisionState === "changes_requested"
+            ? "reviewable"
+            : persistedDecisionState
+      };
+      vi.mocked(api.auditions.getWorkspace).mockResolvedValue(
+        ok({
+          correlationId: "correlation-historical-workspace",
+          workspace: projectedWorkspace
+        })
+      );
+      vi.mocked(api.auditions.listSessions).mockResolvedValue(
+        ok({
+          correlationId: "correlation-historical-sessions",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          items: [session]
+        })
+      );
+      vi.mocked(api.auditions.listClips)
+        .mockResolvedValueOnce(
+          ok({
+            correlationId: "correlation-historical-clips-initial",
+            projectId: "project-1",
+            pageSize: 1,
+            total: 1,
+            items: [historicalClip]
+          })
+        )
+        .mockResolvedValue(
+          ok({
+            correlationId: "correlation-historical-clips-persisted",
+            projectId: "project-1",
+            pageSize: 1,
+            total: 1,
+            items: [persistedClip]
+          })
+        );
+      vi.mocked(api.auditions.decideReview).mockResolvedValue(
+        ok({
+          correlationId: "correlation-historical-decision",
+          review: persistedReview,
+          decision: persistedDecision,
+          voiceReadinessSnapshot: null
+        })
+      );
+
+      const user = userEvent.setup();
+      renderWorkspace(api);
+      const clipCard = await screen.findByTestId("audition-clip-clip-1");
+      const scoped = within(clipCard);
+      const decisionButton = scoped.getByRole("button", { name: buttonLabel });
+      expect(decisionButton).toBeDisabled();
+      await user.click(
+        scoped.getByTestId("listened-exact-clip-clip-1")
+      );
+      fireEvent.change(
+        scoped.getByLabelText("Exact-clip decision rationale"),
+        { target: { value: rationale } }
+      );
+      expect(decisionButton).toBeEnabled();
+      await user.click(decisionButton);
+
+      await waitFor(() =>
+        expect(api.auditions.decideReview).toHaveBeenCalledTimes(1)
+      );
+      const request = vi.mocked(api.auditions.decideReview).mock.calls[0]?.[0];
+      expect(request).toEqual({
+        projectId: "project-1",
+        gateId: "per_role_audition_review",
+        roleId: "role-narrator",
+        reviewId: historicalReview.reviewId,
+        expectedReviewRevision: historicalReview.revision,
+        expectedEvidenceFingerprint:
+          historicalReview.evidence.evidenceFingerprint,
+        decision: requestDecision,
+        rationale,
+        supersedesDecisionId: scopeLatestDecision.decisionId,
+        listeningAttestation: {
+          auditionClipId: historicalClip.auditionClipId,
+          auditionClipRevision: historicalClip.revision,
+          auditionClipFingerprint: historicalClip.clipFingerprint,
+          audioArtifactId: historicalClip.audioArtifact.audioArtifactId,
+          audioArtifactSha256: historicalClip.audioArtifact.sha256,
+          listened: true,
+          disposition
+        },
+        idempotencyKey: request?.idempotencyKey
+      });
+      expect(request?.idempotencyKey).toMatch(/^exact-clip-review-/u);
+      const persisted = await screen.findByTestId(
+        "persisted-listening-decision-clip-1"
+      );
+      expect(
+        within(persisted).getByText(`Recorded listening: ${humanizeForTest(disposition)}`)
+      ).toBeVisible();
+      expect(within(persisted).getByText(rationale)).toBeVisible();
+      for (const action of [
+        "Record acceptable",
+        "Record needs changes",
+        "Record undecided",
+        "Record unacceptable"
+      ]) {
+        expect(
+          within(await screen.findByTestId("audition-clip-clip-1")).getByRole(
+            "button",
+            { name: action }
+          )
+        ).toBeDisabled();
+      }
+      expect(screen.getByText("No current readiness snapshot.")).toBeVisible();
+    },
+    10_000
+  );
+
+  it.each(["mismatched", "missing"] as const)(
+    "does not render exact-clip decision controls for a %s review binding",
+    async (kind) => {
+      const api = createApi();
+      const workspace = realLocalWorkspace(false);
+      const clip = realLocalClip(workspace);
+      const malformedClip =
+        kind === "mismatched"
+          ? ({
+              ...clip,
+              review: {
+                ...clip.review,
+                evidence: {
+                  ...clip.review.evidence,
+                  auditionClipId: "clip-unrelated"
+                }
+              }
+            } as AuditionClip)
+          : (Object.fromEntries(
+              Object.entries(clip).filter(([key]) => key !== "review")
+            ) as unknown as AuditionClip);
+      vi.mocked(api.auditions.getWorkspace).mockResolvedValue(
+        ok({ correlationId: "correlation-invalid-binding", workspace })
+      );
+      vi.mocked(api.auditions.listSessions).mockResolvedValue(
+        ok({
+          correlationId: "correlation-invalid-binding-sessions",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          items: [realLocalSession(workspace)]
+        })
+      );
+      vi.mocked(api.auditions.listClips).mockResolvedValue(
+        ok({
+          correlationId: "correlation-invalid-binding-clips",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          items: [malformedClip]
+        })
+      );
+
+      renderWorkspace(api);
+      const clipCard = await screen.findByTestId("audition-clip-clip-1");
+      const scoped = within(clipCard);
+      expect(
+        scoped.getByText(
+          "Exact governed review binding unavailable; human controls are disabled."
+        )
+      ).toBeVisible();
+      expect(
+        scoped.queryByTestId("listened-exact-clip-clip-1")
+      ).not.toBeInTheDocument();
+      expect(
+        scoped.queryByRole("button", { name: "Record acceptable" })
+      ).not.toBeInTheDocument();
+      expect(api.auditions.decideReview).not.toHaveBeenCalled();
     }
   );
 
@@ -2969,6 +3249,11 @@ function auditionClip(): AuditionClip {
       measuredAt: now,
       provenance: provenance("application")
     },
+    review: review(
+      "per_role_audition_review",
+      "review-role",
+      "role-narrator"
+    ),
     state: "reviewable",
     clipFingerprint: digest,
     revision: 1,
@@ -3102,6 +3387,12 @@ function humanizedJobState(state: Job["state"]): string {
   return state.replaceAll("_", " ").replace(/\b\w/gu, (letter) =>
     letter.toUpperCase()
   );
+}
+
+function humanizeForTest(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/gu, (letter) => letter.toUpperCase());
 }
 
 function ok<T>(value: T): DesktopResult<T> {

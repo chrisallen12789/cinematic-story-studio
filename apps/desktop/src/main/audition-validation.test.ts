@@ -1033,7 +1033,9 @@ describe("Phase 3B desktop audition validation", () => {
           },
           replay.request
         )
-      ).toThrow(/requested review|project the requested/u);
+      ).toThrow(
+        /requested review|project the requested|Stale review evidence|immutable review evidence/u
+      );
     }
   );
 
@@ -1088,6 +1090,26 @@ describe("Phase 3B desktop audition validation", () => {
         projectId: "project-1"
       })
     ).toBe(workspaceWithListeningDecision);
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...workspaceWithListeningDecision,
+          workspace: {
+            ...workspaceWithListeningDecision.workspace,
+            reviews: [
+              {
+                ...response.review,
+                latestDecision: {
+                  ...decision,
+                  expectedReviewRevision: response.review.revision + 1
+                }
+              }
+            ]
+          }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow(/Stale review evidence|immutable review evidence/u);
 
     const undecidedRequestAttestation = {
       ...requestAttestation,
@@ -1198,6 +1220,31 @@ describe("Phase 3B desktop audition validation", () => {
     expect(() =>
       validateDecideAuditionReviewResponse(
         {
+          ...response,
+          decision: {
+            ...decision,
+            listeningAttestation: {
+              ...persistedAttestation,
+              recordedAt: "2026-07-31T12:00:01Z"
+            }
+          },
+          review: {
+            ...response.review,
+            latestDecision: {
+              ...decision,
+              listeningAttestation: {
+                ...persistedAttestation,
+                recordedAt: "2026-07-31T12:00:01Z"
+              }
+            }
+          }
+        },
+        request
+      )
+    ).toThrow("listening attestation");
+    expect(() =>
+      validateDecideAuditionReviewResponse(
+        {
           ...fixture.response,
           decision,
           review: {
@@ -1208,6 +1255,102 @@ describe("Phase 3B desktop audition validation", () => {
         fixture.request
       )
     ).toThrow("unrequested listening evidence");
+  });
+
+  it("accepts a pending current review projection carrying the latest historical scope decision", () => {
+    const fixture = boundReviewDecisionResponse("per_role_audition_review");
+    const historicalAttestation = {
+      auditionClipId: "clip-1",
+      auditionClipRevision: 1,
+      auditionClipFingerprint: "b".repeat(64),
+      audioArtifactId: "artifact-1",
+      audioArtifactSha256: "c".repeat(64),
+      listened: true as const,
+      disposition: "acceptable" as const,
+      attestationId: "listening-attestation-historical",
+      actor: { classification: "human" as const, actorId: "local-user" },
+      recordedAt: fixture.response.decision.decidedAt,
+      rationale: fixture.response.decision.rationale,
+      attestationFingerprint: "d".repeat(64),
+      immutable: true as const
+    };
+    const historicalDecision = {
+      ...fixture.response.decision,
+      reviewId: "review-historical",
+      listeningAttestation: historicalAttestation
+    };
+    const currentReview = {
+      ...fixture.response.review,
+      reviewId: "review-current",
+      state: "pending" as const,
+      revision: 2,
+      evidence: {
+        ...fixture.response.review.evidence,
+        auditionSessionId: "session-2",
+        auditionClipId: "clip-2",
+        auditionClipRevision: 2,
+        evidenceFingerprint: "e".repeat(64)
+      },
+      latestDecision: historicalDecision
+    };
+    const workspace = workspaceResponse();
+    const projected = {
+      ...workspace,
+      workspace: {
+        ...workspace.workspace,
+        reviews: [currentReview]
+      }
+    };
+
+    expect(
+      validateAuditionWorkspaceResponse(projected, {
+        projectId: "project-1"
+      })
+    ).toBe(projected);
+  });
+
+  it.each([
+    [
+      "same-review wrong revision",
+      (decision: ReturnType<typeof boundReviewDecisionResponse>["response"]["decision"]) => ({
+        ...decision,
+        expectedReviewRevision: 3
+      })
+    ],
+    [
+      "same-review wrong evidence",
+      (decision: ReturnType<typeof boundReviewDecisionResponse>["response"]["decision"]) => ({
+        ...decision,
+        evidenceFingerprint: "f".repeat(64)
+      })
+    ],
+    [
+      "future historical revision",
+      (decision: ReturnType<typeof boundReviewDecisionResponse>["response"]["decision"]) => ({
+        ...decision,
+        reviewId: "review-future",
+        expectedReviewRevision: 3
+      })
+    ]
+  ])("rejects a %s decision projection", (_label, mutateDecision) => {
+    const fixture = boundReviewDecisionResponse("per_role_audition_review");
+    const currentReview = {
+      ...fixture.response.review,
+      state: "pending" as const,
+      revision: 2,
+      latestDecision: mutateDecision(fixture.response.decision)
+    };
+    const workspace = workspaceResponse();
+
+    expect(() =>
+      validateAuditionWorkspaceResponse(
+        {
+          ...workspace,
+          workspace: { ...workspace.workspace, reviews: [currentReview] }
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow(/immutable review evidence|historical review decision/u);
   });
 
   it.each([
@@ -1956,6 +2099,149 @@ describe("Phase 3B desktop audition validation", () => {
         { projectId: "project-1" }
       )
     ).toThrow("unknown field");
+  });
+
+  it("requires every clip review to be bound to that exact clip and audio evidence", () => {
+    const response = clipResponse();
+    const clip = response.items[0];
+    expect(clip).toBeDefined();
+    if (clip === undefined) return;
+
+    const withoutReview = Object.fromEntries(
+      Object.entries(clip).filter(([key]) => key !== "review")
+    );
+    expect(() =>
+      validateAuditionClipsResponse(
+        { ...response, items: [withoutReview] },
+        { projectId: "project-1" }
+      )
+    ).toThrow(/missing|review/u);
+    expect(() =>
+      validateAuditionClipsResponse(
+        {
+          ...response,
+          items: [
+            {
+              ...clip,
+              review: {
+                ...clip.review,
+                evidence: {
+                  ...clip.review.evidence,
+                  auditionClipId: "clip-unrelated"
+                }
+              }
+            }
+          ]
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("exact governed evidence");
+    expect(() =>
+      validateAuditionClipsResponse(
+        {
+          ...response,
+          items: [
+            {
+              ...clip,
+              review: {
+                ...clip.review,
+                evidence: {
+                  ...clip.review.evidence,
+                  audioQualityFingerprint: "f".repeat(64)
+                }
+              }
+            }
+          ]
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow("exact governed evidence");
+    const borrowedDecision = reviewDecision({
+      decisionId: "decision-borrowed-by-clip",
+      decidedAt: "2026-07-31T12:01:00Z",
+      supersedesDecisionId: null
+    });
+    expect(() =>
+      validateAuditionClipsResponse(
+        {
+          ...response,
+          items: [
+            {
+              ...clip,
+              review: {
+                ...clip.review,
+                latestDecision: borrowedDecision,
+                updatedAt: borrowedDecision.decidedAt
+              }
+            }
+          ]
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow(
+      /borrowed a decision|historical review decision|immutable review evidence/u
+    );
+    const wrongRevisionDecision = {
+      ...borrowedDecision,
+      reviewId: clip.review.reviewId,
+      expectedReviewRevision: clip.review.revision + 1,
+      evidenceFingerprint: clip.review.evidence.evidenceFingerprint
+    };
+    expect(() =>
+      validateAuditionClipsResponse(
+        {
+          ...response,
+          items: [
+            {
+              ...clip,
+              review: {
+                ...clip.review,
+                latestDecision: wrongRevisionDecision,
+                updatedAt: wrongRevisionDecision.decidedAt
+              }
+            }
+          ]
+        },
+        { projectId: "project-1" }
+      )
+    ).toThrow(
+      /borrowed a decision|historical review decision|immutable review evidence/u
+    );
+  });
+
+  it("accepts an independently invalidated historical clip with its exact immutable decision", () => {
+    const response = clipResponse();
+    const clip = response.items[0];
+    expect(clip).toBeDefined();
+    if (clip === undefined) return;
+    const decision = {
+      ...reviewDecision({
+        decisionId: "decision-exact-invalidated-clip",
+        decidedAt: "2026-07-31T12:01:00Z",
+        supersedesDecisionId: null
+      }),
+      reviewId: clip.review.reviewId,
+      expectedReviewRevision: clip.review.revision,
+      evidenceFingerprint: clip.review.evidence.evidenceFingerprint
+    };
+    const invalidated = {
+      ...clip,
+      cacheStatus: "corrupt_miss",
+      state: "invalidated",
+      review: {
+        ...clip.review,
+        state: "approved",
+        latestDecision: decision,
+        updatedAt: decision.decidedAt
+      }
+    };
+
+    expect(
+      validateAuditionClipsResponse(
+        { ...response, items: [invalidated] },
+        { projectId: "project-1" }
+      )
+    ).toEqual({ ...response, items: [invalidated] });
   });
 
   it("accepts server-issued session evidence and rejects assignment drift", () => {
@@ -3569,6 +3855,37 @@ function clipResponse() {
           qualityFingerprint: sha,
           measuredAt: "2026-07-31T12:00:00Z",
           provenance: provenance()
+        },
+        review: {
+          contractVersion: "1.0.0",
+          reviewId: "review-clip-1",
+          projectId: "project-1",
+          gateId: "per_role_audition_review",
+          roleId: "role-1",
+          state: "pending",
+          revision: 1,
+          prerequisiteGateIds: [],
+          evidence: {
+            projectId: "project-1",
+            gateId: "per_role_audition_review",
+            roleId: "role-1",
+            auditionSessionId: "session-1",
+            auditionClipId: "clip-1",
+            auditionClipRevision: 1,
+            approvedCastSnapshotFingerprint: sha,
+            castAssignmentFingerprint: sha,
+            rightsRecordFingerprint: sha,
+            runtimeProfileFingerprint: sha,
+            modelVerificationFingerprint: sha,
+            pronunciationDictionaryFingerprint: sha,
+            pronunciationDependencyFingerprint: sha,
+            audioQualityFingerprint: sha,
+            evidenceFingerprint: sha
+          },
+          blockerCodes: [],
+          warningCodes: [],
+          latestDecision: null,
+          updatedAt: "2026-07-31T12:00:00Z"
         }
       }
     ]

@@ -1005,6 +1005,10 @@ export interface AuditionClip {
   };
   readonly audioArtifact: AudioArtifactRecord;
   readonly audioQuality: AudioQualityRecord;
+  /** The immutable per-role review bound to this exact clip. Its latest
+   * decision is scoped to this review, never borrowed from a newer review for
+   * the same role. */
+  readonly review: AuditionReview;
   readonly state: "reviewable" | "approved" | "rejected" | "invalidated";
   readonly productionExportEligible?: false;
   readonly clipFingerprint: Sha256;

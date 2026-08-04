@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
+import { createReadStream } from "node:fs";
 import {
   lstat,
   mkdir,
+  readdir,
   realpath,
   rename,
   writeFile
@@ -35,6 +37,17 @@ import {
 import {
   Phase3b1RendererError
 } from "../../src/verification/phase3b1-renderer-error-evidence";
+import {
+  buildPhase3b1PrivateReplayLauncher,
+  phase3b1PrivateReplayContractFileName,
+  phase3b1PrivateReplayDirectoryName,
+  phase3b1PrivateReplayMaximumPathLength,
+  phase3b1PrivateReplaySentinelFileName,
+  requirePhase3b1PrivateReplayPathBudget,
+  resolvePhase3b1PrivateReplayStateDirectory,
+  type Phase3b1PrivateReplayContract,
+  type Phase3b1PrivateReplayFileEvidence
+} from "../../src/verification/phase3b1-private-replay";
 
 import {
   assignPhase3b1RealVoiceForPrivateAuditions,
@@ -283,10 +296,25 @@ export interface Phase3b1ListeningPackageStaging {
   readonly finalDirectory: string;
   readonly directoryName: string;
   readonly replayStateDirectory: string;
-  readonly replayStateDirectoryName: string;
+  readonly replayStateId: string;
+  readonly replayProjectId: string;
+  readonly replayClipBindings: readonly {
+    readonly auditionClipId: string;
+    readonly auditionClipFingerprint: string;
+    readonly audioArtifactId: string;
+    readonly audioSha256: string;
+  }[];
   readonly replayLauncherFileName: "replay-private-listening.ps1";
   readonly indexSha256: string;
   readonly scorecardSha256: string;
+}
+
+export interface Phase3b1PrivateReplayPreservationEvidence {
+  readonly replayStateId: string;
+  readonly replayStateDirectoryName: typeof phase3b1PrivateReplayDirectoryName;
+  readonly replayContractSha256: string;
+  readonly replayStateSentinelSha256: string;
+  readonly maximumRetainedPathLength: number;
 }
 
 export interface Phase3b1RealProductPathWorkflow {
@@ -699,7 +727,7 @@ export async function preservePhase3b1PrivateReplayState(
   isolationRootValue: string,
   staging: Phase3b1ListeningPackageStaging,
   packagedVersion: string
-): Promise<void> {
+): Promise<Phase3b1PrivateReplayPreservationEvidence> {
   await assertCanonicalPrivateStaging(staging);
   const isolationRoot = path.resolve(isolationRootValue);
   if (
@@ -723,6 +751,40 @@ export async function preservePhase3b1PrivateReplayState(
   ) {
     throw new Error("The private replay state was not an owned directory tree.");
   }
+  const retainedRelativePaths = await listRetainedReplayPaths(isolationRoot);
+  const maximumRetainedPathLength =
+    requirePhase3b1PrivateReplayPathBudget(
+      staging.replayStateDirectory,
+      [
+        ...retainedRelativePaths,
+        "Temp",
+        phase3b1PrivateReplaySentinelFileName
+      ]
+    );
+  const localApplicationData = requiredLocalApplicationData();
+  const replayParent = path.join(
+    localApplicationData,
+    phase3b1PrivateReplayDirectoryName
+  );
+  await mkdir(replayParent, { recursive: true });
+  const [localMetadata, canonicalLocal, parentMetadata, canonicalParent] =
+    await Promise.all([
+      lstat(localApplicationData),
+      realpath(localApplicationData),
+      lstat(replayParent),
+      realpath(replayParent)
+    ]);
+  if (
+    !localMetadata.isDirectory() ||
+    localMetadata.isSymbolicLink() ||
+    !samePath(canonicalLocal, localApplicationData) ||
+    !parentMetadata.isDirectory() ||
+    parentMetadata.isSymbolicLink() ||
+    !samePath(canonicalParent, replayParent) ||
+    !isStrictChild(canonicalLocal, canonicalParent)
+  ) {
+    throw new Error("The short private replay parent was not canonical.");
+  }
   await mkdir(staging.replayStateDirectory, { recursive: false });
   await rename(
     path.join(isolationRoot, "AppData"),
@@ -735,23 +797,112 @@ export async function preservePhase3b1PrivateReplayState(
   await mkdir(path.join(staging.replayStateDirectory, "Temp"), {
     recursive: false
   });
-  const launcher = `$ErrorActionPreference = "Stop"
-$packageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $packageRoot "..\\..\\..")).Path
-$stateRoot = (Resolve-Path -LiteralPath (Join-Path $packageRoot "..\\${staging.replayStateDirectoryName}")).Path
-$executable = Join-Path $repositoryRoot "apps\\desktop\\release\\${packagedVersion}\\win-unpacked\\Cinematic Story Studio.exe"
-if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "The exact packaged executable is unavailable." }
-$env:APPDATA = Join-Path $stateRoot "AppData"
-$env:LOCALAPPDATA = Join-Path $stateRoot "LocalAppData"
-$env:TEMP = Join-Path $stateRoot "Temp"
-$env:TMP = $env:TEMP
-& $executable
-`;
+  const stateSentinel = {
+    schemaVersion: 1,
+    evidenceClassification: "private_local_replay_state_binding",
+    stateId: staging.replayStateId,
+    packageDirectoryName: staging.directoryName,
+    listeningIndexSha256: staging.indexSha256,
+    projectId: staging.replayProjectId,
+    clips: staging.replayClipBindings
+  } as const;
+  const stateSentinelBytes = Buffer.from(
+    `${JSON.stringify(stateSentinel, null, 2)}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(
+      staging.replayStateDirectory,
+      phase3b1PrivateReplaySentinelFileName
+    ),
+    stateSentinelBytes,
+    { flag: "wx" }
+  );
+  const executable = await replayFileEvidence(
+    path.join(
+      repositoryRoot,
+      "apps",
+      "desktop",
+      "release",
+      packagedVersion,
+      "win-unpacked",
+      "Cinematic Story Studio.exe"
+    ),
+    `apps/desktop/release/${packagedVersion}/win-unpacked/Cinematic Story Studio.exe`
+  );
+  const applicationArchive = await replayFileEvidence(
+    path.join(
+      repositoryRoot,
+      "apps",
+      "desktop",
+      "release",
+      packagedVersion,
+      "win-unpacked",
+      "resources",
+      "app.asar"
+    ),
+    `apps/desktop/release/${packagedVersion}/win-unpacked/resources/app.asar`
+  );
+  const service = await replayFileEvidence(
+    path.join(
+      repositoryRoot,
+      "apps",
+      "desktop",
+      "release",
+      packagedVersion,
+      "win-unpacked",
+      "resources",
+      "service",
+      "cinematic-story-service.exe"
+    ),
+    `apps/desktop/release/${packagedVersion}/win-unpacked/resources/service/cinematic-story-service.exe`
+  );
+  const stateSentinelSha256 = sha256(stateSentinelBytes);
+  const replayContract: Phase3b1PrivateReplayContract = {
+    schemaVersion: 1,
+    evidenceClassification: "private_local_replay_contract",
+    stateStorage: "local_application_data",
+    stateDirectoryName: phase3b1PrivateReplayDirectoryName,
+    stateId: staging.replayStateId,
+    packageDirectoryName: staging.directoryName,
+    listeningIndexSha256: staging.indexSha256,
+    stateSentinelSha256,
+    packagedVersion,
+    executable,
+    applicationArchive,
+    service,
+    maximumRetainedPathLength,
+    enforcedMaximumPathLength: phase3b1PrivateReplayMaximumPathLength
+  };
+  const replayContractBytes = Buffer.from(
+    `${JSON.stringify(replayContract, null, 2)}\n`,
+    "utf8"
+  );
+  const replayContractSha256 = sha256(replayContractBytes);
+  await writeFile(
+    path.join(
+      staging.stagingDirectory,
+      phase3b1PrivateReplayContractFileName
+    ),
+    replayContractBytes,
+    { flag: "wx" }
+  );
+  const launcher = buildPhase3b1PrivateReplayLauncher(
+    replayContract,
+    replayContractSha256
+  );
   await writeFile(
     path.join(staging.stagingDirectory, staging.replayLauncherFileName),
     launcher,
     { encoding: "utf8", flag: "wx" }
   );
+  return {
+    replayStateId: staging.replayStateId,
+    replayStateDirectoryName: phase3b1PrivateReplayDirectoryName,
+    replayContractSha256,
+    replayStateSentinelSha256: stateSentinelSha256,
+    maximumRetainedPathLength
+  };
 }
 
 async function installVerifyAndActivateExactPackage(
@@ -1366,8 +1517,8 @@ async function stagePrivateListeningPackage(
     throw new Error("The private listening root escaped its canonical ignored root.");
   }
   const stamp = new Date().toISOString().replaceAll(":", "-");
-  const directoryName = `run-${stamp}-${randomBytes(6).toString("hex")}`;
-  const replayStateDirectoryName = `${directoryName}-desktop-state`;
+  const replayStateId = randomBytes(6).toString("hex");
+  const directoryName = `run-${stamp}-${replayStateId}`;
   const stagingDirectory = path.join(
     privateEvidenceRoot,
     `.${directoryName}.staging`
@@ -1387,19 +1538,23 @@ async function stagePrivateListeningPackage(
     schemaVersion: 1,
     evidenceClassification: "private_human_listening_package",
     generatedAt: new Date().toISOString(),
+    projectId: evidence.projectId,
     humanListeningStatus: "pending",
     humanListeningClaimed: false,
     productionExportEligible: false,
     exactPackageEligibleVoiceCount: 1,
-    replayStateDirectoryName,
+    replayStateStorage: "local_application_data",
+    replayStateDirectoryName: phase3b1PrivateReplayDirectoryName,
+    replayStateId,
+    replayContractFileName: phase3b1PrivateReplayContractFileName,
     replayLauncherFileName: "replay-private-listening.ps1",
     limitation:
       "The exact allow-listed package contains one technically compatible voice tensor, so all six role-purpose clips use that one governed profile.",
     restriction: GOVERNED_PRIVATE_AUDITION_WARNING,
     clips: evidence.auditions,
     desktopReplaySteps: [
-      "Keep this directory beside its matching private desktop-state directory.",
-      "From this directory, run replay-private-listening.ps1 in PowerShell; it launches the exact repository build with only the retained isolated APPDATA, LOCALAPPDATA, TEMP, and TMP state.",
+      "Keep this ignored private package on the machine that owns its matching opaque replay state.",
+      "From this directory, run replay-private-listening.ps1 in PowerShell; it verifies the package/state binding and exact executable, app.asar, and service hashes before launching with only the retained isolated APPDATA, LOCALAPPDATA, TEMP, and TMP state.",
       "Open the restored synthetic project and choose Auditions.",
       "In Clip history & cache, locate a Real-provider clip by its role and clip ID from this index.",
       "Choose Load audio; the desktop fetches the exact artifact through authenticated Electron IPC and creates a private Blob URL.",
@@ -1423,11 +1578,18 @@ async function stagePrivateListeningPackage(
     stagingDirectory,
     finalDirectory,
     directoryName,
-    replayStateDirectory: path.join(
-      privateEvidenceRoot,
-      replayStateDirectoryName
+    replayStateDirectory: resolvePhase3b1PrivateReplayStateDirectory(
+      requiredLocalApplicationData(),
+      replayStateId
     ),
-    replayStateDirectoryName,
+    replayStateId,
+    replayProjectId: evidence.projectId,
+    replayClipBindings: evidence.auditions.map((clip) => ({
+      auditionClipId: clip.auditionClipId,
+      auditionClipFingerprint: clip.auditionClipFingerprint,
+      audioArtifactId: clip.audioArtifactId,
+      audioSha256: clip.audioSha256
+    })),
     replayLauncherFileName: "replay-private-listening.ps1",
     indexSha256: sha256(indexBytes),
     scorecardSha256: sha256(scorecardBytes)
@@ -1947,10 +2109,81 @@ async function assertCanonicalPrivateStaging(
     !isStrictChild(canonicalPrivateRoot, canonicalStagingDirectory) ||
     !samePath(path.dirname(staging.finalDirectory), canonicalPrivateRoot) ||
     !samePath(
-      path.dirname(staging.replayStateDirectory),
-      canonicalPrivateRoot
+      staging.replayStateDirectory,
+      resolvePhase3b1PrivateReplayStateDirectory(
+        requiredLocalApplicationData(),
+        staging.replayStateId
+      )
     )
   ) {
     throw new Error("The private listening staging paths were not canonical.");
   }
+}
+
+function requiredLocalApplicationData(): string {
+  const value = process.env.LOCALAPPDATA;
+  if (value === undefined || value.trim().length === 0 || !path.isAbsolute(value)) {
+    throw new Error("The host local application-data directory is unavailable.");
+  }
+  return path.resolve(value);
+}
+
+async function listRetainedReplayPaths(
+  isolationRoot: string
+): Promise<readonly string[]> {
+  const result: string[] = [];
+  const pending = ["AppData", "LocalAppData"];
+  while (pending.length > 0) {
+    const relative = pending.pop();
+    if (relative === undefined) break;
+    const absolute = path.join(isolationRoot, relative);
+    const metadata = await lstat(absolute);
+    if (metadata.isSymbolicLink()) {
+      throw new Error("The retained private replay tree contained a link.");
+    }
+    result.push(relative);
+    if (metadata.isDirectory()) {
+      const entries = await readdir(absolute);
+      for (const entry of entries) {
+        pending.push(path.join(relative, entry));
+      }
+    } else if (!metadata.isFile()) {
+      throw new Error(
+        "The retained private replay tree contained an unsupported entry."
+      );
+    }
+  }
+  return result;
+}
+
+async function replayFileEvidence(
+  absolutePath: string,
+  relativePath: string
+): Promise<Phase3b1PrivateReplayFileEvidence> {
+  const [metadata, canonical] = await Promise.all([
+    lstat(absolutePath),
+    realpath(absolutePath)
+  ]);
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    !samePath(canonical, absolutePath) ||
+    !isStrictChild(repositoryRoot, canonical)
+  ) {
+    throw new Error("An exact private replay executable was not canonical.");
+  }
+  return {
+    relativePath,
+    byteSize: metadata.size,
+    sha256: await sha256File(canonical)
+  };
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk as Buffer);
+  }
+  return hash.digest("hex");
 }

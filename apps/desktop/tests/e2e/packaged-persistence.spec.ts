@@ -1175,11 +1175,12 @@ test.describe("packaged desktop verification", () => {
           throw new Error("The isolated private replay state was unavailable.");
         }
         phase3b1Stage = "private_evidence_generation";
-        await preservePhase3b1PrivateReplayState(
-          isolationRoot,
-          phase3b1Workflow.listeningPackage,
-          packaged.version
-        );
+        const privateReplayPreservation =
+          await preservePhase3b1PrivateReplayState(
+            isolationRoot,
+            phase3b1Workflow.listeningPackage,
+            packaged.version
+          );
         const listeningPackagePath = await completePrivateListeningPackage(
           phase3b1Workflow.listeningPackage,
           {
@@ -1203,10 +1204,18 @@ test.describe("packaged desktop verification", () => {
             },
             privateListeningPackage: {
               directoryName: phase3b1Workflow.listeningPackage.directoryName,
+              replayStateStorage: "local_application_data",
               replayStateDirectoryName:
-                phase3b1Workflow.listeningPackage.replayStateDirectoryName,
+                privateReplayPreservation.replayStateDirectoryName,
+              replayStateId: privateReplayPreservation.replayStateId,
               replayLauncherFileName:
                 phase3b1Workflow.listeningPackage.replayLauncherFileName,
+              replayContractSha256:
+                privateReplayPreservation.replayContractSha256,
+              replayStateSentinelSha256:
+                privateReplayPreservation.replayStateSentinelSha256,
+              maximumRetainedPathLength:
+                privateReplayPreservation.maximumRetainedPathLength,
               isolatedDesktopStateRetained: true,
               listeningIndexSha256:
                 phase3b1Workflow.listeningPackage.indexSha256,

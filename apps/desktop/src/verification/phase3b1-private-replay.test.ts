@@ -1,0 +1,302 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  buildPhase3b1PrivateReplayLauncher,
+  buildPhase3b1PrivateReplayInspectionArgumentsPowerShell,
+  phase3b1PrivateReplayMaximumPathLength,
+  requirePhase3b1PrivateReplayPathBudget,
+  resolvePhase3b1PrivateReplayStateDirectory,
+  validatePhase3b1PrivateReplayContract,
+  type Phase3b1PrivateReplayContract
+} from "./phase3b1-private-replay";
+
+const hashA = "a".repeat(64);
+const hashB = "b".repeat(64);
+const hashC = "c".repeat(64);
+
+describe("Phase 3B.1 private replay contract", () => {
+  it("derives the opaque retained state beneath short local application data", () => {
+    expect(
+      resolvePhase3b1PrivateReplayStateDirectory(
+        "C:\\Synthetic\\LocalData",
+        "012345abcdef"
+      )
+    ).toBe(
+      path.join(
+        "C:\\Synthetic\\LocalData",
+        "CSS-P3B1",
+        "012345abcdef"
+      )
+    );
+    expect(() =>
+      resolvePhase3b1PrivateReplayStateDirectory("relative", "012345abcdef")
+    ).toThrow("must be absolute");
+    expect(() =>
+      resolvePhase3b1PrivateReplayStateDirectory(
+        "C:\\Synthetic\\LocalData",
+        "../escape"
+      )
+    ).toThrow("identifier was invalid");
+  });
+
+  it("accepts a conservative retained path budget and rejects overflow", () => {
+    const root = "C:\\Synthetic\\LocalData\\CSS-P3B1\\012345abcdef";
+    expect(
+      requirePhase3b1PrivateReplayPathBudget(root, [
+        "LocalAppData\\Cinematic Story Studio\\projects\\project-id\\auditions\\scripts\\script.utf8",
+        "LocalAppData\\Cinematic Story Studio\\models\\packages\\model\\version\\model.onnx"
+      ])
+    ).toBeLessThanOrEqual(phase3b1PrivateReplayMaximumPathLength);
+    expect(() =>
+      requirePhase3b1PrivateReplayPathBudget(root, [
+        `LocalAppData\\${"x".repeat(phase3b1PrivateReplayMaximumPathLength)}`
+      ])
+    ).toThrow("exceeding the enforced");
+    expect(() =>
+      requirePhase3b1PrivateReplayPathBudget(root, ["..\\escape"])
+    ).toThrow("escaped its state root");
+  });
+
+  it("rejects the reproduced deep sibling layout and accepts the short root", () => {
+    const managedRelativePath = path.join(
+      "LocalAppData",
+      "Cinematic Story Studio",
+      "projects",
+      "11111111-2222-4333-8444-555555555555",
+      "auditions",
+      "scripts",
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.utf8"
+    );
+    const legacySibling = path.join(
+      "C:\\Synthetic\\source\\repos\\cinematic-story-studio",
+      "local-renders",
+      "phase3b1-real-product-path",
+      "run-2035-01-02T03-04-05.678Z-012345abcdef-desktop-state"
+    );
+    const bounded = path.join(
+      "C:\\Synthetic\\LocalData",
+      "CSS-P3B1",
+      "012345abcdef"
+    );
+
+    expect(path.join(legacySibling, managedRelativePath).length).toBeGreaterThan(
+      phase3b1PrivateReplayMaximumPathLength
+    );
+    expect(() =>
+      requirePhase3b1PrivateReplayPathBudget(legacySibling, [
+        managedRelativePath
+      ])
+    ).toThrow("exceeding the enforced");
+    expect(
+      requirePhase3b1PrivateReplayPathBudget(bounded, [managedRelativePath])
+    ).toBeLessThanOrEqual(phase3b1PrivateReplayMaximumPathLength);
+  });
+
+  it("generates a fixed launcher with state, hash, cwd, and owned PID checks", () => {
+    const contract = replayContract();
+    expect(validatePhase3b1PrivateReplayContract(contract)).toBe(contract);
+    const launcher = buildPhase3b1PrivateReplayLauncher(contract, hashC);
+    expect(launcher).toContain("GetFolderPath");
+    expect(launcher).toContain("CSS-P3B1");
+    expect(launcher).toContain("Get-FileHash");
+    expect(launcher).toContain("resources\\app.asar");
+    expect(launcher).toContain("$contract.applicationArchive");
+    expect(launcher).toContain("The listening package identity changed.");
+    expect(launcher).toContain("The retained replay-state identity is invalid.");
+    expect(launcher).toContain("The retained replay project binding is invalid.");
+    expect(launcher).toContain("A retained replay clip binding is invalid.");
+    expect(launcher).toContain("[Collections.Generic.Stack[string]]::new()");
+    expect(launcher).toContain("The retained replay state contained a link.");
+    expect(launcher).toContain("The retained replay state exceeded its enforced path budget.");
+    expect(launcher).toContain("CSS_REPLAY_MAXIMUM_RETAINED_PATH_LENGTH=");
+    expect(launcher).toContain("Get-CimInstance Win32_Process");
+    expect(launcher).toContain("An exact replay process is already running");
+    expect(launcher).toContain("CSS_REPLAY_PREEXISTING_RELEVANT_PIDS=none");
+    expect(launcher).toContain("CSS_PHASE3B1_PRIVATE_REPLAY_E2E");
+    expect(launcher).toContain('$e2eRunner -cne "1"');
+    expect(launcher).toContain(
+      "-not [string]::IsNullOrWhiteSpace($e2eRunner)"
+    );
+    expect(launcher).toContain("--remote-debugging-address=127.0.0.1");
+    expect(launcher).toContain("$parsedDebugPort -lt 49152");
+    expect(launcher).toContain('"ELECTRON_RUN_AS_NODE"');
+    expect(launcher).toContain('"NODE_OPTIONS"');
+    expect(launcher).toContain('"CSS_DESKTOP_DEV_URL"');
+    expect(launcher).toContain('"CSS_PACKAGED_E2E_SHUTDOWN_EVIDENCE_PATH"');
+    expect(launcher).toContain('"CSS_PHASE3B_RUNTIME_SHUTDOWN_EVIDENCE"');
+    expect(launcher).toContain('"CSS_PHASE3B1_PRIVATE_REPLAY_RUNNER"');
+    expect(launcher).toContain("[EnvironmentVariableTarget]::Process");
+    expect(launcher).toContain("Start-Process -FilePath $executable");
+    expect(launcher).toContain("-WorkingDirectory");
+    expect(launcher).toContain("-PassThru");
+    expect(launcher).toContain("CSS_REPLAY_LAUNCHER_PID=");
+    expect(launcher).toContain("$application.WaitForExit()");
+    expect(launcher).not.toContain("taskkill");
+    expect(launcher).not.toContain("Stop-Process");
+    expect(launcher).not.toContain("Remove-Item");
+    expect(launcher).not.toContain("C:\\Synthetic");
+  });
+
+  it("rejects drifted executable identities and path evidence", () => {
+    expect(() => validatePhase3b1PrivateReplayContract(null)).toThrow(
+      "contract was invalid"
+    );
+    expect(() =>
+      validatePhase3b1PrivateReplayContract({
+        ...replayContract(),
+        executable: {
+          ...replayContract().executable,
+          relativePath: "elsewhere.exe"
+        }
+      })
+    ).toThrow("fingerprint was invalid");
+    expect(() =>
+      validatePhase3b1PrivateReplayContract({
+        ...replayContract(),
+        applicationArchive: {
+          ...replayContract().applicationArchive,
+          sha256: "not-a-hash"
+        }
+      })
+    ).toThrow("fingerprint was invalid");
+    expect(() =>
+      buildPhase3b1PrivateReplayLauncher(replayContract(), "not-a-hash")
+    ).toThrow("contract hash was invalid");
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "emits syntactically valid Windows PowerShell",
+    () => {
+      const launcher = buildPhase3b1PrivateReplayLauncher(
+        replayContract(),
+        hashC
+      );
+      const result = spawnSync(
+        "powershell.exe",
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseInput($env:CSS_REPLAY_SOURCE,[ref]$tokens,[ref]$errors) > $null; if($errors.Count -ne 0){$errors | ForEach-Object {[Console]::Error.WriteLine($_.Message)}; exit 1}; [Console]::Out.Write('VALID')"
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, CSS_REPLAY_SOURCE: launcher },
+          shell: false,
+          timeout: 15_000,
+          windowsHide: true
+        }
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("VALID");
+    },
+    20_000
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "rejects stale or partial replay inspection environment combinations",
+    () => {
+      const names = [
+        "CSS_PHASE3B1_PRIVATE_REPLAY_E2E",
+        "CSS_PHASE3B1_REPLAY_E2E_REMOTE_DEBUGGING_PORT",
+        "CSS_PHASE3B1_PRIVATE_REPLAY_RUNNER"
+      ] as const;
+      const cases = [
+        [{}, 0, ""],
+        [{ CSS_PHASE3B1_PRIVATE_REPLAY_E2E: "1" }, 1, ""],
+        [{ CSS_PHASE3B1_PRIVATE_REPLAY_RUNNER: "1" }, 1, ""],
+        [
+          {
+            CSS_PHASE3B1_PRIVATE_REPLAY_E2E: "1",
+            CSS_PHASE3B1_REPLAY_E2E_REMOTE_DEBUGGING_PORT: "60000"
+          },
+          1,
+          ""
+        ],
+        [
+          {
+            CSS_PHASE3B1_PRIVATE_REPLAY_E2E: "1",
+            CSS_PHASE3B1_REPLAY_E2E_REMOTE_DEBUGGING_PORT: "49151",
+            CSS_PHASE3B1_PRIVATE_REPLAY_RUNNER: "1"
+          },
+          1,
+          ""
+        ],
+        [
+          {
+            CSS_PHASE3B1_PRIVATE_REPLAY_E2E: "1",
+            CSS_PHASE3B1_REPLAY_E2E_REMOTE_DEBUGGING_PORT: "60000",
+            CSS_PHASE3B1_PRIVATE_REPLAY_RUNNER: "1"
+          },
+          0,
+          "--remote-debugging-address=127.0.0.1|--remote-debugging-port=60000"
+        ]
+      ] as const;
+      for (const [overrides, expectedStatus, expectedOutput] of cases) {
+        const environment = { ...process.env };
+        for (const name of names) delete environment[name];
+        Object.assign(environment, overrides);
+        const result = spawnSync(
+          "powershell.exe",
+          [
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `${buildPhase3b1PrivateReplayInspectionArgumentsPowerShell()}\n[Console]::Out.Write(($applicationArguments -join '|'))`
+          ],
+          {
+            encoding: "utf8",
+            env: environment,
+            shell: false,
+            timeout: 15_000,
+            windowsHide: true
+          }
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status === 0 ? 0 : 1, result.stderr).toBe(expectedStatus);
+        if (expectedStatus === 0) expect(result.stdout).toBe(expectedOutput);
+      }
+    },
+    20_000
+  );
+});
+
+function replayContract(): Phase3b1PrivateReplayContract {
+  return {
+    schemaVersion: 1,
+    evidenceClassification: "private_local_replay_contract",
+    stateStorage: "local_application_data",
+    stateDirectoryName: "CSS-P3B1",
+    stateId: "012345abcdef",
+    packageDirectoryName: "run-2035-01-02T03-04-05.678Z-012345abcdef",
+    listeningIndexSha256: hashA,
+    stateSentinelSha256: hashB,
+    packagedVersion: "0.1.0",
+    executable: {
+      relativePath:
+        "apps/desktop/release/0.1.0/win-unpacked/Cinematic Story Studio.exe",
+      byteSize: 225_613_824,
+      sha256: hashA
+    },
+    applicationArchive: {
+      relativePath:
+        "apps/desktop/release/0.1.0/win-unpacked/resources/app.asar",
+      byteSize: 9_123_456,
+      sha256: hashC
+    },
+    service: {
+      relativePath:
+        "apps/desktop/release/0.1.0/win-unpacked/resources/service/cinematic-story-service.exe",
+      byteSize: 51_930_414,
+      sha256: hashB
+    },
+    maximumRetainedPathLength: 215,
+    enforcedMaximumPathLength: 240
+  };
+}

@@ -42,6 +42,7 @@ import {
   containsProcessIdentity,
   createPackagedProcessInventory,
   defaultProcessInventoryPolicy,
+  ownedServiceRootProcesses,
   remainingOwnedProcesses,
   serviceExecutableName,
   type ConfirmedExitedTransientProcess,
@@ -1158,7 +1159,7 @@ async function waitForBackendReady(page: Page): Promise<void> {
 }
 
 async function restoreSoleProject(page: Page, expectedProjectId: string): Promise<string> {
-  return page.evaluate(async (expectedId) => {
+  const only = await page.evaluate(async (expectedId) => {
     const listed = await window.cinematicStory.projects.list();
     if (!listed.ok) {
       throw new Error(`Private project list failed: ${listed.error.code}: ${listed.error.message}`);
@@ -1172,18 +1173,15 @@ async function restoreSoleProject(page: Page, expectedProjectId: string): Promis
     ) {
       throw new Error("The retained replay state did not contain exactly one project.");
     }
-    const restored = await window.cinematicStory.projects.restoreRecent();
-    if (!restored.ok) {
-      throw new Error(`Private project restore failed: ${restored.error.code}: ${restored.error.message}`);
-    }
-    if (
-      restored.value === null ||
-      restored.value.project.projectId !== only.projectId
-    ) {
-      throw new Error("The retained replay did not restore the same sole project.");
-    }
-    return only.projectId;
+    return { projectId: only.projectId, name: only.name };
   }, expectedProjectId);
+  const activeProject = page.locator(".project-link.active");
+  await expect(activeProject).toHaveCount(1, { timeout: backendTimeoutMs });
+  await expect(activeProject).toContainText(only.name);
+  await expect(
+    page.getByRole("heading", { name: only.name, exact: true, level: 1 })
+  ).toBeVisible({ timeout: backendTimeoutMs });
+  return only.projectId;
 }
 
 async function listClips(page: Page, projectId: string): Promise<readonly AuditionClip[]> {
@@ -1297,14 +1295,9 @@ async function waitForOwnedService(ownership: LaunchOwnership): Promise<LaunchOw
   let current = ownership;
   while (now() < deadline) {
     current = await expandOwnership(current, false, deadline);
-    const services = current.processes.filter(
-      (item) =>
-        item.kind === "service" &&
-        item.executablePath !== null &&
-        samePath(item.executablePath, current.packaged.serviceExecutablePath)
-    );
-    if (services.length === 1) return current;
-    if (services.length > 1) {
+    const serviceRoots = ownedServiceRoots(current);
+    if (serviceRoots.length === 1) return current;
+    if (serviceRoots.length > 1) {
       throw new Error("The replay launch created more than one owned service root.");
     }
     await delay(100);
@@ -1338,16 +1331,19 @@ async function expandOwnership(
 }
 
 function requireOneOwnedService(ownership: LaunchOwnership): OwnedProcess {
-  const services = ownership.processes.filter(
-    (item) =>
-      item.kind === "service" &&
-      item.executablePath !== null &&
-      samePath(item.executablePath, ownership.packaged.serviceExecutablePath)
-  );
-  if (services.length !== 1 || services[0] === undefined) {
+  const serviceRoots = ownedServiceRoots(ownership);
+  if (serviceRoots.length !== 1 || serviceRoots[0] === undefined) {
     throw new Error("The replay did not own exactly one embedded service root.");
   }
-  return services[0];
+  return serviceRoots[0];
+}
+
+function ownedServiceRoots(ownership: LaunchOwnership): readonly OwnedProcess[] {
+  return ownedServiceRootProcesses({
+    owned: ownership.processes,
+    rootPid: ownership.rootPid,
+    packaged: ownership.packaged
+  });
 }
 
 async function waitForOwnedProcessesGone(

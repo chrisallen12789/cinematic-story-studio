@@ -172,6 +172,12 @@ export interface BindProviderWorkerProcessTreeInput {
   readonly reportedParentPid: number;
 }
 
+export interface OwnedServiceRootInput {
+  readonly owned: readonly OwnedProcess[];
+  readonly rootPid: number;
+  readonly packaged: PackagedProcessPaths;
+}
+
 const processInventoryScript = [
   "$ErrorActionPreference = 'Stop'",
   "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
@@ -768,6 +774,35 @@ function assertConfirmedExitedTransientProcessesRemainAbsent(
     }
     seenPids.add(item.pid);
   }
+}
+
+export function ownedServiceRootProcesses({
+  owned,
+  rootPid,
+  packaged
+}: OwnedServiceRootInput): readonly OwnedProcess[] {
+  const root = owned.find(
+    (item) =>
+      item.pid === rootPid &&
+      item.kind === "app" &&
+      item.name === appExecutableName &&
+      item.executablePath !== null &&
+      samePath(item.executablePath, packaged.executablePath)
+  );
+  if (root === undefined) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
+  }
+  return owned.filter(
+    (item) =>
+      item.parentPid === root.pid &&
+      item.kind === "service" &&
+      item.name === serviceExecutableName &&
+      item.executablePath !== null &&
+      samePath(item.executablePath, packaged.serviceExecutablePath)
+  );
 }
 
 /**

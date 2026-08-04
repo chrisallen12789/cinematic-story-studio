@@ -8,6 +8,7 @@ import {
   bindProviderWorkerProcessTree,
   createPackagedProcessInventory,
   defaultProcessInventoryPolicy,
+  ownedServiceRootProcesses,
   parseProcessInventory,
   remainingOwnedProcesses,
   runBoundedProcess,
@@ -532,19 +533,60 @@ describe("packaged process inventory", () => {
       creationDate: "2026-07-29T18:15:22.0000000Z"
     });
 
-    expect(
-      adoptVerifiedProcessTree({
-        current: [root, service, parserChild],
-        baseline: [],
-        owned: [root, service],
-        rootPid: root.pid,
-        packaged
-      })
-    ).toEqual([
+    const owned = adoptVerifiedProcessTree({
+      current: [root, service, parserChild],
+      baseline: [],
+      owned: [root, service],
+      rootPid: root.pid,
+      packaged
+    });
+    expect(owned).toEqual([
       root,
       service,
       { ...parserChild, kind: "service" }
     ]);
+    expect(
+      ownedServiceRootProcesses({ owned, rootPid: root.pid, packaged })
+    ).toEqual([service]);
+  });
+
+  it("distinguishes a same-image child from a second Electron-parented service root", () => {
+    const root = ownedProcess({
+      pid: 4200,
+      parentPid: 5200,
+      name: appExecutableName,
+      executablePath: packaged.executablePath,
+      kind: "app"
+    });
+    const first = ownedProcess({
+      pid: 4201,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      kind: "service"
+    });
+    const oneFileChild = ownedProcess({
+      pid: 4202,
+      parentPid: first.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      kind: "service"
+    });
+    const duplicate = ownedProcess({
+      pid: 4203,
+      parentPid: root.pid,
+      name: serviceExecutableName,
+      executablePath: packaged.serviceExecutablePath,
+      kind: "service"
+    });
+
+    expect(
+      ownedServiceRootProcesses({
+        owned: [root, first, oneFileChild, duplicate],
+        rootPid: root.pid,
+        packaged
+      })
+    ).toEqual([first, duplicate]);
   });
 
   it("binds only an already-owned service descendant to the reported provider worker", () => {

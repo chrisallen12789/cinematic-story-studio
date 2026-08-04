@@ -563,6 +563,14 @@ test.describe("packaged desktop verification", () => {
       await expect(
         firstPage.getByText("Backend ready", { exact: true }).first()
       ).toBeVisible({ timeout: 45_000 });
+      await expect(
+        firstPage.getByRole("heading", {
+          name: "Shape the page into a cinematic listening experience."
+        })
+      ).toBeVisible({ timeout: 45_000 });
+      await expect(
+        firstPage.getByText("No projects yet.", { exact: true })
+      ).toBeVisible({ timeout: 45_000 });
       await checkpointStage("service_ownership_1");
       firstOwnership = await expandOwnership(
         firstOwnership,
@@ -585,6 +593,11 @@ test.describe("packaged desktop verification", () => {
         { exact: true }
       );
       await expect(createdNotice).toBeVisible();
+      const createdProjectLink = firstPage
+        .getByRole("navigation", { name: "Projects" })
+        .getByRole("button", { name: /Packaged Persistence Demo/u });
+      await expect(createdProjectLink).toBeVisible({ timeout: 30_000 });
+      await expect(createdProjectLink).toHaveClass(/(?:^|\s)active(?:\s|$)/u);
       await firstPage
         .getByRole("button", { name: "Dismiss notification" })
         .click();

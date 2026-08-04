@@ -74,6 +74,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
     defaultImportReviewRationale
   );
   const [projectLoading, setProjectLoading] = useState(false);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const [view, setView] = useState<WorkspaceView>("studio");
   const [projectName, setProjectName] = useState("");
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(
@@ -107,6 +108,13 @@ export function App({ api = window.cinematicStory }: AppProps) {
     if (token === busyOperationToken.current) {
       setBusyAction(null);
     }
+  }, []);
+
+  const applyBackendSnapshot = useCallback((snapshot: BackendSnapshot) => {
+    if (snapshot.state !== "ready" && snapshot.state !== "degraded") {
+      setWorkspaceReady(false);
+    }
+    setBackend(snapshot);
   }, []);
 
   const connected =
@@ -258,6 +266,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
 
   const loadWorkspace = useCallback(async () => {
     const selection = beginProjectSelection();
+    setWorkspaceReady(false);
     setProjectLoading(true);
     setError(null);
     try {
@@ -279,6 +288,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
     } finally {
       if (selection === projectSelectionEpoch.current) {
         setProjectLoading(false);
+        setWorkspaceReady(true);
       }
     }
   }, [api, applyProject, beginProjectSelection]);
@@ -300,16 +310,16 @@ export function App({ api = window.cinematicStory }: AppProps) {
   }, [api, connected]);
 
   useEffect(() => {
-    const unsubscribe = api.backend.onStatus(setBackend);
+    const unsubscribe = api.backend.onStatus(applyBackendSnapshot);
     void api.backend.getStatus().then((result) => {
       if (result.ok) {
-        setBackend(result.value);
+        applyBackendSnapshot(result.value);
       } else {
         setError(result.error);
       }
     });
     return unsubscribe;
-  }, [api]);
+  }, [api, applyBackendSnapshot]);
 
   useEffect(() => {
     if (connected && !wasConnected.current) {
@@ -453,7 +463,12 @@ export function App({ api = window.cinematicStory }: AppProps) {
   const createProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const name = projectName.trim();
-    if (name.length === 0 || !connected) {
+    if (
+      name.length === 0 ||
+      !connected ||
+      projectLoading ||
+      !workspaceReady
+    ) {
       return;
     }
     const selectionEpoch = projectSelectionEpoch.current;
@@ -468,11 +483,11 @@ export function App({ api = window.cinematicStory }: AppProps) {
       );
       setProjectName("");
       setNotice(`Created ${created.project.name}.`);
+      const page = await unwrap(api.projects.list());
+      setProjects(page.items);
       if (selectionEpoch === projectSelectionEpoch.current) {
         await openProject(created.project.projectId);
       }
-      const page = await unwrap(api.projects.list());
-      setProjects(page.items);
     } catch (caught) {
       if (operationToken === busyOperationToken.current) {
         setError(asDesktopError(caught));
@@ -765,7 +780,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
     try {
       const result = await api.backend.reconnect();
       if (result.ok) {
-        setBackend(result.value);
+        applyBackendSnapshot(result.value);
       } else {
         setError(result.error);
       }
@@ -796,7 +811,7 @@ export function App({ api = window.cinematicStory }: AppProps) {
               onChange={(event) => setProjectName(event.target.value)}
               placeholder="Project name"
               maxLength={120}
-              disabled={!connected}
+              disabled={!connected || projectLoading || !workspaceReady}
             />
             <button
               className="icon-button"
@@ -804,6 +819,8 @@ export function App({ api = window.cinematicStory }: AppProps) {
               aria-label="Create project"
               disabled={
                 !connected ||
+                projectLoading ||
+                !workspaceReady ||
                 projectName.trim().length === 0 ||
                 busyAction === "create-project"
               }
@@ -937,7 +954,9 @@ export function App({ api = window.cinematicStory }: AppProps) {
           </div>
         )}
 
-        {projectLoading && project === null ? (
+        {connected &&
+        (projectLoading || !workspaceReady) &&
+        project === null ? (
           <LoadingWorkspace />
         ) : project === null ? (
           <EmptyWorkspace

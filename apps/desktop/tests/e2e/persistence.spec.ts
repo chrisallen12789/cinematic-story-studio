@@ -82,6 +82,14 @@ test.describe("desktop persistence", () => {
       await expect(
         firstPage.getByText("Backend ready", { exact: true }).first()
       ).toBeVisible({ timeout: 30_000 });
+      await expect(
+        firstPage.getByRole("heading", {
+          name: "Shape the page into a cinematic listening experience."
+        })
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(
+        firstPage.getByText("No projects yet.", { exact: true })
+      ).toBeVisible({ timeout: 30_000 });
       await firstPage.getByLabel("New production").fill("Persistence Demo");
       await firstPage.getByRole("button", { name: "Create project" }).click();
       await expect(
@@ -92,6 +100,11 @@ test.describe("desktop persistence", () => {
         { exact: true }
       );
       await expect(createdNotice).toBeVisible();
+      const createdProjectLink = firstPage
+        .getByRole("navigation", { name: "Projects" })
+        .getByRole("button", { name: /Persistence Demo/u });
+      await expect(createdProjectLink).toBeVisible({ timeout: 30_000 });
+      await expect(createdProjectLink).toHaveClass(/(?:^|\s)active(?:\s|$)/u);
       await firstPage
         .getByRole("button", { name: "Dismiss notification" })
         .click();

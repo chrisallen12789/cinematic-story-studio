@@ -53,6 +53,13 @@
 249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:1301
 249e1a2afce8721dbf55a7a248201d9341b571c1:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:1308
 
+# Audited synthetic idempotency labels from the Phase 3B aggregate-review
+# chronology regression. These exact historical fingerprints preserve the
+# generic API-key detector everywhere else.
+cd8aa618e0c8a6108a1be315551e30f3ad8f7b6e:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:771
+cd8aa618e0c8a6108a1be315551e30f3ad8f7b6e:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:777
+cd8aa618e0c8a6108a1be315551e30f3ad8f7b6e:apps/local-service/tests/test_phase3b_workflow.py:generic-api-key:843
+
 # Audited synthetic idempotency labels from the initial Phase 3B.1 test
 # commit. These exact historical fingerprints do not suppress later commits,
 # other paths or lines, other detector rules, or production code.

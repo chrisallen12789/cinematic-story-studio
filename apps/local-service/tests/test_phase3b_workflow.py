@@ -760,6 +760,143 @@ def test_workspace_uses_only_exact_approved_cast_assignments(
         assert paged_role_ids == [value["roleId"] for value in role_items]
 
 
+def test_recurrent_aggregate_evidence_appends_a_monotonic_review(
+    settings: ServiceSettings,
+    auth_headers: dict[str, str],
+) -> None:
+    with TestClient(create_app(settings)) as client:
+        project_id, _run = _establish_approved_cast(
+            client,
+            auth_headers,
+            key="phase3b-aggregate-evidence-recurrence",
+        )
+        _activate_fixture_model(
+            client,
+            auth_headers,
+            project_id=project_id,
+            key="phase3b-aggregate-evidence-recurrence",
+        )
+        original = _add_approved_pronunciation(
+            client,
+            auth_headers,
+            project_id=project_id,
+            written_form="Aster",
+            pronunciation="AS-ter",
+            key="phase3b-aggregate-evidence-recurrence-original",
+        )
+        workspace = _workspace(client, auth_headers, project_id)
+        narrator_roles = [
+            value for value in workspace["roles"]["items"] if value["roleType"] == "narrator"
+        ]
+        assert narrator_roles
+
+        clip_ids: set[str] = set()
+        for index, role in enumerate(narrator_roles):
+            session, _script, generation_request = _create_session_and_script(
+                client,
+                auth_headers,
+                project_id=project_id,
+                role_id=role["roleId"],
+                text=f"Aster narrates the repository-owned recurrence signal {index}.",
+                key=f"phase3b-aggregate-evidence-recurrence-role-{index}",
+            )
+            _queued, terminal = _generate(
+                client,
+                auth_headers,
+                project_id=project_id,
+                session_id=session["auditionSessionId"],
+                generation_request=generation_request,
+            )
+            assert terminal["state"] == "succeeded", terminal
+            clips = _clips(
+                client,
+                auth_headers,
+                project_id=project_id,
+                session_id=session["auditionSessionId"],
+            )
+            assert len(clips) == 1
+            clip_ids.add(clips[0]["auditionClipId"])
+
+        blocked_workspace = _workspace(client, auth_headers, project_id)
+        initial_blocked_review = next(
+            value
+            for value in blocked_workspace["reviews"]
+            if value["gateId"] == "narrator_audition_review"
+        )
+        assert initial_blocked_review["state"] == "blocked"
+        assert initial_blocked_review["latestDecision"] is None
+
+        for index, role in enumerate(narrator_roles):
+            _approve_audition_review(
+                client,
+                auth_headers,
+                project_id=project_id,
+                gate_id="per_role_audition_review",
+                role_id=role["roleId"],
+                key=f"phase3b-aggregate-evidence-recurrence-role-approval-{index}",
+            )
+        approved = _approve_audition_review(
+            client,
+            auth_headers,
+            project_id=project_id,
+            gate_id="narrator_audition_review",
+            key="phase3b-aggregate-evidence-recurrence-aggregate-approval",
+        )
+        approved_review = approved["review"]
+        approved_decision = approved["decision"]
+        assert approved_review["state"] == "approved"
+        assert approved_review["reviewId"] != initial_blocked_review["reviewId"]
+        assert approved_review["revision"] > initial_blocked_review["revision"]
+
+        changed = _add_approved_pronunciation(
+            client,
+            auth_headers,
+            project_id=project_id,
+            written_form="Aster",
+            pronunciation="AS-tur",
+            key="phase3b-aggregate-evidence-recurrence-supersession",
+            supersedes_entry_id=original["entry"]["entryId"],
+        )
+        assert set(changed["invalidatedClipIds"]) == clip_ids
+        current_workspace = _workspace(client, auth_headers, project_id)
+        current_review = next(
+            value
+            for value in current_workspace["reviews"]
+            if value["gateId"] == "narrator_audition_review"
+        )
+        assert current_review["state"] == "blocked"
+        assert current_review["reviewId"] not in {
+            initial_blocked_review["reviewId"],
+            approved_review["reviewId"],
+        }
+        assert current_review["revision"] == approved_review["revision"] + 1
+        assert (
+            current_review["evidence"]["evidenceFingerprint"]
+            == initial_blocked_review["evidence"]["evidenceFingerprint"]
+        )
+        assert current_review["latestDecision"] is not None
+        assert current_review["latestDecision"]["decision"] == "invalidated"
+        assert current_review["latestDecision"]["reviewId"] == approved_review["reviewId"]
+        assert (
+            current_review["latestDecision"]["expectedReviewRevision"]
+            == approved_review["revision"]
+        )
+        assert (
+            current_review["latestDecision"]["supersedesDecisionId"]
+            == approved_decision["decisionId"]
+        )
+        assert (
+            current_review["latestDecision"]["expectedReviewRevision"]
+            < current_review["revision"]
+        )
+        repeated_review = next(
+            value
+            for value in _workspace(client, auth_headers, project_id)["reviews"]
+            if value["gateId"] == "narrator_audition_review"
+        )
+        assert repeated_review == current_review
+
+
 def test_fixture_workflow_cache_jobs_reviews_restart_and_targeted_invalidation(
     settings: ServiceSettings,
     auth_headers: dict[str, str],

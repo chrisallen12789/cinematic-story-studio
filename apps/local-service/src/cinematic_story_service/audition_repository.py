@@ -11089,26 +11089,22 @@ class AuditionRepository:
         }
         evidence_fingerprint = request_fingerprint(evidence)
         evidence["evidenceFingerprint"] = evidence_fingerprint
-        existing = session.scalar(
-            select(AuditionReviewRecordRow).where(
+        latest = session.scalar(
+            select(AuditionReviewRecordRow)
+            .where(
                 AuditionReviewRecordRow.project_id == project_id,
                 AuditionReviewRecordRow.gate_id == gate_id,
                 AuditionReviewRecordRow.scope_key == scope_key,
-                AuditionReviewRecordRow.evidence_fingerprint == evidence_fingerprint,
             )
-        )
-        if existing is not None:
-            return existing
-        revision = 1 + int(
-            session.scalar(
-                select(func.max(AuditionReviewRecordRow.revision)).where(
-                    AuditionReviewRecordRow.project_id == project_id,
-                    AuditionReviewRecordRow.gate_id == gate_id,
-                    AuditionReviewRecordRow.scope_key == scope_key,
-                )
+            .order_by(
+                AuditionReviewRecordRow.revision.desc(),
+                AuditionReviewRecordRow.id.desc(),
             )
-            or 0
+            .limit(1)
         )
+        if latest is not None and latest.evidence_fingerprint == evidence_fingerprint:
+            return latest
+        revision = (latest.revision + 1) if latest is not None else 1
         row = AuditionReviewRecordRow(
             id=new_id(),
             project_id=project_id,

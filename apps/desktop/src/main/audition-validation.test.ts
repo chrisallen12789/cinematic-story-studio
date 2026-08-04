@@ -1325,6 +1325,14 @@ describe("Phase 3B desktop audition validation", () => {
       })
     ],
     [
+      "same-revision historical review",
+      (decision: ReturnType<typeof boundReviewDecisionResponse>["response"]["decision"]) => ({
+        ...decision,
+        reviewId: "review-peer",
+        expectedReviewRevision: 2
+      })
+    ],
+    [
       "future historical revision",
       (decision: ReturnType<typeof boundReviewDecisionResponse>["response"]["decision"]) => ({
         ...decision,

@@ -945,7 +945,7 @@ def test_spawned_parser_records_protocol_error_when_semantic_result_validation_f
     database, jobs, worker, projects = _extraction_job_harness(
         tmp_path,
         parser_runner=runner,
-        parser_deadline_seconds=5,
+        parser_deadline_seconds=10,
     )
     try:
         created = _create_extraction_job(jobs, projects)

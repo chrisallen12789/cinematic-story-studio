@@ -28,13 +28,17 @@ import type {
 
 import {
   buildPhase3b1PrivateReplayLauncher,
+  Phase3b1PrivateReplayDuplicateIdentityError,
   phase3b1PrivateReplayContractFileName,
+  observePhase3b1PrivateReplayDuplicate,
+  phase3b1PrivateReplayDuplicatePathConfirmationWindowMs,
   phase3b1PrivateReplaySentinelFileName,
   requirePhase3b1PrivateReplayPathBudget,
   resolvePhase3b1PrivateReplayStateDirectory,
   validatePhase3b1PrivateReplayContract,
   phase3b1PrivateReplaySanitizedEnvironmentNames,
-  type Phase3b1PrivateReplayContract
+  type Phase3b1PrivateReplayContract,
+  type Phase3b1PrivateReplayDuplicateObservation
 } from "../../src/verification/phase3b1-private-replay";
 import {
   adoptVerifiedProcessTreeWithPathConfirmation,
@@ -407,7 +411,9 @@ async function proveStaleOwnedServiceRefusal(
     ) {
       throw new Error("The replay baseline refusal changed the test-owned stale service.");
     }
-    const actualReplayRefusal = await runRejectedReplayLauncher(replay, afterRefusal);
+    const actualReplayRefusal = await runRejectedReplayLauncher(replay, [
+      identity
+    ]);
     const afterActualReplayRefusal = await queryRelevantProcesses();
     if (
       !afterActualReplayRefusal.some((item) => sameProcessIdentity(item, identity!)) ||
@@ -730,7 +736,7 @@ async function runRejectedReplayLauncher(
   }
   for (let observation = 0; observation < 2; observation += 1) {
     const current = await queryRelevantProcesses();
-    if (current.some((item) => !containsProcessIdentity(baseline, item))) {
+    if (current.some((item) => !baseline.some((prior) => sameProcessIdentity(prior, item)))) {
       throw new Error("A refused replay entry point created a relevant application or service process.");
     }
     if (observation === 0) await delay(200);
@@ -753,11 +759,30 @@ async function exerciseLiveDuplicateLauncher(
 ): Promise<Record<string, unknown>> {
   const before = await queryRelevantProcesses();
   const originalService = requireOneOwnedService(original);
-  const launcherRefusal = await runRejectedReplayLauncher(replay, before);
+  const verifiedBaseline = before.map((item) => {
+    const exact = original.processes.find(
+      (candidate) =>
+        candidate.executablePath !== null &&
+        sameProcessIdentity(candidate, item)
+    );
+    if (exact === undefined) {
+      throw new Error(
+        "The live duplicate baseline contained a relevant process without exact owned identity."
+      );
+    }
+    return exact;
+  });
+  const launcherRefusal = await runRejectedReplayLauncher(
+    replay,
+    verifiedBaseline
+  );
   const afterLauncherRefusal = await queryRelevantProcesses();
   if (
     !afterLauncherRefusal.some((item) => sameProcessIdentity(item, originalService)) ||
-    afterLauncherRefusal.some((item) => !containsProcessIdentity(before, item))
+    afterLauncherRefusal.some(
+      (item) =>
+        !verifiedBaseline.some((prior) => sameProcessIdentity(prior, item))
+    )
   ) {
     throw new Error("The duplicate replay-launcher refusal changed the original process tree.");
   }
@@ -770,7 +795,7 @@ async function exerciseLiveDuplicateLauncher(
     stdio: "ignore"
   });
   const duplicatePid = requiredPid(duplicate.pid, "direct duplicate application");
-  const observedNew = new Map<number, ProcessIdentity>();
+  let duplicateObservation: Phase3b1PrivateReplayDuplicateObservation | null = null;
   const exitPromise = childExit(duplicate);
   let exited = false;
   let completed = false;
@@ -786,31 +811,44 @@ async function exerciseLiveDuplicateLauncher(
   try {
     let postExitObservations = 0;
     while (!exited || postExitObservations < 2) {
-      if (now() >= deadline) {
+      const observedAtMs = now();
+      if (observedAtMs >= deadline) {
         throw new Error("The live duplicate launcher did not exit within its bounded deadline.");
       }
-      const current = await queryRelevantProcesses();
+      const pathConfirmationDeadline =
+        duplicateObservation?.pathStatus === "pending_exact_path"
+          ? duplicateObservation.firstObservedAtMs +
+            phase3b1PrivateReplayDuplicatePathConfirmationWindowMs
+          : deadline;
+      if (observedAtMs >= pathConfirmationDeadline) {
+        throw new Phase3b1PrivateReplayDuplicateIdentityError(
+          "EXPECTED_PID_PATH_CONFIRMATION_TIMEOUT",
+          duplicateObservation
+        );
+      }
+      const current = await queryRelevantProcesses(
+        Math.min(deadline, pathConfirmationDeadline)
+      );
       if (!current.some((item) => sameProcessIdentity(item, originalService))) {
         throw new Error("The original service did not remain healthy during duplicate launch.");
       }
-      for (const item of current) {
-        if (containsProcessIdentity(before, item)) continue;
-        if (item.name === serviceExecutableName) {
-          throw new Error("A live duplicate launcher created a second service process.");
-        }
-        if (
-          item.name !== appExecutableName ||
-          item.executablePath === null ||
-          !samePath(item.executablePath, replay.paths.executablePath) ||
-          item.pid !== duplicatePid ||
-          item.parentPid !== process.pid ||
-          Date.parse(item.creationDate) + 1_000 < startedAt
-        ) {
-          throw new Error("A live duplicate launcher created an ambiguous relevant process.");
-        }
-        observedNew.set(item.pid, item);
-      }
-      if (exited) postExitObservations += 1;
+      duplicateObservation = observePhase3b1PrivateReplayDuplicate({
+        current,
+        baseline: verifiedBaseline,
+        previous: duplicateObservation,
+        expectedPid: duplicatePid,
+        expectedParentPid: process.pid,
+        expectedName: appExecutableName,
+        expectedExecutablePath: replay.paths.executablePath,
+        startedAtUnixMs: startedAt,
+        observedAtMs: now(),
+        serviceExecutableName
+      });
+      const duplicateStillPresent = current.some(
+        (item) => item.pid === duplicatePid
+      );
+      if (exited && !duplicateStillPresent) postExitObservations += 1;
+      else postExitObservations = 0;
       await delay(50);
     }
     const exit = await exitPromise;
@@ -818,13 +856,15 @@ async function exerciseLiveDuplicateLauncher(
       duplicatePid === original.rootPid ||
       exit.code !== 0 ||
       exit.signal !== null ||
-      observedNew.size > 1 ||
-      (observedNew.size === 1 && !observedNew.has(duplicatePid))
+      duplicateObservation?.pathStatus === "pending_exact_path"
     ) {
       throw new Error("The live duplicate did not exit as one bounded single-instance launch.");
     }
     const after = await queryRelevantProcesses();
-    const delta = after.filter((item) => !containsProcessIdentity(before, item));
+    const delta = after.filter(
+      (item) =>
+        !verifiedBaseline.some((prior) => sameProcessIdentity(prior, item))
+    );
     if (delta.length !== 0) {
       throw new Error("The live duplicate left a relevant process behind.");
     }
@@ -832,7 +872,14 @@ async function exerciseLiveDuplicateLauncher(
     return {
       launcherRefusal,
       directExecutablePid: duplicatePid,
-      transientIdentityObserved: observedNew.size === 1,
+      transientIdentityObserved: duplicateObservation !== null,
+      exactExecutablePathConfirmed:
+        duplicateObservation?.pathStatus === "exact_path_confirmed",
+      executablePathStatus:
+        duplicateObservation?.pathStatus ?? "not_observed_before_exit",
+      absenceObservations:
+        duplicateObservation?.absenceObservations ?? postExitObservations,
+      twoNoDeltaInventories: postExitObservations >= 2,
       secondServiceObserved: false,
       originalServicePid: originalService.pid,
       originalServiceCreationIdentity: originalService.creationDate,
@@ -842,19 +889,27 @@ async function exerciseLiveDuplicateLauncher(
       unrelatedProcessesTerminated: false
     };
   } finally {
-    if (!completed && observedNew.size === 1) {
-      const transient = [...observedNew.values()][0];
-      if (transient !== undefined) {
-        const current = await queryRelevantProcesses();
-        if (current.some((item) => sameProcessIdentity(item, transient))) {
-          await requestExactMainWindowClose(transient, replay.paths.executablePath);
+    if (
+      !completed &&
+      duplicateObservation?.pathStatus === "exact_path_confirmed" &&
+      duplicateObservation.executablePath !== null
+    ) {
+      const exactObservation: ProcessIdentity = duplicateObservation;
+      const current = await queryRelevantProcesses();
+      const exactCurrent = current.filter(
+        (item) =>
+          sameProcessIdentity(item, exactObservation) &&
+          item.executablePath !== null &&
+          samePath(item.executablePath, replay.paths.executablePath)
+      );
+      if (exactCurrent.length === 1) {
+          await requestExactMainWindowClose(exactObservation, replay.paths.executablePath);
           await withDeadline(
             exitPromise,
             shutdownTimeoutMs,
             "The exact duplicate did not exit during graceful recovery."
           );
-          await requireIdentityGoneTwice(transient);
-        }
+          await requireIdentityGoneTwice(exactObservation);
       }
     }
   }

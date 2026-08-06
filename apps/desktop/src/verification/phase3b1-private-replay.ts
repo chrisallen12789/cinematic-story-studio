@@ -5,6 +5,7 @@ export const phase3b1PrivateReplayContractFileName = "replay-contract.json";
 export const phase3b1PrivateReplaySentinelFileName = "replay-state.json";
 export const phase3b1PrivateReplaySchemaVersion = 1 as const;
 export const phase3b1PrivateReplayMaximumPathLength = 240;
+export const phase3b1PrivateReplayDuplicatePathConfirmationWindowMs = 5_000;
 export const phase3b1PrivateReplaySanitizedEnvironmentNames = [
   "ELECTRON_RUN_AS_NODE",
   "NODE_OPTIONS",
@@ -52,6 +53,271 @@ export interface Phase3b1PrivateReplayContract {
   readonly service: Phase3b1PrivateReplayFileEvidence;
   readonly maximumRetainedPathLength: number;
   readonly enforcedMaximumPathLength: typeof phase3b1PrivateReplayMaximumPathLength;
+}
+
+export interface Phase3b1PrivateReplayProcessIdentity {
+  readonly pid: number;
+  readonly parentPid: number;
+  readonly name: string;
+  readonly executablePath: string | null;
+  readonly creationDate: string;
+}
+
+export type Phase3b1PrivateReplayDuplicatePathStatus =
+  | "pending_exact_path"
+  | "exact_path_confirmed"
+  | "unavailable_before_exit";
+
+export interface Phase3b1PrivateReplayDuplicateObservation
+  extends Phase3b1PrivateReplayProcessIdentity {
+  readonly pathStatus: Phase3b1PrivateReplayDuplicatePathStatus;
+  readonly firstObservedAtMs: number;
+  readonly absenceObservations: 0 | 1 | 2;
+}
+
+export type Phase3b1PrivateReplayDuplicateAmbiguityReason =
+  | "EXPECTED_PID_PREEXISTED"
+  | "MULTIPLE_EXPECTED_PID_IDENTITIES"
+  | "EXPECTED_PID_NAME_MISMATCH"
+  | "EXPECTED_PID_PARENT_MISMATCH"
+  | "EXPECTED_PID_CREATION_INVALID"
+  | "EXPECTED_PID_PREDATES_LAUNCH"
+  | "EXPECTED_PID_CREATION_CHANGED"
+  | "EXPECTED_PID_PATH_MISMATCH"
+  | "EXPECTED_PID_PATH_CONFIRMATION_TIMEOUT"
+  | "EXPECTED_PID_REAPPEARED_AFTER_ABSENCE"
+  | "UNEXPECTED_APPLICATION_PROCESS"
+  | "UNEXPECTED_SERVICE_PROCESS"
+  | "UNEXPECTED_RELEVANT_PROCESS";
+
+export class Phase3b1PrivateReplayDuplicateIdentityError extends Error {
+  readonly code = "PHASE3B1_REPLAY_DUPLICATE_IDENTITY_AMBIGUOUS" as const;
+  readonly reason: Phase3b1PrivateReplayDuplicateAmbiguityReason;
+  readonly candidate: Omit<
+    Phase3b1PrivateReplayProcessIdentity,
+    "executablePath"
+  > | null;
+
+  constructor(
+    reason: Phase3b1PrivateReplayDuplicateAmbiguityReason,
+    candidate: Phase3b1PrivateReplayProcessIdentity | null = null
+  ) {
+    const candidateMessage =
+      candidate === null
+        ? ""
+        : ` Candidate: pid=${String(candidate.pid)}, parentPid=${String(candidate.parentPid)}.`;
+    super(
+      `The live duplicate process identity was ambiguous. Reason: ${reason}.${candidateMessage}`
+    );
+    this.name = "Phase3b1PrivateReplayDuplicateIdentityError";
+    this.reason = reason;
+    this.candidate =
+      candidate === null
+        ? null
+        : {
+            pid: candidate.pid,
+            parentPid: candidate.parentPid,
+            name: candidate.name,
+            creationDate: candidate.creationDate
+          };
+  }
+}
+
+export interface ObservePhase3b1PrivateReplayDuplicateInput {
+  readonly current: readonly Phase3b1PrivateReplayProcessIdentity[];
+  readonly baseline: readonly Phase3b1PrivateReplayProcessIdentity[];
+  readonly previous: Phase3b1PrivateReplayDuplicateObservation | null;
+  readonly expectedPid: number;
+  readonly expectedParentPid: number;
+  readonly expectedName: string;
+  readonly expectedExecutablePath: string;
+  readonly startedAtUnixMs: number;
+  readonly observedAtMs: number;
+  readonly pathConfirmationWindowMs?: number;
+  readonly serviceExecutableName: string;
+}
+
+/**
+ * Observe the one PID returned by the direct duplicate spawn without turning
+ * an incomplete CIM snapshot into termination authority. A pathless process
+ * may either expose the exact executable later or disappear for two
+ * consecutive inventories. Every other new relevant identity fails closed.
+ */
+export function observePhase3b1PrivateReplayDuplicate({
+  current,
+  baseline,
+  previous,
+  expectedPid,
+  expectedParentPid,
+  expectedName,
+  expectedExecutablePath,
+  startedAtUnixMs,
+  observedAtMs,
+  pathConfirmationWindowMs =
+    phase3b1PrivateReplayDuplicatePathConfirmationWindowMs,
+  serviceExecutableName
+}: ObservePhase3b1PrivateReplayDuplicateInput): Phase3b1PrivateReplayDuplicateObservation | null {
+  if (
+    !Number.isSafeInteger(expectedPid) ||
+    expectedPid <= 0 ||
+    !Number.isSafeInteger(expectedParentPid) ||
+    expectedParentPid <= 0 ||
+    expectedName.length === 0 ||
+    !path.win32.isAbsolute(expectedExecutablePath) ||
+    !Number.isFinite(startedAtUnixMs) ||
+    !Number.isFinite(observedAtMs) ||
+    !Number.isSafeInteger(pathConfirmationWindowMs) ||
+    pathConfirmationWindowMs <= 0 ||
+    pathConfirmationWindowMs >
+      phase3b1PrivateReplayDuplicatePathConfirmationWindowMs ||
+    serviceExecutableName.length === 0 ||
+    baseline.some((item) => item.executablePath === null) ||
+    !isValidDuplicateObservationState(
+      previous,
+      expectedPid,
+      expectedParentPid,
+      expectedName,
+      expectedExecutablePath,
+      startedAtUnixMs,
+      observedAtMs
+    )
+  ) {
+    throw new Error("The live duplicate process observation policy was invalid.");
+  }
+  if (baseline.some((item) => item.pid === expectedPid)) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_PREEXISTED"
+    );
+  }
+
+  const additions = current.filter(
+    (item) => !containsStableReplayProcessIdentity(baseline, item)
+  );
+  const expected = additions.filter((item) => item.pid === expectedPid);
+  if (expected.length > 1) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "MULTIPLE_EXPECTED_PID_IDENTITIES",
+      expected[0] ?? null
+    );
+  }
+  for (const item of additions) {
+    if (item.pid === expectedPid) continue;
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      item.name === serviceExecutableName
+        ? "UNEXPECTED_SERVICE_PROCESS"
+        : item.name === expectedName
+          ? "UNEXPECTED_APPLICATION_PROCESS"
+          : "UNEXPECTED_RELEVANT_PROCESS",
+      item
+    );
+  }
+
+  const candidate = expected[0];
+  if (candidate === undefined) {
+    if (previous === null) return null;
+    if (
+      previous.pathStatus === "pending_exact_path" &&
+      observedAtMs - previous.firstObservedAtMs >=
+        pathConfirmationWindowMs
+    ) {
+      throw new Phase3b1PrivateReplayDuplicateIdentityError(
+        "EXPECTED_PID_PATH_CONFIRMATION_TIMEOUT",
+        previous
+      );
+    }
+    const absenceObservations = Math.min(
+      previous.absenceObservations + 1,
+      2
+    ) as 1 | 2;
+    return {
+      ...previous,
+      pathStatus:
+        absenceObservations === 2 &&
+        previous.pathStatus === "pending_exact_path"
+          ? "unavailable_before_exit"
+          : previous.pathStatus,
+      absenceObservations
+    };
+  }
+
+  if (previous !== null && previous.absenceObservations === 2) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_REAPPEARED_AFTER_ABSENCE",
+      candidate
+    );
+  }
+  if (candidate.name !== expectedName) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_NAME_MISMATCH",
+      candidate
+    );
+  }
+  if (candidate.parentPid !== expectedParentPid) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_PARENT_MISMATCH",
+      candidate
+    );
+  }
+  const creationUnixMs = Date.parse(candidate.creationDate);
+  if (!Number.isFinite(creationUnixMs)) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_CREATION_INVALID",
+      candidate
+    );
+  }
+  if (creationUnixMs + 1_000 < startedAtUnixMs) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_PREDATES_LAUNCH",
+      candidate
+    );
+  }
+  if (
+    previous !== null &&
+    previous.creationDate !== candidate.creationDate
+  ) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_CREATION_CHANGED",
+      candidate
+    );
+  }
+  if (
+    candidate.executablePath !== null &&
+    !sameReplayWindowsPath(
+      candidate.executablePath,
+      expectedExecutablePath
+    )
+  ) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_PATH_MISMATCH",
+      candidate
+    );
+  }
+
+  const firstObservedAtMs = previous?.firstObservedAtMs ?? observedAtMs;
+  if (
+    previous?.pathStatus === "pending_exact_path" &&
+    observedAtMs - firstObservedAtMs >= pathConfirmationWindowMs
+  ) {
+    throw new Phase3b1PrivateReplayDuplicateIdentityError(
+      "EXPECTED_PID_PATH_CONFIRMATION_TIMEOUT",
+      candidate
+    );
+  }
+  const exactExecutablePath =
+    candidate.executablePath ??
+    (previous?.pathStatus === "exact_path_confirmed"
+      ? previous.executablePath
+      : null);
+  return {
+    ...candidate,
+    executablePath: exactExecutablePath,
+    pathStatus:
+      exactExecutablePath === null
+        ? "pending_exact_path"
+        : "exact_path_confirmed",
+    firstObservedAtMs,
+    absenceObservations: 0
+  };
 }
 
 export function resolvePhase3b1PrivateReplayStateDirectory(
@@ -332,5 +598,76 @@ function isStrictChild(parent: string, child: string): boolean {
     relative !== ".." &&
     !relative.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relative)
+  );
+}
+
+function containsStableReplayProcessIdentity(
+  values: readonly Phase3b1PrivateReplayProcessIdentity[],
+  expected: Phase3b1PrivateReplayProcessIdentity
+): boolean {
+  return values.some(
+    (value) =>
+      value.pid === expected.pid &&
+      value.name === expected.name &&
+      value.creationDate === expected.creationDate &&
+      (value.executablePath === null ||
+        expected.executablePath === null ||
+        sameReplayWindowsPath(
+          value.executablePath,
+          expected.executablePath
+        ))
+  );
+}
+
+function isValidDuplicateObservationState(
+  value: Phase3b1PrivateReplayDuplicateObservation | null,
+  expectedPid: number,
+  expectedParentPid: number,
+  expectedName: string,
+  expectedExecutablePath: string,
+  startedAtUnixMs: number,
+  observedAtMs: number
+): boolean {
+  if (value === null) return true;
+  const creationUnixMs = Date.parse(value.creationDate);
+  if (
+    value.pid !== expectedPid ||
+    value.parentPid !== expectedParentPid ||
+    value.name !== expectedName ||
+    !Number.isFinite(creationUnixMs) ||
+    creationUnixMs + 1_000 < startedAtUnixMs ||
+    !Number.isFinite(value.firstObservedAtMs) ||
+    value.firstObservedAtMs < 0 ||
+    value.firstObservedAtMs > observedAtMs ||
+    !Number.isSafeInteger(value.absenceObservations) ||
+    value.absenceObservations < 0 ||
+    value.absenceObservations > 2
+  ) {
+    return false;
+  }
+  if (value.pathStatus === "pending_exact_path") {
+    return (
+      value.executablePath === null && value.absenceObservations < 2
+    );
+  }
+  if (value.pathStatus === "unavailable_before_exit") {
+    return (
+      value.executablePath === null && value.absenceObservations === 2
+    );
+  }
+  return (
+    value.pathStatus === "exact_path_confirmed" &&
+    value.executablePath !== null &&
+    sameReplayWindowsPath(
+      value.executablePath,
+      expectedExecutablePath
+    )
+  );
+}
+
+function sameReplayWindowsPath(left: string, right: string): boolean {
+  return (
+    path.win32.resolve(left).toLowerCase() ===
+    path.win32.resolve(right).toLowerCase()
   );
 }

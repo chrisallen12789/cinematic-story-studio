@@ -6,11 +6,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildPhase3b1PrivateReplayLauncher,
   buildPhase3b1PrivateReplayInspectionArgumentsPowerShell,
+  observePhase3b1PrivateReplayDuplicate,
   phase3b1PrivateReplayMaximumPathLength,
   requirePhase3b1PrivateReplayPathBudget,
   resolvePhase3b1PrivateReplayStateDirectory,
   validatePhase3b1PrivateReplayContract,
-  type Phase3b1PrivateReplayContract
+  type Phase3b1PrivateReplayContract,
+  type Phase3b1PrivateReplayDuplicateObservation,
+  type Phase3b1PrivateReplayProcessIdentity
 } from "./phase3b1-private-replay";
 
 const hashA = "a".repeat(64);
@@ -266,6 +269,371 @@ describe("Phase 3B.1 private replay contract", () => {
     20_000
   );
 });
+
+describe("Phase 3B.1 private replay duplicate observation", () => {
+  it("retains an exact spawn-bound identity through two absent inventories", () => {
+    let observation: Phase3b1PrivateReplayDuplicateObservation | null =
+      observeDuplicate(null, [duplicateBaseline, exactDuplicate], 100);
+    expect(observation).toMatchObject({
+      pathStatus: "exact_path_confirmed",
+      executablePath: duplicateExecutablePath,
+      absenceObservations: 0
+    });
+
+    observation = observeDuplicate(observation, [duplicateBaseline], 200);
+    expect(observation?.absenceObservations).toBe(1);
+    observation = observeDuplicate(observation, [duplicateBaseline], 300);
+    expect(observation).toMatchObject({
+      pathStatus: "exact_path_confirmed",
+      executablePath: duplicateExecutablePath,
+      absenceObservations: 2
+    });
+  });
+
+  it("accepts a pathless spawn-bound identity only after two absences", () => {
+    let observation: Phase3b1PrivateReplayDuplicateObservation | null =
+      observeDuplicate(null, [duplicateBaseline, pathlessDuplicate], 100);
+    expect(observation).toMatchObject({
+      pathStatus: "pending_exact_path",
+      executablePath: null,
+      absenceObservations: 0
+    });
+
+    observation = observeDuplicate(observation, [duplicateBaseline], 200);
+    expect(observation).toMatchObject({
+      pathStatus: "pending_exact_path",
+      absenceObservations: 1
+    });
+    observation = observeDuplicate(observation, [duplicateBaseline], 300);
+    expect(observation).toMatchObject({
+      pathStatus: "unavailable_before_exit",
+      executablePath: null,
+      absenceObservations: 2
+    });
+  });
+
+  it("promotes the same pathless identity when its exact path becomes available", () => {
+    const pending = observeDuplicate(
+      null,
+      [duplicateBaseline, pathlessDuplicate],
+      100
+    );
+    expect(
+      observeDuplicate(
+        pending,
+        [duplicateBaseline, exactDuplicate],
+        200
+      )
+    ).toMatchObject({
+      pathStatus: "exact_path_confirmed",
+      executablePath: duplicateExecutablePath,
+      absenceObservations: 0
+    });
+  });
+
+  it("retains exact-path authority when CIM loses the path during exit", () => {
+    const exact = observeDuplicate(
+      null,
+      [duplicateBaseline, exactDuplicate],
+      100
+    );
+    expect(
+      observeDuplicate(
+        exact,
+        [duplicateBaseline, pathlessDuplicate],
+        200
+      )
+    ).toMatchObject({
+      pathStatus: "exact_path_confirmed",
+      executablePath: duplicateExecutablePath,
+      absenceObservations: 0
+    });
+  });
+
+  it("allows one missed inventory before the same identity exposes its exact path", () => {
+    const pending = observeDuplicate(
+      null,
+      [duplicateBaseline, pathlessDuplicate],
+      100
+    );
+    const absent = observeDuplicate(pending, [duplicateBaseline], 200);
+    expect(
+      observeDuplicate(
+        absent,
+        [duplicateBaseline, exactDuplicate],
+        300
+      )
+    ).toMatchObject({
+      pathStatus: "exact_path_confirmed",
+      executablePath: duplicateExecutablePath,
+      absenceObservations: 0
+    });
+  });
+
+  it("fails closed if a confirmed-exited pathless identity reappears", () => {
+    const pending = observeDuplicate(
+      null,
+      [duplicateBaseline, pathlessDuplicate],
+      100
+    );
+    const firstAbsence = observeDuplicate(
+      pending,
+      [duplicateBaseline],
+      200
+    );
+    const confirmedExited = observeDuplicate(
+      firstAbsence,
+      [duplicateBaseline],
+      300
+    );
+    expect(() =>
+      observeDuplicate(
+        confirmedExited,
+        [duplicateBaseline, pathlessDuplicate],
+        400
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        reason: "EXPECTED_PID_REAPPEARED_AFTER_ABSENCE"
+      })
+    );
+  });
+
+  it("bounds path confirmation to five seconds", () => {
+    const pending = observeDuplicate(
+      null,
+      [duplicateBaseline, pathlessDuplicate],
+      100
+    );
+    expect(() =>
+      observeDuplicate(
+        pending,
+        [duplicateBaseline, pathlessDuplicate],
+        5_100
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        reason: "EXPECTED_PID_PATH_CONFIRMATION_TIMEOUT"
+      })
+    );
+    expect(() =>
+      observeDuplicate(
+        pending,
+        [duplicateBaseline, exactDuplicate],
+        5_100
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        reason: "EXPECTED_PID_PATH_CONFIRMATION_TIMEOUT"
+      })
+    );
+  });
+
+  it("does not accept late absence evidence beyond the path deadline", () => {
+    const pending = observeDuplicate(
+      null,
+      [duplicateBaseline, pathlessDuplicate],
+      100
+    );
+    const firstAbsence = observeDuplicate(
+      pending,
+      [duplicateBaseline],
+      4_900
+    );
+    expect(() =>
+      observeDuplicate(firstAbsence, [duplicateBaseline], 5_100)
+    ).toThrowError(
+      expect.objectContaining({
+        reason: "EXPECTED_PID_PATH_CONFIRMATION_TIMEOUT"
+      })
+    );
+  });
+
+  it("rejects wrong path, parent, name, creation, and launch chronology", () => {
+    const cases: readonly [
+      Phase3b1PrivateReplayProcessIdentity,
+      string
+    ][] = [
+      [
+        { ...exactDuplicate, executablePath: "C:\\Other\\Cinematic Story Studio.exe" },
+        "EXPECTED_PID_PATH_MISMATCH"
+      ],
+      [
+        { ...exactDuplicate, parentPid: duplicateParentPid + 1 },
+        "EXPECTED_PID_PARENT_MISMATCH"
+      ],
+      [
+        { ...exactDuplicate, name: "cinematic-story-service.exe" },
+        "EXPECTED_PID_NAME_MISMATCH"
+      ],
+      [
+        { ...exactDuplicate, creationDate: "not-a-date" },
+        "EXPECTED_PID_CREATION_INVALID"
+      ],
+      [
+        { ...exactDuplicate, creationDate: "2026-08-06T14:59:58.000Z" },
+        "EXPECTED_PID_PREDATES_LAUNCH"
+      ]
+    ];
+
+    for (const [candidate, reason] of cases) {
+      expect(() =>
+        observeDuplicate(null, [duplicateBaseline, candidate], 100)
+      ).toThrowError(expect.objectContaining({ reason }));
+    }
+  });
+
+  it("rejects PID reuse or changed creation identity", () => {
+    const exact = observeDuplicate(
+      null,
+      [duplicateBaseline, exactDuplicate],
+      100
+    );
+    expect(() =>
+      observeDuplicate(
+        exact,
+        [
+          duplicateBaseline,
+          {
+            ...exactDuplicate,
+            creationDate: "2026-08-06T15:00:01.000Z"
+          }
+        ],
+        200
+      )
+    ).toThrowError(
+      expect.objectContaining({ reason: "EXPECTED_PID_CREATION_CHANGED" })
+    );
+  });
+
+  it("rejects every extra application or service identity", () => {
+    const extraApp = {
+      ...exactDuplicate,
+      pid: duplicatePid + 1
+    };
+    const extraService = {
+      ...exactDuplicate,
+      pid: duplicatePid + 2,
+      name: "cinematic-story-service.exe",
+      executablePath:
+        "C:\\Program Files\\Cinematic Story Studio\\resources\\service\\cinematic-story-service.exe"
+    };
+    expect(() =>
+      observeDuplicate(
+        null,
+        [duplicateBaseline, exactDuplicate, extraApp],
+        100
+      )
+    ).toThrowError(
+      expect.objectContaining({ reason: "UNEXPECTED_APPLICATION_PROCESS" })
+    );
+    expect(() =>
+      observeDuplicate(
+        null,
+        [duplicateBaseline, exactDuplicate, extraService],
+        100
+      )
+    ).toThrowError(
+      expect.objectContaining({ reason: "UNEXPECTED_SERVICE_PROCESS" })
+    );
+  });
+
+  it("rejects multiple records for the spawn-bound PID", () => {
+    expect(() =>
+      observeDuplicate(
+        null,
+        [
+          duplicateBaseline,
+          exactDuplicate,
+          { ...pathlessDuplicate, creationDate: "2026-08-06T15:00:01.000Z" }
+        ],
+        100
+      )
+    ).toThrowError(
+      expect.objectContaining({ reason: "MULTIPLE_EXPECTED_PID_IDENTITIES" })
+    );
+  });
+
+  it("allows baseline reparenting and path loss but rejects path drift", () => {
+    expect(
+      observeDuplicate(
+        null,
+        [{ ...duplicateBaseline, parentPid: 0, executablePath: null }],
+        100
+      )
+    ).toBeNull();
+    expect(() =>
+      observeDuplicate(
+        null,
+        [{ ...duplicateBaseline, executablePath: "C:\\Other\\service.exe" }],
+        100
+      )
+    ).toThrowError(
+      expect.objectContaining({ reason: "UNEXPECTED_SERVICE_PROCESS" })
+    );
+  });
+
+  it("keeps a never-observed direct child distinguishable from transient identity proof", () => {
+    expect(observeDuplicate(null, [duplicateBaseline], 100)).toBeNull();
+    expect(observeDuplicate(null, [duplicateBaseline], 200)).toBeNull();
+  });
+
+  it("rejects impossible prior observation authority", () => {
+    const invalid = {
+      ...pathlessDuplicate,
+      pathStatus: "exact_path_confirmed",
+      firstObservedAtMs: 100,
+      absenceObservations: 0
+    } as unknown as Phase3b1PrivateReplayDuplicateObservation;
+    expect(() =>
+      observeDuplicate(invalid, [duplicateBaseline], 200)
+    ).toThrow("observation policy was invalid");
+  });
+});
+
+const duplicatePid = 8_200;
+const duplicateParentPid = 7_100;
+const duplicateExecutablePath =
+  "C:\\Program Files\\Cinematic Story Studio\\Cinematic Story Studio.exe";
+const duplicateStartedAtUnixMs = Date.parse("2026-08-06T15:00:00.000Z");
+const duplicateBaseline: Phase3b1PrivateReplayProcessIdentity = {
+  pid: 8_100,
+  parentPid: 8_000,
+  name: "cinematic-story-service.exe",
+  executablePath:
+    "C:\\Program Files\\Cinematic Story Studio\\resources\\service\\cinematic-story-service.exe",
+  creationDate: "2026-08-06T14:55:00.000Z"
+};
+const exactDuplicate: Phase3b1PrivateReplayProcessIdentity = {
+  pid: duplicatePid,
+  parentPid: duplicateParentPid,
+  name: "Cinematic Story Studio.exe",
+  executablePath: duplicateExecutablePath,
+  creationDate: "2026-08-06T15:00:00.500Z"
+};
+const pathlessDuplicate: Phase3b1PrivateReplayProcessIdentity = {
+  ...exactDuplicate,
+  executablePath: null
+};
+
+function observeDuplicate(
+  previous: Phase3b1PrivateReplayDuplicateObservation | null,
+  current: readonly Phase3b1PrivateReplayProcessIdentity[],
+  observedAtMs: number
+): Phase3b1PrivateReplayDuplicateObservation | null {
+  return observePhase3b1PrivateReplayDuplicate({
+    current,
+    baseline: [duplicateBaseline],
+    previous,
+    expectedPid: duplicatePid,
+    expectedParentPid: duplicateParentPid,
+    expectedName: "Cinematic Story Studio.exe",
+    expectedExecutablePath: duplicateExecutablePath,
+    startedAtUnixMs: duplicateStartedAtUnixMs,
+    observedAtMs,
+    serviceExecutableName: "cinematic-story-service.exe"
+  });
+}
 
 function replayContract(): Phase3b1PrivateReplayContract {
   return {

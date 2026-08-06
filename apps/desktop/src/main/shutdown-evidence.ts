@@ -23,8 +23,12 @@ export const phase3bRuntimeShutdownEvidenceFileName =
 
 const maximumShutdownEvidenceBytes = 16 * 1024;
 const maximumPhase3bRuntimeShutdownEvidenceBytes = 256 * 1024;
-const shutdownEvidenceFileName =
-  /^packaged-e2e-service-shutdown-[12]\.json$/u;
+const shutdownEvidenceFileNames = new Set([
+  "packaged-e2e-service-shutdown-1.json",
+  "packaged-e2e-service-shutdown-2.json",
+  "phase3b1-real-service-shutdown-3.json",
+  "phase3b1-real-service-shutdown-4.json"
+]);
 
 export interface PackagedServiceShutdownEvidence {
   readonly schemaVersion: typeof packagedShutdownEvidenceSchemaVersion;
@@ -82,7 +86,7 @@ export function resolvePackagedShutdownEvidencePath(
   const target = path.resolve(value);
   if (
     !samePath(path.dirname(target), canonicalUserData) ||
-    !shutdownEvidenceFileName.test(path.basename(target))
+    !shutdownEvidenceFileNames.has(path.basename(target))
   ) {
     throw new Error(
       "The packaged shutdown evidence path escaped the isolated user-data directory."

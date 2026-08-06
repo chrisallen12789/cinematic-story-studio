@@ -17,6 +17,7 @@ import stat
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from functools import partial
@@ -41,6 +42,21 @@ from .auditions import (
     AuditionCacheIdentity,
     AuditionError,
     inspect_audition_wav_bytes,
+)
+from .casting import (
+    GOVERNED_KOKORO_MODEL_FINGERPRINT,
+    GOVERNED_KOKORO_MODEL_ID,
+    GOVERNED_KOKORO_PROVIDER_FINGERPRINT,
+    GOVERNED_KOKORO_RIGHTS_RECORD_FINGERPRINT,
+    GOVERNED_KOKORO_RIGHTS_RECORD_ID,
+    GOVERNED_KOKORO_VOICE_PROFILE_FINGERPRINT,
+    GOVERNED_KOKORO_VOICE_PROFILE_ID,
+    GOVERNED_KOKORO_VOICE_PROFILE_VERSION,
+    GOVERNED_KOKORO_VOICE_TENSOR_FORMAT,
+    GOVERNED_KOKORO_VOICE_TENSOR_PATH,
+    GOVERNED_KOKORO_VOICE_TENSOR_SHAPE,
+    GOVERNED_VOICE_CATALOG_FINGERPRINT,
+    GOVERNED_VOICE_CATALOG_REVISION_ID,
 )
 from .casting_repository import CastingRepository
 from .config import ServiceSettings
@@ -133,6 +149,7 @@ from .speech_providers import (
     FIXTURE_ADAPTER_VERSION,
     FIXTURE_PROVIDER_ID,
     KOKORO_ADAPTER_VERSION,
+    KOKORO_MAX_CONTENT_TOKENS,
     KOKORO_PROVIDER_ID,
 )
 from .speech_runtime import (
@@ -183,10 +200,12 @@ _FIXTURE_RUNTIME_ID: Final = "python-integer-pcm"
 _FIXTURE_RUNTIME_VERSION: Final = "1.0.0"
 _LEGACY_RUNTIME_PROFILE_VERSION: Final = "1.0.0"
 _RUNTIME_PROFILE_VERSION: Final = "1.0.1"
+_KOKORO_RUNTIME_PROFILE_VERSION: Final = "1.0.2"
 _LEGACY_FIXTURE_PROFILE_ID: Final = "deterministic-pcm-wav-fixture-windows"
 _LEGACY_KOKORO_PROFILE_ID: Final = "kokoro-local-onnx-windows"
 _FIXTURE_PROFILE_ID: Final = "deterministic-pcm-wav-fixture-windows-v1-0-1"
-_KOKORO_PROFILE_ID: Final = "kokoro-local-onnx-windows-v1-0-1"
+_PREVIOUS_KOKORO_PROFILE_ID: Final = "kokoro-local-onnx-windows-v1-0-1"
+_KOKORO_PROFILE_ID: Final = "kokoro-local-onnx-windows-v1-0-2"
 DEFAULT_AUDITION_PAGE_SIZE: Final = 50
 MAX_AUDITION_PAGE_SIZE: Final = 200
 _MAX_PAGE_SIZE: Final = MAX_AUDITION_PAGE_SIZE
@@ -244,6 +263,145 @@ _AUDITION_GATE_IDS: Final = (
     "voice_readiness_review",
 )
 
+_GOVERNED_PRIVATE_AUDITION_WARNING: Final = (
+    "Private local audition only. This voice is not cleared by Cinematic Story Studio "
+    "for production export, commercial distribution, marketplace resale, cloning, or "
+    "real-person imitation."
+)
+_GOVERNED_PRIVATE_AUDITION_WARNING_FINGERPRINT: Final = (
+    "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645"
+)
+_GOVERNED_VOICE_INVENTORY_ID: Final = "governed-local-kokoro-voice-inventory-v1"
+_GOVERNED_VOICE_INVENTORY_REVISION: Final = 1
+_GOVERNED_VOICE_INVENTORY_RECORDED_AT: Final = "2026-08-02T00:00:00Z"
+_GOVERNED_VOICE_INVENTORY_RECORD_FINGERPRINT: Final = (
+    "5ce2d5bcaa016d1815183de99c7dca37bc3a615cb0a33efb6e1016498abb8fa8"
+)
+_GOVERNED_VOICE_INVENTORY_FINGERPRINT: Final = (
+    "cb5657779b22d422cd7d8b9b81e09491aae1a82795e9e6af8a781c5f4c47c9bc"
+)
+
+
+def _governed_voice_inventory_record_material() -> dict[str, Any]:
+    voice_tensor = next(
+        artifact
+        for artifact in KOKORO_LOCAL_ONNX_MANIFEST.artifacts
+        if artifact.path == GOVERNED_KOKORO_VOICE_TENSOR_PATH
+    )
+    return {
+        "contractVersion": "1.0.0",
+        "inventoryRecordId": stable_id(
+            "phase3b1-governed-local-voice-inventory-record",
+            GOVERNED_KOKORO_VOICE_PROFILE_ID,
+            GOVERNED_KOKORO_VOICE_PROFILE_VERSION,
+            voice_tensor.sha256,
+        ),
+        "neutralDisplayLabel": "Local Voice 001",
+        "providerId": KOKORO_LOCAL_ONNX_MANIFEST.provider_id,
+        "providerVersion": KOKORO_LOCAL_ONNX_MANIFEST.provider_version,
+        "providerVoiceId": KOKORO_LOCAL_ONNX_MANIFEST.voice_id,
+        "modelId": GOVERNED_KOKORO_MODEL_ID,
+        "modelVersion": KOKORO_LOCAL_ONNX_MANIFEST.model_version,
+        "modelPackageId": KOKORO_LOCAL_ONNX_MANIFEST.package_id,
+        "modelPackageFingerprint": KOKORO_LOCAL_ONNX_MANIFEST.fingerprint,
+        "voiceProfileId": GOVERNED_KOKORO_VOICE_PROFILE_ID,
+        "voiceProfileVersion": GOVERNED_KOKORO_VOICE_PROFILE_VERSION,
+        "voiceProfileFingerprint": GOVERNED_KOKORO_VOICE_PROFILE_FINGERPRINT,
+        "catalogRevisionId": GOVERNED_VOICE_CATALOG_REVISION_ID,
+        "catalogRevisionFingerprint": GOVERNED_VOICE_CATALOG_FINGERPRINT,
+        "voiceTensor": {
+            "relativePath": voice_tensor.path,
+            "byteSize": voice_tensor.size_bytes,
+            "sha256": voice_tensor.sha256,
+            "scalarFormat": "float32_le",
+            "shape": list(GOVERNED_KOKORO_VOICE_TENSOR_SHAPE),
+            "elementCount": (
+                GOVERNED_KOKORO_VOICE_TENSOR_SHAPE[0] * GOVERNED_KOKORO_VOICE_TENSOR_SHAPE[1]
+            ),
+        },
+        "rights": {
+            "rightsRecordId": GOVERNED_KOKORO_RIGHTS_RECORD_ID,
+            "rightsRecordRevision": 1,
+            "rightsRecordFingerprint": GOVERNED_KOKORO_RIGHTS_RECORD_FINGERPRINT,
+            "rightsState": "restricted",
+            "consentStatus": "unknown",
+            "commercialUseClassification": "restricted",
+            "redistributionClassification": "restricted",
+            "evidenceReferences": [
+                (
+                    "https://huggingface.co/onnx-community/"
+                    "Kokoro-82M-v1.0-ONNX/tree/"
+                    f"{KOKORO_LOCAL_ONNX_MANIFEST.source_revision}"
+                ),
+                "https://huggingface.co/hexgrad/Kokoro-82M",
+                (
+                    "https://github.com/hexgrad/kokoro/tree/"
+                    f"{KOKORO_LOCAL_ONNX_MANIFEST.provenance.maintainer_reference_revision}"
+                ),
+            ],
+        },
+        "language": "en",
+        "locale": "en-US",
+        "providerDeclaredPresentationCategory": (
+            "American English feminine presentation (provider-declared)"
+        ),
+        "providerDeclaredMetadataIndependentlyVerified": False,
+        "technicalCompatibility": "compatible",
+        "activationEligibility": "restricted_private_audition",
+        "activationReasonCode": ("RESTRICTED_PRIVATE_LOCAL_AUDITION_ACKNOWLEDGEMENT_REQUIRED"),
+        "knownLimitations": [
+            "private_local_audition_only",
+            "human_listening_required",
+            "production_export_ineligible",
+            "voice_rights_evidence_incomplete",
+            "provider_declared_categories_not_independently_verified",
+            "single_voice_package",
+        ],
+        "unresolvedEvidenceCodes": [
+            "VOICE_TENSOR_LICENSE_SCOPE_UNRESOLVED",
+            "DATASET_PROVENANCE_INCOMPLETE",
+            "PERFORMER_CONSENT_UNKNOWN",
+            "IDENTITY_AND_LIKENESS_CLEARANCE_UNKNOWN",
+            "COMMERCIAL_CLEARANCE_NOT_ESTABLISHED",
+            "REDISTRIBUTION_NOT_AUTHORIZED",
+            "SUBLICENSING_NOT_AUTHORIZED",
+        ],
+        "productionExportEligible": False,
+        "provenance": {
+            "origin": "application",
+            "producerId": _PRODUCER_ID,
+            "producerVersion": _PRODUCER_VERSION,
+            "recordedAt": _GOVERNED_VOICE_INVENTORY_RECORDED_AT,
+            "inputFingerprint": KOKORO_LOCAL_ONNX_MANIFEST.fingerprint,
+        },
+    }
+
+
+def _governed_voice_inventory() -> dict[str, Any]:
+    if (
+        sha256_text(_GOVERNED_PRIVATE_AUDITION_WARNING)
+        != _GOVERNED_PRIVATE_AUDITION_WARNING_FINGERPRINT
+        or GOVERNED_KOKORO_VOICE_TENSOR_FORMAT != "little_endian_float32"
+    ):
+        raise RuntimeError("The governed private-audition constants failed verification.")
+    record = _governed_voice_inventory_record_material()
+    record["inventoryFingerprint"] = request_fingerprint(record)
+    inventory = {
+        "inventoryId": _GOVERNED_VOICE_INVENTORY_ID,
+        "inventoryRevision": _GOVERNED_VOICE_INVENTORY_REVISION,
+        "warningText": _GOVERNED_PRIVATE_AUDITION_WARNING,
+        "warningFingerprint": _GOVERNED_PRIVATE_AUDITION_WARNING_FINGERPRINT,
+        "items": [record],
+    }
+    inventory["inventoryFingerprint"] = request_fingerprint(inventory)
+    if (
+        record["inventoryFingerprint"] != _GOVERNED_VOICE_INVENTORY_RECORD_FINGERPRINT
+        or inventory["inventoryFingerprint"] != _GOVERNED_VOICE_INVENTORY_FINGERPRINT
+    ):
+        raise RuntimeError("The governed local voice inventory failed fingerprint validation.")
+    return deepcopy(inventory)
+
+
 _FIXTURE_FILE_SHA256: Final = sha256_text("deterministic-square-wave:1.0.0")
 _FIXTURE_FILE_INVENTORY: Final = (
     {
@@ -297,16 +455,20 @@ def _runtime_profile_fingerprint_material(
     runtime_id: str,
     runtime_version: str,
     startup_timeout_ms: int,
+    maximum_content_tokens: int | None = None,
 ) -> dict[str, object]:
+    limits = {
+        "maximumAudioBytes": _MAX_AUDIO_BYTES,
+        "maximumDurationMilliseconds": 30_000,
+        "maximumRetryAttempts": 0,
+        "maximumScriptCodePoints": 4_000,
+    }
+    if maximum_content_tokens is not None:
+        limits["maximumContentTokens"] = maximum_content_tokens
     return {
         "architecture": "x64",
         "idleShutdownMilliseconds": 120_000,
-        "limits": {
-            "maximumAudioBytes": _MAX_AUDIO_BYTES,
-            "maximumDurationMilliseconds": 30_000,
-            "maximumRetryAttempts": 0,
-            "maximumScriptCodePoints": 4_000,
-        },
+        "limits": limits,
         "maximumConcurrentRequests": 1,
         "networkPolicy": "deny_during_synthesis",
         "outputFormats": ["pcm_s16le_wav"],
@@ -400,6 +562,18 @@ _FIXTURE_PROFILE_FINGERPRINT: Final = request_fingerprint(
 _KOKORO_PROFILE_FINGERPRINT: Final = request_fingerprint(
     _runtime_profile_fingerprint_material(
         profile_id=_KOKORO_PROFILE_ID,
+        profile_version=_KOKORO_RUNTIME_PROFILE_VERSION,
+        provider_id=KOKORO_PROVIDER_ID,
+        provider_version=KOKORO_ADAPTER_VERSION,
+        runtime_id="onnxruntime-cpu",
+        runtime_version="1.28.0",
+        startup_timeout_ms=_RUNTIME_STARTUP_TIMEOUT_MS,
+        maximum_content_tokens=KOKORO_MAX_CONTENT_TOKENS,
+    )
+)
+_PREVIOUS_KOKORO_PROFILE_FINGERPRINT: Final = request_fingerprint(
+    _runtime_profile_fingerprint_material(
+        profile_id=_PREVIOUS_KOKORO_PROFILE_ID,
         profile_version=_RUNTIME_PROFILE_VERSION,
         provider_id=KOKORO_PROVIDER_ID,
         provider_version=KOKORO_ADAPTER_VERSION,
@@ -443,10 +617,15 @@ _FIXTURE_PROFILE_RECORD_ID: Final = stable_id(
     _FIXTURE_PROFILE_ID,
     _RUNTIME_PROFILE_VERSION,
 )
+_PREVIOUS_KOKORO_PROFILE_RECORD_ID: Final = stable_id(
+    "phase3b-runtime-profile",
+    _PREVIOUS_KOKORO_PROFILE_ID,
+    _RUNTIME_PROFILE_VERSION,
+)
 _KOKORO_PROFILE_RECORD_ID: Final = stable_id(
     "phase3b-runtime-profile",
     _KOKORO_PROFILE_ID,
-    _RUNTIME_PROFILE_VERSION,
+    _KOKORO_RUNTIME_PROFILE_VERSION,
 )
 _EMPTY_DICTIONARY_FINGERPRINT: Final = dictionary_fingerprint((), 0)
 
@@ -1677,6 +1856,7 @@ class AuditionRepository:
                 "runtime_id": _FIXTURE_RUNTIME_ID,
                 "runtime_version": _FIXTURE_RUNTIME_VERSION,
                 "startup_timeout_ms": _LEGACY_RUNTIME_STARTUP_TIMEOUT_MS,
+                "maximum_content_tokens": None,
                 "fingerprint": _LEGACY_FIXTURE_PROFILE_FINGERPRINT,
                 "origin": "fixture_provider",
             },
@@ -1690,6 +1870,7 @@ class AuditionRepository:
                 "runtime_id": "onnxruntime-cpu",
                 "runtime_version": "1.28.0",
                 "startup_timeout_ms": _LEGACY_RUNTIME_STARTUP_TIMEOUT_MS,
+                "maximum_content_tokens": None,
                 "fingerprint": _LEGACY_KOKORO_PROFILE_FINGERPRINT,
                 "origin": "application",
             },
@@ -1703,19 +1884,35 @@ class AuditionRepository:
                 "runtime_id": _FIXTURE_RUNTIME_ID,
                 "runtime_version": _FIXTURE_RUNTIME_VERSION,
                 "startup_timeout_ms": _RUNTIME_STARTUP_TIMEOUT_MS,
+                "maximum_content_tokens": None,
                 "fingerprint": _FIXTURE_PROFILE_FINGERPRINT,
                 "origin": "fixture_provider",
             },
             {
-                "id": _KOKORO_PROFILE_RECORD_ID,
-                "insert_if_missing": True,
-                "profile_id": _KOKORO_PROFILE_ID,
+                "id": _PREVIOUS_KOKORO_PROFILE_RECORD_ID,
+                "insert_if_missing": False,
+                "profile_id": _PREVIOUS_KOKORO_PROFILE_ID,
                 "profile_version": _RUNTIME_PROFILE_VERSION,
                 "provider_id": KOKORO_PROVIDER_ID,
                 "provider_version": KOKORO_ADAPTER_VERSION,
                 "runtime_id": "onnxruntime-cpu",
                 "runtime_version": "1.28.0",
                 "startup_timeout_ms": _RUNTIME_STARTUP_TIMEOUT_MS,
+                "maximum_content_tokens": None,
+                "fingerprint": _PREVIOUS_KOKORO_PROFILE_FINGERPRINT,
+                "origin": "application",
+            },
+            {
+                "id": _KOKORO_PROFILE_RECORD_ID,
+                "insert_if_missing": True,
+                "profile_id": _KOKORO_PROFILE_ID,
+                "profile_version": _KOKORO_RUNTIME_PROFILE_VERSION,
+                "provider_id": KOKORO_PROVIDER_ID,
+                "provider_version": KOKORO_ADAPTER_VERSION,
+                "runtime_id": "onnxruntime-cpu",
+                "runtime_version": "1.28.0",
+                "startup_timeout_ms": _RUNTIME_STARTUP_TIMEOUT_MS,
+                "maximum_content_tokens": KOKORO_MAX_CONTENT_TOKENS,
                 "fingerprint": _KOKORO_PROFILE_FINGERPRINT,
                 "origin": "application",
             },
@@ -1881,6 +2078,10 @@ class AuditionRepository:
                         runtime_id=str(profile["runtime_id"]),
                         runtime_version=str(profile["runtime_version"]),
                         startup_timeout_ms=cast(int, profile["startup_timeout_ms"]),
+                        maximum_content_tokens=cast(
+                            int | None,
+                            profile["maximum_content_tokens"],
+                        ),
                     )
                     expected_provenance = {
                         "origin": str(profile["origin"]),
@@ -1888,17 +2089,23 @@ class AuditionRepository:
                         "producerVersion": _PRODUCER_VERSION,
                         "recordedAt": existing_profile.created_at,
                     }
+                    expected_limits = {
+                        "maximumAudioBytes": _MAX_AUDIO_BYTES,
+                        "maximumDurationMilliseconds": 30_000,
+                        "maximumRetryAttempts": 0,
+                        "maximumScriptCodePoints": 4_000,
+                    }
+                    if profile["maximum_content_tokens"] is not None:
+                        expected_limits["maximumContentTokens"] = cast(
+                            int,
+                            profile["maximum_content_tokens"],
+                        )
                     expected_projection = {
                         "active": True,
                         "architecture": "x64",
                         "createdAt": existing_profile.created_at,
                         "idleShutdownMilliseconds": 120_000,
-                        "limits": {
-                            "maximumAudioBytes": _MAX_AUDIO_BYTES,
-                            "maximumDurationMilliseconds": 30_000,
-                            "maximumRetryAttempts": 0,
-                            "maximumScriptCodePoints": 4_000,
-                        },
+                        "limits": expected_limits,
                         "maximumConcurrency": 1,
                         "networkPolicy": "deny_during_synthesis",
                         "outputFormats": ["pcm_s16le_wav"],
@@ -1984,6 +2191,16 @@ class AuditionRepository:
                                 "maximumDurationMilliseconds": 30_000,
                                 "maximumRetryAttempts": 0,
                                 "maximumScriptCodePoints": 4_000,
+                                **(
+                                    {
+                                        "maximumContentTokens": cast(
+                                            int,
+                                            profile["maximum_content_tokens"],
+                                        )
+                                    }
+                                    if profile["maximum_content_tokens"] is not None
+                                    else {}
+                                ),
                             }
                         ),
                         profile_fingerprint=str(profile["fingerprint"]),
@@ -2975,8 +3192,7 @@ class AuditionRepository:
             return None
         current_profile_record_id, current_profile_fingerprint = current_profile_identity
         profile = session.scalar(
-            select(SpeechRuntimeProfileRow)
-            .where(
+            select(SpeechRuntimeProfileRow).where(
                 SpeechRuntimeProfileRow.id == current_profile_record_id,
                 SpeechRuntimeProfileRow.provider_id == provider_id,
                 SpeechRuntimeProfileRow.profile_fingerprint == current_profile_fingerprint,
@@ -3168,6 +3384,279 @@ class AuditionRepository:
         session.add(binding)
         session.flush()
         return binding
+
+    @staticmethod
+    def _governed_private_audition_rights_are_exact(
+        session: Session,
+        *,
+        voice: VoiceProfileRow,
+        rights: VoiceRightsRecordRow,
+        catalog: VoiceCatalogRevisionRow,
+    ) -> bool:
+        provider = session.get(
+            VoiceProviderDescriptorRow,
+            voice.provider_descriptor_id,
+        )
+        model = session.get(
+            VoiceModelDescriptorRow,
+            voice.model_descriptor_id,
+        )
+        return (
+            catalog.catalog_id == GOVERNED_VOICE_CATALOG_REVISION_ID
+            and catalog.catalog_fingerprint == GOVERNED_VOICE_CATALOG_FINGERPRINT
+            and voice.catalog_revision_id == catalog.id
+            and voice.profile_id == GOVERNED_KOKORO_VOICE_PROFILE_ID
+            and voice.profile_version == GOVERNED_KOKORO_VOICE_PROFILE_VERSION
+            and voice.profile_fingerprint == GOVERNED_KOKORO_VOICE_PROFILE_FINGERPRINT
+            and voice.provider_voice_id == KOKORO_LOCAL_ONNX_MANIFEST.voice_id
+            and provider is not None
+            and provider.provider_id == KOKORO_PROVIDER_ID
+            and provider.provider_version == KOKORO_ADAPTER_VERSION
+            and provider.descriptor_fingerprint == GOVERNED_KOKORO_PROVIDER_FINGERPRINT
+            and model is not None
+            and model.provider_descriptor_id == provider.id
+            and model.model_id == GOVERNED_KOKORO_MODEL_ID
+            and model.model_version == KOKORO_LOCAL_ONNX_MANIFEST.model_version
+            and model.descriptor_fingerprint == GOVERNED_KOKORO_MODEL_FINGERPRINT
+            and rights.voice_profile_record_id == voice.id
+            and rights.rights_record_id == GOVERNED_KOKORO_RIGHTS_RECORD_ID
+            and rights.revision == 1
+            and rights.rights_fingerprint == GOVERNED_KOKORO_RIGHTS_RECORD_FINGERPRINT
+            and rights.rights_state == "restricted"
+            and rights.commercial_use_status == "restricted"
+            and rights.consent_status == "unknown"
+            and rights.human_verification_status == "pending"
+        )
+
+    @staticmethod
+    def _governed_inventory_item() -> dict[str, Any]:
+        inventory = _governed_voice_inventory()
+        items = inventory.get("items")
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+            raise ServiceError(
+                500,
+                "GOVERNED_VOICE_INVENTORY_INVALID",
+                "The governed local voice inventory failed integrity validation.",
+            )
+        return cast(dict[str, Any], items[0])
+
+    def _build_governed_local_voice_activation(
+        self,
+        session: Session,
+        *,
+        evidence: Mapping[str, Any],
+        actor_id: str,
+        acknowledged_at: str,
+        reason: str,
+        request_fingerprint_value: str,
+    ) -> dict[str, Any]:
+        assignment = cast(CastAssignmentRow, evidence["assignment"])
+        cast_snapshot = cast(ApprovedCastSnapshotRow, evidence["cast_snapshot"])
+        casting_run = cast(CastingRunRow, evidence["casting_run"])
+        catalog = cast(VoiceCatalogRevisionRow, evidence["catalog"])
+        rights = cast(VoiceRightsRecordRow, evidence["rights"])
+        runtime_profile = cast(SpeechRuntimeProfileRow, evidence["runtime_profile"])
+        manifest = cast(ModelPackageManifestRow, evidence["manifest"])
+        installation = cast(ModelInstallationRow, evidence["installation"])
+        verification = cast(ModelVerificationRow, evidence["verification"])
+        voice = cast(VoiceProfileRow, evidence["voice"])
+
+        inventory_record = self._governed_inventory_item()
+        if (
+            manifest.package_id != KOKORO_LOCAL_ONNX_MANIFEST.package_id
+            or manifest.manifest_fingerprint != KOKORO_LOCAL_ONNX_MANIFEST.fingerprint
+            or manifest.provider_id != KOKORO_LOCAL_ONNX_MANIFEST.provider_id
+            or manifest.provider_version != KOKORO_LOCAL_ONNX_MANIFEST.provider_version
+            or manifest.model_id != KOKORO_LOCAL_ONNX_MANIFEST.model_id
+            or manifest.model_version != KOKORO_LOCAL_ONNX_MANIFEST.model_version
+            or runtime_profile.id != _KOKORO_PROFILE_RECORD_ID
+            or runtime_profile.profile_id != _KOKORO_PROFILE_ID
+            or runtime_profile.profile_fingerprint != _KOKORO_PROFILE_FINGERPRINT
+            or not self._governed_private_audition_rights_are_exact(
+                session,
+                voice=voice,
+                rights=rights,
+                catalog=catalog,
+            )
+        ):
+            raise ServiceError(
+                409,
+                "AUDITION_RESTRICTED_VOICE_BINDING_INVALID",
+                "The selected restricted voice is not the exact governed local voice.",
+            )
+        rights_acknowledgement = self._casting._current_restricted_rights_acknowledgement(
+            session,
+            run_id=casting_run.id,
+            role_id=assignment.role_id,
+            voice_profile_id=voice.profile_id,
+            rights_record_id=rights.rights_record_id,
+            rights_record_revision=rights.revision,
+        )
+        if rights_acknowledgement is None:
+            raise ServiceError(
+                409,
+                "AUDITION_RESTRICTED_RIGHTS_ACKNOWLEDGEMENT_REQUIRED",
+                "A current Phase 3A restricted-rights acknowledgement is required.",
+            )
+        rights_acknowledgement_fingerprint = self._casting._validated_correction_fingerprint(
+            rights_acknowledgement
+        )
+        model_acknowledgement = self._restricted_local_use_acknowledgement(
+            session,
+            installation,
+        )
+        if model_acknowledgement is None:
+            raise ServiceError(
+                409,
+                "AUDITION_RESTRICTED_MODEL_ACKNOWLEDGEMENT_MISSING",
+                "The restricted local model acknowledgement is unavailable.",
+            )
+        acknowledgement_provenance = {
+            "origin": "human",
+            "producerId": _PRODUCER_ID,
+            "producerVersion": _PRODUCER_VERSION,
+            "recordedAt": acknowledged_at,
+            "inputFingerprint": request_fingerprint_value,
+        }
+        acknowledgement: dict[str, Any] = {
+            "contractVersion": "1.0.0",
+            "acknowledgementId": new_id(),
+            "actor": {"classification": "human", "actorId": actor_id},
+            "acknowledgedAt": acknowledged_at,
+            "reason": reason,
+            "warningText": _GOVERNED_PRIVATE_AUDITION_WARNING,
+            "warningFingerprint": _GOVERNED_PRIVATE_AUDITION_WARNING_FINGERPRINT,
+            "inventoryRecordId": inventory_record["inventoryRecordId"],
+            "inventoryFingerprint": _GOVERNED_VOICE_INVENTORY_FINGERPRINT,
+            "providerId": manifest.provider_id,
+            "providerVersion": manifest.provider_version,
+            "modelId": manifest.model_id,
+            "modelVersion": manifest.model_version,
+            "modelPackageId": manifest.package_id,
+            "modelPackageFingerprint": manifest.manifest_fingerprint,
+            "voiceProfileId": voice.profile_id,
+            "voiceProfileVersion": voice.profile_version,
+            "voiceProfileFingerprint": voice.profile_fingerprint,
+            "catalogRevisionId": catalog.catalog_id,
+            "catalogRevisionFingerprint": catalog.catalog_fingerprint,
+            "voiceTensorSha256": inventory_record["voiceTensor"]["sha256"],
+            "rightsRecordId": rights.rights_record_id,
+            "rightsRecordRevision": rights.revision,
+            "rightsRecordFingerprint": rights.rights_fingerprint,
+            "restrictedRightsCorrectionId": rights_acknowledgement.id,
+            "restrictedRightsCorrectionFingerprint": (rights_acknowledgement_fingerprint),
+            "modelInstallationAcknowledgementEventId": model_acknowledgement.id,
+            "modelVerificationId": verification.id,
+            "modelVerificationFingerprint": verification.verification_fingerprint,
+            "privateLocalAuditionOnly": True,
+            "productionExportAuthorized": False,
+            "commercialDistributionAuthorized": False,
+            "marketplaceResaleAuthorized": False,
+            "cloningAuthorized": False,
+            "realPersonImitationAuthorized": False,
+            "immutable": True,
+            "provenance": acknowledgement_provenance,
+        }
+        acknowledgement["acknowledgementFingerprint"] = request_fingerprint(acknowledgement)
+        binding: dict[str, Any] = {
+            "contractVersion": "1.0.0",
+            "acknowledgement": acknowledgement,
+            "castAssignmentId": assignment.id,
+            "castAssignmentRevision": assignment.revision,
+            "castAssignmentFingerprint": self._assignment_fingerprint(assignment),
+            "approvedCastSnapshotId": cast_snapshot.id,
+            "approvedCastSnapshotRevision": cast_snapshot.revision,
+            "approvedCastSnapshotFingerprint": cast_snapshot.snapshot_fingerprint,
+            "runtimeProfileId": runtime_profile.profile_id,
+            "runtimeProfileFingerprint": runtime_profile.profile_fingerprint,
+            "privateLocalAuditionOnly": True,
+            "productionExportEligible": False,
+        }
+        binding["bindingFingerprint"] = request_fingerprint(binding)
+        return binding
+
+    def _governed_local_voice_activation_wire(
+        self,
+        session: Session,
+        audition_session: AuditionSessionRow,
+    ) -> dict[str, Any] | None:
+        provenance = parse_json(audition_session.provenance_json, None)
+        details = provenance.get("details") if isinstance(provenance, dict) else None
+        stored = details.get("governedLocalVoiceActivation") if isinstance(details, dict) else None
+        if audition_session.provider_id == FIXTURE_PROVIDER_ID:
+            if stored is not None:
+                raise ServiceError(
+                    500,
+                    "AUDITION_ACTIVATION_EVIDENCE_INVALID",
+                    "Fixture audition evidence contained a real-voice activation.",
+                )
+            return None
+        if audition_session.provider_id != KOKORO_PROVIDER_ID or not isinstance(stored, dict):
+            raise ServiceError(
+                409,
+                "AUDITION_ACTIVATION_EVIDENCE_INVALID",
+                "The governed real-voice activation is unavailable.",
+            )
+        acknowledgement = stored.get("acknowledgement")
+        if not isinstance(acknowledgement, dict):
+            raise ServiceError(
+                409,
+                "AUDITION_ACTIVATION_EVIDENCE_INVALID",
+                "The governed real-voice activation failed integrity validation.",
+            )
+        actor = acknowledgement.get("actor")
+        activation_provenance = acknowledgement.get("provenance")
+        if (
+            not isinstance(actor, dict)
+            or actor.get("classification") != "human"
+            or not isinstance(actor.get("actorId"), str)
+            or not isinstance(acknowledgement.get("acknowledgedAt"), str)
+            or not isinstance(acknowledgement.get("reason"), str)
+            or not isinstance(activation_provenance, dict)
+        ):
+            raise ServiceError(
+                409,
+                "AUDITION_ACTIVATION_EVIDENCE_INVALID",
+                "The governed real-voice activation failed integrity validation.",
+            )
+        evidence = self._validate_session_evidence(
+            session,
+            project_id=audition_session.project_id,
+            role_id=audition_session.role_id,
+            evidence=self._session_evidence_wire(
+                session,
+                audition_session,
+                include_activation=False,
+            ),
+            require_current_pronunciation=False,
+        )
+        expected = self._build_governed_local_voice_activation(
+            session,
+            evidence=evidence,
+            actor_id=cast(str, actor["actorId"]),
+            acknowledged_at=cast(str, acknowledgement["acknowledgedAt"]),
+            reason=cast(str, acknowledgement["reason"]),
+            request_fingerprint_value=audition_session.request_fingerprint,
+        )
+        expected_acknowledgement = cast(dict[str, Any], expected["acknowledgement"])
+        expected_acknowledgement["acknowledgementId"] = acknowledgement.get("acknowledgementId")
+        expected_acknowledgement["acknowledgementFingerprint"] = request_fingerprint(
+            {
+                key: value
+                for key, value in expected_acknowledgement.items()
+                if key != "acknowledgementFingerprint"
+            }
+        )
+        expected["bindingFingerprint"] = request_fingerprint(
+            {key: value for key, value in expected.items() if key != "bindingFingerprint"}
+        )
+        if stored != expected:
+            raise ServiceError(
+                409,
+                "AUDITION_ACTIVATION_EVIDENCE_CHANGED",
+                "The governed real-voice activation is stale or invalid.",
+            )
+        return deepcopy(expected)
 
     def _assert_session_voice_runtime_binding(
         self,
@@ -4366,6 +4855,7 @@ class AuditionRepository:
         *,
         project_id: str,
         request: CreateAuditionSessionRequest,
+        actor_id: str,
     ) -> dict[str, Any]:
         request_value = request.model_dump(mode="json", by_alias=True)
         request_hash = request_fingerprint(request_value | {"projectId": project_id})
@@ -4412,6 +4902,49 @@ class AuditionRepository:
                 role_id=request.role_id,
                 evidence=request.evidence.model_dump(mode="json", by_alias=True),
             )
+            manifest = cast(ModelPackageManifestRow, evidence["manifest"])
+            activation_request = request.restricted_local_audition_activation
+            governed_activation: dict[str, Any] | None = None
+            if manifest.provider_id == FIXTURE_PROVIDER_ID:
+                if activation_request is not None:
+                    raise ServiceError(
+                        422,
+                        "AUDITION_RESTRICTED_ACTIVATION_FORBIDDEN",
+                        "Fixture auditions do not accept a real-voice activation.",
+                    )
+            elif manifest.provider_id == KOKORO_PROVIDER_ID:
+                if activation_request is None:
+                    raise ServiceError(
+                        409,
+                        "AUDITION_RESTRICTED_ACTIVATION_REQUIRED",
+                        "A current restricted local-audition acknowledgement is required.",
+                    )
+                inventory = _governed_voice_inventory()
+                if (
+                    activation_request.expected_inventory_fingerprint
+                    != inventory["inventoryFingerprint"]
+                    or activation_request.expected_warning_fingerprint
+                    != _GOVERNED_PRIVATE_AUDITION_WARNING_FINGERPRINT
+                ):
+                    raise ServiceError(
+                        409,
+                        "AUDITION_RESTRICTED_ACTIVATION_STALE",
+                        "The governed voice inventory or restriction warning changed.",
+                    )
+                governed_activation = self._build_governed_local_voice_activation(
+                    session,
+                    evidence=evidence,
+                    actor_id=actor_id,
+                    acknowledged_at=now,
+                    reason=activation_request.reason,
+                    request_fingerprint_value=request_hash,
+                )
+            else:
+                raise ServiceError(
+                    409,
+                    "AUDITION_PROVIDER_BINDING_INVALID",
+                    "The selected audition provider is not governed.",
+                )
             prior = session.scalar(
                 select(AuditionSessionRow)
                 .where(
@@ -4478,13 +5011,10 @@ class AuditionRepository:
                 voice_runtime_binding_id=voice_runtime_binding.id,
                 voice_runtime_binding_fingerprint=voice_runtime_binding.binding_fingerprint,
                 provider_voice_id=voice_runtime_binding.provider_voice_id,
-                provider_id=cast(ModelPackageManifestRow, evidence["manifest"]).provider_id,
-                provider_version=cast(
-                    ModelPackageManifestRow,
-                    evidence["manifest"],
-                ).provider_version,
-                model_id=cast(ModelPackageManifestRow, evidence["manifest"]).model_id,
-                model_version=cast(ModelPackageManifestRow, evidence["manifest"]).model_version,
+                provider_id=manifest.provider_id,
+                provider_version=manifest.provider_version,
+                model_id=manifest.model_id,
+                model_version=manifest.model_version,
                 catalog_revision_id=cast(VoiceCatalogRevisionRow, evidence["catalog"]).id,
                 catalog_fingerprint=cast(
                     VoiceCatalogRevisionRow,
@@ -4509,16 +5039,13 @@ class AuditionRepository:
                     SpeechRuntimeProfileRow,
                     evidence["runtime_profile"],
                 ).profile_fingerprint,
-                model_manifest_id=cast(ModelPackageManifestRow, evidence["manifest"]).id,
+                model_manifest_id=manifest.id,
                 model_installation_record_id=cast(
                     ModelInstallationRow,
                     evidence["installation"],
                 ).id,
                 model_verification_id=cast(ModelVerificationRow, evidence["verification"]).id,
-                model_package_fingerprint=cast(
-                    ModelPackageManifestRow,
-                    evidence["manifest"],
-                ).manifest_fingerprint,
+                model_package_fingerprint=manifest.manifest_fingerprint,
                 producer_id=_PRODUCER_ID,
                 producer_version=_PRODUCER_VERSION,
                 request_fingerprint=request_hash,
@@ -4530,6 +5057,11 @@ class AuditionRepository:
                     "human",
                     input_fingerprint=request_hash,
                     details={
+                        **(
+                            {"governedLocalVoiceActivation": governed_activation}
+                            if governed_activation is not None
+                            else {}
+                        ),
                         "providerVoiceId": voice_runtime_binding.provider_voice_id,
                         "voiceRuntimeBindingFingerprint": (
                             voice_runtime_binding.binding_fingerprint
@@ -4551,6 +5083,7 @@ class AuditionRepository:
         project_id: str,
         role_id: str,
         evidence: Mapping[str, Any],
+        require_current_pronunciation: bool = True,
     ) -> dict[str, Any]:
         def mismatch(code: str, message: str) -> NoReturn:
             raise ServiceError(409, code, message)
@@ -4819,19 +5352,49 @@ class AuditionRepository:
             .order_by(VoiceRightsRecordRow.revision.desc(), VoiceRightsRecordRow.id.desc())
             .limit(1)
         )
+        governed_private_rights = (
+            rights is not None
+            and catalog is not None
+            and self._governed_private_audition_rights_are_exact(
+                session,
+                voice=voice,
+                rights=rights,
+                catalog=catalog,
+            )
+        )
+        generally_eligible_rights = (
+            rights is not None
+            and rights.rights_state in {"verified", "restricted"}
+            and rights.commercial_use_status not in {"unknown", "prohibited"}
+            and rights.consent_status not in {"missing", "unknown", "prohibited"}
+            and rights.human_verification_status in {"verified", "not_required_fixture"}
+        )
         if (
             rights is None
             or latest_rights is None
             or latest_rights.id != rights.id
             or rights.rights_fingerprint != evidence.get("rightsRecordFingerprint")
-            or rights.rights_state not in {"verified", "restricted"}
-            or rights.commercial_use_status in {"unknown", "prohibited"}
-            or rights.consent_status in {"missing", "unknown", "prohibited"}
-            or rights.human_verification_status not in {"verified", "not_required_fixture"}
+            or not (generally_eligible_rights or governed_private_rights)
         ):
             mismatch("AUDITION_RIGHTS_INVALID", "The voice-rights evidence is not current.")
 
-        dictionary = self._current_dictionary(session, project_id)
+        dictionary = (
+            self._current_dictionary(session, project_id)
+            if require_current_pronunciation
+            else session.scalar(
+                select(PronunciationDictionaryRow)
+                .where(
+                    PronunciationDictionaryRow.project_id == project_id,
+                    PronunciationDictionaryRow.dictionary_id
+                    == evidence.get("pronunciationDictionaryId"),
+                    PronunciationDictionaryRow.revision
+                    == evidence.get("pronunciationDictionaryRevision"),
+                    PronunciationDictionaryRow.dictionary_fingerprint
+                    == evidence.get("pronunciationDictionaryFingerprint"),
+                )
+                .limit(1)
+            )
+        )
         if (
             dictionary is None
             or dictionary.dictionary_id != evidence.get("pronunciationDictionaryId")
@@ -5027,6 +5590,10 @@ class AuditionRepository:
             "voiceRuntimeBindingFingerprint": voice_runtime_binding.binding_fingerprint,
             "providerVoiceId": voice_runtime_binding.provider_voice_id,
             "voiceRuntimeBinding": self._voice_runtime_binding_wire(voice_runtime_binding),
+            "governedLocalVoiceActivation": self._governed_local_voice_activation_wire(
+                session,
+                row,
+            ),
             "providerId": row.provider_id,
             "providerVersion": row.provider_version,
             "modelPackageFingerprint": row.model_package_fingerprint,
@@ -5085,6 +5652,8 @@ class AuditionRepository:
         self,
         session: Session,
         row: AuditionSessionRow,
+        *,
+        include_activation: bool = True,
     ) -> dict[str, Any]:
         casting_run = session.get(CastingRunRow, row.casting_run_id)
         catalog = session.get(VoiceCatalogRevisionRow, row.catalog_revision_id)
@@ -5118,7 +5687,7 @@ class AuditionRepository:
         assert runtime_profile is not None
         assert manifest is not None
         voice_runtime_binding = self._assert_session_voice_runtime_binding(session, row)
-        return {
+        value = {
             "projectId": row.project_id,
             "sourceDocumentId": row.source_document_id,
             "sourceRevision": row.source_revision,
@@ -5159,6 +5728,11 @@ class AuditionRepository:
             "modelPackageFingerprint": row.model_package_fingerprint,
             "producerVersion": row.producer_version,
         }
+        if include_activation:
+            value["governedLocalVoiceActivation"] = self._governed_local_voice_activation_wire(
+                session, row
+            )
+        return value
 
     def preview_normalization(
         self,
@@ -6482,7 +7056,13 @@ class AuditionRepository:
                     "IDEMPOTENCY_RECORD_INVALID",
                     "The saved audition request evidence is unavailable.",
                 )
-            if audition_session.state in {"queued", "generating", "invalidated"}:
+            if audition_session.state == "invalidated":
+                raise ServiceError(
+                    409,
+                    "AUDITION_SESSION_INVALIDATED",
+                    "The audition session evidence is no longer current; create a new session.",
+                )
+            if audition_session.state in {"queued", "generating"}:
                 raise ServiceError(
                     409,
                     "AUDITION_SESSION_BUSY",
@@ -7044,6 +7624,7 @@ class AuditionRepository:
         row: AuditionClipRow,
     ) -> dict[str, Any]:
         provider_request = session.get(SpeechProviderRequestRow, row.provider_request_id)
+        audition_session = session.get(AuditionSessionRow, row.session_id)
         artifact = session.get(AudioArtifactRow, row.artifact_id)
         quality = session.scalar(
             select(AudioQualityRecordRow)
@@ -7051,7 +7632,12 @@ class AuditionRepository:
             .order_by(AudioQualityRecordRow.revision.desc(), AudioQualityRecordRow.id.desc())
             .limit(1)
         )
-        if provider_request is None or artifact is None or quality is None:
+        if (
+            provider_request is None
+            or audition_session is None
+            or artifact is None
+            or quality is None
+        ):
             raise ServiceError(
                 500,
                 "AUDITION_CLIP_EVIDENCE_MISSING",
@@ -7082,6 +7668,31 @@ class AuditionRepository:
             if latest_review is not None
             else None
         )
+        if (
+            latest_review is None
+            or latest_review.project_id != row.project_id
+            or latest_review.scope_key != row.role_id
+            or latest_review.session_id != row.session_id
+            or latest_review.clip_id != row.id
+            or latest_review.role_id != row.role_id
+        ):
+            raise ServiceError(
+                500,
+                "AUDITION_REVIEW_EVIDENCE_MISSING",
+                "The audition clip review evidence is unavailable.",
+            )
+        if latest_decision is not None and (
+            latest_decision.project_id != latest_review.project_id
+            or latest_decision.review_record_id != latest_review.id
+            or latest_decision.gate_id != latest_review.gate_id
+            or latest_decision.scope_key != latest_review.scope_key
+            or latest_decision.evidence_fingerprint != latest_review.evidence_fingerprint
+        ):
+            raise ServiceError(
+                500,
+                "AUDITION_REVIEW_EVIDENCE_MISSING",
+                "The audition clip review decision evidence is unavailable.",
+            )
         clip_state = "reviewable"
         if latest_decision is not None:
             clip_state = latest_decision.decision
@@ -7181,6 +7792,9 @@ class AuditionRepository:
                 if provider_request.provider_id == FIXTURE_PROVIDER_ID
                 else "real_local"
             ),
+            "governedLocalVoiceActivation": (
+                self._governed_local_voice_activation_wire(session, audition_session)
+            ),
             "modelId": provider_request.model_id,
             "modelVersion": provider_request.model_version,
             "modelPackageFingerprint": provider_request.model_package_fingerprint,
@@ -7204,7 +7818,14 @@ class AuditionRepository:
                 blocking_quality_codes=blocking_quality_codes,
                 warning_codes=quality_warnings,
             ),
+            "review": self._review_wire(
+                session,
+                latest_review,
+                decision_override=latest_decision,
+                decision_override_provided=True,
+            ),
             "state": clip_state,
+            "productionExportEligible": False,
             "clipFingerprint": row.clip_fingerprint,
             "revision": row.revision,
             "createdAt": row.created_at,
@@ -10468,26 +11089,22 @@ class AuditionRepository:
         }
         evidence_fingerprint = request_fingerprint(evidence)
         evidence["evidenceFingerprint"] = evidence_fingerprint
-        existing = session.scalar(
-            select(AuditionReviewRecordRow).where(
+        latest = session.scalar(
+            select(AuditionReviewRecordRow)
+            .where(
                 AuditionReviewRecordRow.project_id == project_id,
                 AuditionReviewRecordRow.gate_id == gate_id,
                 AuditionReviewRecordRow.scope_key == scope_key,
-                AuditionReviewRecordRow.evidence_fingerprint == evidence_fingerprint,
             )
-        )
-        if existing is not None:
-            return existing
-        revision = 1 + int(
-            session.scalar(
-                select(func.max(AuditionReviewRecordRow.revision)).where(
-                    AuditionReviewRecordRow.project_id == project_id,
-                    AuditionReviewRecordRow.gate_id == gate_id,
-                    AuditionReviewRecordRow.scope_key == scope_key,
-                )
+            .order_by(
+                AuditionReviewRecordRow.revision.desc(),
+                AuditionReviewRecordRow.id.desc(),
             )
-            or 0
+            .limit(1)
         )
+        if latest is not None and latest.evidence_fingerprint == evidence_fingerprint:
+            return latest
+        revision = (latest.revision + 1) if latest is not None else 1
         row = AuditionReviewRecordRow(
             id=new_id(),
             project_id=project_id,
@@ -10556,11 +11173,25 @@ class AuditionRepository:
             clip = (
                 session.get(AuditionClipRow, review.clip_id) if review.clip_id is not None else None
             )
+            audition_session = (
+                session.get(AuditionSessionRow, review.session_id)
+                if review.session_id is not None
+                else None
+            )
             evidence = parse_json(review.evidence_json, {})
+            fingerprint_material = (
+                {
+                    key: value
+                    for key, value in evidence.items()
+                    if key != "evidenceFingerprint"
+                }
+                if isinstance(evidence, dict)
+                else None
+            )
             quality = (
                 session.scalar(
                     select(AudioQualityRecordRow)
-                    .where(AudioQualityRecordRow.artifact_id == clip.artifact_id)
+                    .where(AudioQualityRecordRow.clip_id == clip.id)
                     .order_by(
                         AudioQualityRecordRow.revision.desc(),
                         AudioQualityRecordRow.id.desc(),
@@ -10572,14 +11203,24 @@ class AuditionRepository:
             )
             binding_ok = (
                 clip is not None
+                and audition_session is not None
                 and clip.project_id == project_id
+                and audition_session.project_id == project_id
+                and audition_session.role_id == review.role_id
+                and audition_session.id == clip.session_id
+                and review.scope_key == review.role_id
                 and clip.session_id == review.session_id
                 and clip.role_id == review.role_id
                 and isinstance(evidence, dict)
+                and isinstance(fingerprint_material, dict)
+                and evidence.get("evidenceFingerprint") == review.evidence_fingerprint
+                and request_fingerprint(fingerprint_material) == review.evidence_fingerprint
                 and evidence.get("auditionSessionId") == clip.session_id
                 and evidence.get("auditionClipId") == clip.id
                 and evidence.get("auditionClipRevision") == clip.revision
                 and evidence.get("roleId") == clip.role_id
+                and review.required_decision_ids_json
+                == audition_session.phase3a_gate_decision_ids_json
                 and quality is not None
                 and quality.project_id == project_id
                 and evidence.get("audioQualityFingerprint") == quality.quality_fingerprint
@@ -10775,7 +11416,7 @@ class AuditionRepository:
                 review,
                 decision_override=decision,
             ),
-            "decision": self._review_decision_wire(review, decision),
+            "decision": self._review_decision_wire(session, review, decision),
             "voiceReadinessSnapshot": (
                 self._readiness_snapshot_wire(session, readiness_snapshot)
                 if readiness_snapshot is not None
@@ -10814,6 +11455,246 @@ class AuditionRepository:
                 expected_request_hash=request_hash,
             )
 
+    @staticmethod
+    def _stored_listening_attestation(
+        decision: AuditionReviewDecisionRow,
+    ) -> dict[str, Any] | None:
+        provenance = parse_json(decision.provenance_json, None)
+        details = provenance.get("details") if isinstance(provenance, dict) else None
+        value = details.get("listeningAttestation") if isinstance(details, dict) else None
+        if value is None:
+            return None
+        allowed_dispositions = {
+            "approved": frozenset({"acceptable"}),
+            "changes_requested": frozenset({"needs_changes", "undecided"}),
+            "rejected": frozenset({"unacceptable"}),
+        }.get(decision.decision, frozenset())
+        actor = value.get("actor") if isinstance(value, dict) else None
+        expected_keys = {
+            "attestationId",
+            "auditionClipId",
+            "auditionClipRevision",
+            "auditionClipFingerprint",
+            "audioArtifactId",
+            "audioArtifactSha256",
+            "listened",
+            "disposition",
+            "actor",
+            "recordedAt",
+            "rationale",
+            "attestationFingerprint",
+            "immutable",
+        }
+        fingerprint_material = (
+            {key: item for key, item in value.items() if key != "attestationFingerprint"}
+            if isinstance(value, dict)
+            else None
+        )
+        if (
+            not isinstance(value, dict)
+            or set(value) != expected_keys
+            or not isinstance(value.get("attestationId"), str)
+            or not isinstance(value.get("auditionClipId"), str)
+            or not isinstance(value.get("auditionClipRevision"), int)
+            or value.get("auditionClipRevision", 0) < 1
+            or not isinstance(value.get("auditionClipFingerprint"), str)
+            or not isinstance(value.get("audioArtifactId"), str)
+            or not isinstance(value.get("audioArtifactSha256"), str)
+            or value.get("listened") is not True
+            or value.get("disposition") not in allowed_dispositions
+            or not isinstance(actor, dict)
+            or actor
+            != {
+                "classification": "human",
+                "actorId": decision.actor_id,
+            }
+            or value.get("recordedAt") != decision.decided_at
+            or value.get("rationale") != decision.rationale
+            or value.get("immutable") is not True
+            or not isinstance(fingerprint_material, dict)
+            or value.get("attestationFingerprint") != request_fingerprint(fingerprint_material)
+        ):
+            raise ServiceError(
+                500,
+                "AUDITION_LISTENING_ATTESTATION_INVALID",
+                "Stored human-listening evidence failed integrity validation.",
+            )
+        return deepcopy(value)
+
+    def _build_listening_attestation(
+        self,
+        session: Session,
+        *,
+        review: AuditionReviewRecordRow,
+        request: DecideAuditionReviewRequest,
+        actor_id: str,
+        decision_value: str,
+        recorded_at: str,
+    ) -> dict[str, Any] | None:
+        request_attestation = request.listening_attestation
+        audition_session = (
+            session.get(AuditionSessionRow, review.session_id)
+            if review.session_id is not None
+            else None
+        )
+        real_per_role = (
+            review.gate_id == "per_role_audition_review"
+            and audition_session is not None
+            and audition_session.provider_id == KOKORO_PROVIDER_ID
+        )
+        if not real_per_role:
+            if request_attestation is not None:
+                raise ServiceError(
+                    422,
+                    "AUDITION_LISTENING_ATTESTATION_FORBIDDEN",
+                    "Listening evidence is accepted only for real-provider per-role reviews.",
+                )
+            return None
+        assert audition_session is not None
+        if request_attestation is None:
+            raise ServiceError(
+                409,
+                "AUDITION_LISTENING_ATTESTATION_REQUIRED",
+                "A current human-listening attestation is required for this real audition.",
+            )
+        if review.clip_id is None:
+            raise ServiceError(
+                409,
+                "AUDITION_LISTENING_ATTESTATION_CHANGED",
+                "The review no longer identifies an audition clip.",
+            )
+        clip = session.get(AuditionClipRow, review.clip_id)
+        artifact = session.get(AudioArtifactRow, clip.artifact_id) if clip is not None else None
+        allowed_dispositions = {
+            "approved": frozenset({"acceptable"}),
+            "changes_requested": frozenset({"needs_changes", "undecided"}),
+            "rejected": frozenset({"unacceptable"}),
+        }[decision_value]
+        if (
+            clip is None
+            or artifact is None
+            or clip.session_id != audition_session.id
+            or clip.project_id != review.project_id
+            or clip.role_id != review.role_id
+            or artifact.project_id != review.project_id
+            or artifact.availability != "present"
+            or request_attestation.audition_clip_id != clip.id
+            or request_attestation.audition_clip_revision != clip.revision
+            or request_attestation.audition_clip_fingerprint != clip.clip_fingerprint
+            or request_attestation.audio_artifact_id != artifact.id
+            or request_attestation.audio_artifact_sha256 != artifact.content_sha256
+            or request_attestation.disposition not in allowed_dispositions
+        ):
+            raise ServiceError(
+                409,
+                "AUDITION_LISTENING_ATTESTATION_CHANGED",
+                "The human-listening evidence is stale or does not match the decision.",
+            )
+        if self._governed_local_voice_activation_wire(session, audition_session) is None:
+            raise ServiceError(
+                409,
+                "AUDITION_ACTIVATION_EVIDENCE_INVALID",
+                "The governed real-voice activation is unavailable.",
+            )
+        value: dict[str, Any] = {
+            "attestationId": new_id(),
+            "auditionClipId": clip.id,
+            "auditionClipRevision": clip.revision,
+            "auditionClipFingerprint": clip.clip_fingerprint,
+            "audioArtifactId": artifact.id,
+            "audioArtifactSha256": artifact.content_sha256,
+            "listened": True,
+            "disposition": request_attestation.disposition,
+            "actor": {"classification": "human", "actorId": actor_id},
+            "recordedAt": recorded_at,
+            "rationale": request.rationale,
+            "immutable": True,
+        }
+        value["attestationFingerprint"] = request_fingerprint(value)
+        return value
+
+    def _current_listening_attestation_is_valid(
+        self,
+        session: Session,
+        *,
+        review: AuditionReviewRecordRow,
+        decision: AuditionReviewDecisionRow,
+        audition_session: AuditionSessionRow,
+        clip: AuditionClipRow,
+    ) -> bool:
+        try:
+            value = self._stored_listening_attestation(decision)
+            artifact = session.get(AudioArtifactRow, clip.artifact_id)
+            quality = session.scalar(
+                select(AudioQualityRecordRow)
+                .where(AudioQualityRecordRow.clip_id == clip.id)
+                .order_by(
+                    AudioQualityRecordRow.revision.desc(),
+                    AudioQualityRecordRow.id.desc(),
+                )
+                .limit(1)
+            )
+            review_evidence = parse_json(review.evidence_json, None)
+            review_fingerprint_material = (
+                {
+                    key: item
+                    for key, item in review_evidence.items()
+                    if key != "evidenceFingerprint"
+                }
+                if isinstance(review_evidence, dict)
+                else None
+            )
+            return (
+                value is not None
+                and review.gate_id == "per_role_audition_review"
+                and review.project_id == audition_session.project_id
+                and review.project_id == clip.project_id
+                and review.scope_key == review.role_id
+                and review.role_id == audition_session.role_id
+                and review.role_id == clip.role_id
+                and review.session_id == audition_session.id
+                and review.clip_id == clip.id
+                and review.required_decision_ids_json
+                == audition_session.phase3a_gate_decision_ids_json
+                and audition_session.provider_id == KOKORO_PROVIDER_ID
+                and clip.project_id == audition_session.project_id
+                and clip.session_id == audition_session.id
+                and decision.project_id == review.project_id
+                and decision.review_record_id == review.id
+                and decision.gate_id == review.gate_id
+                and decision.scope_key == review.scope_key
+                and decision.evidence_fingerprint == review.evidence_fingerprint
+                and decision.actor_classification == "human"
+                and isinstance(review_evidence, dict)
+                and isinstance(review_fingerprint_material, dict)
+                and review_evidence.get("evidenceFingerprint")
+                == review.evidence_fingerprint
+                and request_fingerprint(review_fingerprint_material)
+                == review.evidence_fingerprint
+                and review_evidence.get("auditionSessionId") == audition_session.id
+                and review_evidence.get("auditionClipId") == clip.id
+                and review_evidence.get("auditionClipRevision") == clip.revision
+                and review_evidence.get("roleId") == clip.role_id
+                and quality is not None
+                and quality.project_id == review.project_id
+                and quality.clip_id == clip.id
+                and quality.artifact_id == clip.artifact_id
+                and review_evidence.get("audioQualityFingerprint")
+                == quality.quality_fingerprint
+                and artifact is not None
+                and artifact.project_id == review.project_id
+                and artifact.availability == "present"
+                and value["auditionClipId"] == clip.id
+                and value["auditionClipRevision"] == clip.revision
+                and value["auditionClipFingerprint"] == clip.clip_fingerprint
+                and value["audioArtifactId"] == artifact.id
+                and value["audioArtifactSha256"] == artifact.content_sha256
+                and self._governed_local_voice_activation_wire(session, audition_session)
+                is not None
+            )
+        except ServiceError:
+            return False
+
     def decide_review(
         self,
         *,
@@ -10830,6 +11711,12 @@ class AuditionRepository:
             | {"gateId": gate_id, "projectId": project_id, "reviewId": review_id}
         )
         if gate_id == "voice_readiness_review":
+            if request.listening_attestation is not None:
+                raise ServiceError(
+                    422,
+                    "AUDITION_LISTENING_ATTESTATION_FORBIDDEN",
+                    "The aggregate readiness review does not accept clip-listening evidence.",
+                )
             with self._review_decision_lock:
                 return self._decide_voice_readiness(
                     project_id=project_id,
@@ -10900,19 +11787,42 @@ class AuditionRepository:
                         "character_audition_review": character_review,
                         "pronunciation_review": pronunciation_review,
                     }.get(gate_id)
-                if latest_review is None or latest_review.id != review.id:
+                review_session = (
+                    session.get(AuditionSessionRow, review.session_id)
+                    if review.session_id is not None
+                    else None
+                )
+                real_per_role_review = (
+                    gate_id == "per_role_audition_review"
+                    and review_session is not None
+                    and review_session.provider_id == KOKORO_PROVIDER_ID
+                )
+                historical_real_per_role_review = (
+                    real_per_role_review
+                    and latest_review is not None
+                    and latest_review.id != review.id
+                    and review.revision < latest_review.revision
+                )
+                if latest_review is None or (
+                    latest_review.id != review.id and not historical_real_per_role_review
+                ):
                     raise ServiceError(
                         409,
                         "AUDITION_REVIEW_CHANGED",
                         "The audition review is no longer current.",
                     )
                 if review.session_id is not None:
-                    review_session = session.get(AuditionSessionRow, review.session_id)
                     if review_session is None:
                         raise ServiceError(
                             409,
                             "AUDITION_REVIEW_CHANGED",
                             "The audition review session is unavailable.",
+                        )
+                    if real_per_role_review and review_session.state != "reviewable":
+                        raise ServiceError(
+                            409,
+                            "AUDITION_REVIEW_CHANGED",
+                            "The real audition review session is no longer reviewable.",
                         )
                     self._validate_session_evidence(
                         session,
@@ -10950,6 +11860,72 @@ class AuditionRepository:
                         "AUDITION_REVIEW_DECISION_CHANGED",
                         "The latest review decision changed; refresh before deciding.",
                     )
+                if real_per_role_review:
+                    prior_human_listening_rows = session.execute(
+                        select(AuditionReviewRecordRow, AuditionReviewDecisionRow)
+                        .join(
+                            AuditionReviewDecisionRow,
+                            AuditionReviewDecisionRow.review_record_id
+                            == AuditionReviewRecordRow.id,
+                        )
+                        .join(
+                            AuditionSessionRow,
+                            AuditionSessionRow.id == AuditionReviewRecordRow.session_id,
+                        )
+                        .where(
+                            AuditionReviewRecordRow.project_id == project_id,
+                            AuditionReviewRecordRow.gate_id == "per_role_audition_review",
+                            AuditionReviewRecordRow.scope_key == review.scope_key,
+                            AuditionReviewDecisionRow.project_id == project_id,
+                            AuditionReviewDecisionRow.gate_id
+                            == "per_role_audition_review",
+                            AuditionReviewDecisionRow.scope_key == review.scope_key,
+                            AuditionReviewDecisionRow.actor_classification == "human",
+                            AuditionSessionRow.provider_id == KOKORO_PROVIDER_ID,
+                        )
+                    ).all()
+                    latest_human_listening_review_revision: int | None = None
+                    for decided_review, decided_decision in prior_human_listening_rows:
+                        decided_session = (
+                            session.get(AuditionSessionRow, decided_review.session_id)
+                            if decided_review.session_id is not None
+                            else None
+                        )
+                        decided_clip = (
+                            session.get(AuditionClipRow, decided_review.clip_id)
+                            if decided_review.clip_id is not None
+                            else None
+                        )
+                        if (
+                            decided_session is None
+                            or decided_clip is None
+                            or not self._current_listening_attestation_is_valid(
+                                session,
+                                review=decided_review,
+                                decision=decided_decision,
+                                audition_session=decided_session,
+                                clip=decided_clip,
+                            )
+                        ):
+                            raise ServiceError(
+                                500,
+                                "AUDITION_LISTENING_ATTESTATION_INVALID",
+                                "Stored real-provider review evidence has no exact listening "
+                                "attestation.",
+                            )
+                        latest_human_listening_review_revision = max(
+                            latest_human_listening_review_revision or 0,
+                            decided_review.revision,
+                        )
+                    if (
+                        latest_human_listening_review_revision is not None
+                        and review.revision < latest_human_listening_review_revision
+                    ):
+                        raise ServiceError(
+                            409,
+                            "AUDITION_REVIEW_SEQUENCE_CHANGED",
+                            "A newer real audition review already has a human decision.",
+                        )
                 if request.decision == "approve" and not review.eligible:
                     raise ServiceError(
                         409,
@@ -10962,6 +11938,14 @@ class AuditionRepository:
                     "reject": "rejected",
                 }[request.decision]
                 now = utc_now()
+                listening_attestation = self._build_listening_attestation(
+                    session,
+                    review=review,
+                    request=request,
+                    actor_id=actor_id,
+                    decision_value=decision_value,
+                    recorded_at=now,
+                )
                 decision = AuditionReviewDecisionRow(
                     id=new_id(),
                     project_id=project_id,
@@ -10982,6 +11966,11 @@ class AuditionRepository:
                     provenance_json=_provenance(
                         "human",
                         input_fingerprint=request_hash,
+                        details=(
+                            {"listeningAttestation": listening_attestation}
+                            if listening_attestation is not None
+                            else None
+                        ),
                     ),
                     decided_at=now,
                     created_at=now,
@@ -11161,7 +12150,8 @@ class AuditionRepository:
                     .limit(page_size)
                 ).all()
                 items = [
-                    self._review_decision_wire(review, decision) for decision, review in review_rows
+                    self._review_decision_wire(session, review, decision)
+                    for decision, review in review_rows
                 ]
             next_offset = offset + len(items)
             next_cursor = (
@@ -11182,9 +12172,10 @@ class AuditionRepository:
         row: AuditionReviewRecordRow,
         *,
         decision_override: AuditionReviewDecisionRow | None = None,
+        decision_override_provided: bool = False,
     ) -> dict[str, Any]:
         decision = decision_override
-        if decision is None:
+        if decision is None and not decision_override_provided:
             decision = session.scalar(
                 select(AuditionReviewDecisionRow)
                 .where(
@@ -11234,18 +12225,47 @@ class AuditionRepository:
             "blockerCodes": parse_json(row.blockers_json, []),
             "warningCodes": parse_json(row.warnings_json, []),
             "latestDecision": (
-                self._review_decision_wire(decision_review, decision)
+                self._review_decision_wire(session, decision_review, decision)
                 if decision is not None and decision_review is not None
                 else None
             ),
             "updatedAt": decision.created_at if decision is not None else row.created_at,
         }
 
-    @staticmethod
     def _review_decision_wire(
+        self,
+        session: Session,
         review: AuditionReviewRecordRow,
         row: AuditionReviewDecisionRow,
     ) -> dict[str, Any]:
+        listening_attestation = self._stored_listening_attestation(row)
+        review_session = (
+            session.get(AuditionSessionRow, review.session_id)
+            if review.session_id is not None
+            else None
+        )
+        real_per_role = (
+            review.gate_id == "per_role_audition_review"
+            and review_session is not None
+            and review_session.provider_id == KOKORO_PROVIDER_ID
+        )
+        if listening_attestation is not None and not real_per_role:
+            raise ServiceError(
+                500,
+                "AUDITION_LISTENING_ATTESTATION_INVALID",
+                "Stored listening evidence is attached to an ineligible review.",
+            )
+        if (
+            real_per_role
+            and row.actor_classification == "human"
+            and row.decision in {"approved", "changes_requested", "rejected"}
+            and listening_attestation is None
+        ):
+            raise ServiceError(
+                500,
+                "AUDITION_LISTENING_ATTESTATION_INVALID",
+                "Stored real-provider review evidence lacks its listening attestation.",
+            )
         return {
             "contractVersion": "1.0.0",
             "decisionId": row.id,
@@ -11264,6 +12284,7 @@ class AuditionRepository:
             "decidedAt": row.decided_at,
             "immutable": True,
             "supersedesDecisionId": row.supersedes_decision_id,
+            "listeningAttestation": listening_attestation,
             "provenance": _public_provenance(row.provenance_json),
         }
 
@@ -12319,7 +13340,7 @@ class AuditionRepository:
         quality = (
             session.scalar(
                 select(AudioQualityRecordRow)
-                .where(AudioQualityRecordRow.artifact_id == artifact.id)
+                .where(AudioQualityRecordRow.clip_id == clip.id)
                 .order_by(
                     AudioQualityRecordRow.revision.desc(),
                     AudioQualityRecordRow.id.desc(),
@@ -12522,6 +13543,8 @@ class AuditionRepository:
             )
 
         rights = session.get(VoiceRightsRecordRow, audition_session.rights_record_id)
+        voice = session.get(VoiceProfileRow, audition_session.voice_profile_record_id)
+        catalog = session.get(VoiceCatalogRevisionRow, audition_session.catalog_revision_id)
         latest_rights = session.scalar(
             select(VoiceRightsRecordRow)
             .where(
@@ -12531,15 +13554,30 @@ class AuditionRepository:
             .order_by(VoiceRightsRecordRow.revision.desc(), VoiceRightsRecordRow.id.desc())
             .limit(1)
         )
+        governed_private_rights = (
+            voice is not None
+            and rights is not None
+            and catalog is not None
+            and self._governed_private_audition_rights_are_exact(
+                session,
+                voice=voice,
+                rights=rights,
+                catalog=catalog,
+            )
+        )
+        generally_eligible_rights = (
+            rights is not None
+            and rights.rights_state in {"verified", "restricted"}
+            and rights.commercial_use_status not in {"unknown", "prohibited"}
+            and rights.consent_status not in {"missing", "unknown", "prohibited"}
+            and rights.human_verification_status in {"verified", "not_required_fixture"}
+        )
         if (
             rights is None
             or latest_rights is None
             or latest_rights.id != rights.id
             or rights.revision != audition_session.rights_revision
-            or rights.rights_state not in {"verified", "restricted"}
-            or rights.commercial_use_status in {"unknown", "prohibited"}
-            or rights.consent_status in {"missing", "unknown", "prohibited"}
-            or rights.human_verification_status not in {"verified", "not_required_fixture"}
+            or not (generally_eligible_rights or governed_private_rights)
         ):
             previous = (
                 rights.rights_fingerprint
@@ -12678,6 +13716,36 @@ class AuditionRepository:
                 current,
                 "MODEL_VERIFICATION_CHANGED",
                 "The active model installation or verification changed.",
+            )
+        try:
+            activation = self._governed_local_voice_activation_wire(
+                session,
+                audition_session,
+            )
+        except ServiceError:
+            provenance = parse_json(audition_session.provenance_json, {})
+            details = provenance.get("details") if isinstance(provenance, dict) else None
+            stored = (
+                details.get("governedLocalVoiceActivation") if isinstance(details, dict) else None
+            )
+            # The frozen v5 provider source domain includes session-owned
+            # governed activation authority; activation has no separate row type.
+            return (
+                "provider",
+                audition_session.id,
+                request_fingerprint(stored),
+                _governed_voice_inventory()["inventoryFingerprint"],
+                "GOVERNED_LOCAL_VOICE_ACTIVATION_CHANGED",
+                "The restricted local-voice activation changed or failed verification.",
+            )
+        if audition_session.provider_id == KOKORO_PROVIDER_ID and activation is None:
+            return (
+                "provider",
+                audition_session.id,
+                request_fingerprint(None),
+                _governed_voice_inventory()["inventoryFingerprint"],
+                "GOVERNED_LOCAL_VOICE_ACTIVATION_CHANGED",
+                "The restricted local-voice activation is unavailable.",
             )
         return None
 
@@ -13011,6 +14079,28 @@ class AuditionRepository:
         review = current.review
         decision = current.decision
         review_evidence = parse_json(review.evidence_json, {}) if review is not None else {}
+        listening_evidence_current = False
+        if (
+            audition_session is not None
+            and clip is not None
+            and review is not None
+            and decision is not None
+        ):
+            if audition_session.provider_id == KOKORO_PROVIDER_ID:
+                listening_evidence_current = self._current_listening_attestation_is_valid(
+                    session,
+                    review=review,
+                    decision=decision,
+                    audition_session=audition_session,
+                    clip=clip,
+                )
+            else:
+                try:
+                    listening_evidence_current = (
+                        self._stored_listening_attestation(decision) is None
+                    )
+                except ServiceError:
+                    listening_evidence_current = False
         if (
             authority.phase3a_decision_ids is None
             or audition_session is None
@@ -13031,6 +14121,7 @@ class AuditionRepository:
             or decision.review_record_id != review.id
             or decision.decision != "approved"
             or decision.evidence_fingerprint != review.evidence_fingerprint
+            or not listening_evidence_current
             or self._session_dependency_drift(session, audition_session) is not None
         ):
             return None
@@ -13167,8 +14258,7 @@ class AuditionRepository:
             }
             profiles = list(
                 session.scalars(
-                    select(SpeechRuntimeProfileRow)
-                    .where(SpeechRuntimeProfileRow.active.is_(True))
+                    select(SpeechRuntimeProfileRow).where(SpeechRuntimeProfileRow.active.is_(True))
                 )
             )
             profiles.sort(
@@ -13222,6 +14312,7 @@ class AuditionRepository:
                     else None
                 ),
                 "providers": self._provider_descriptors_wire(session),
+                "voiceInventory": _governed_voice_inventory(),
                 "runtimeProfiles": [
                     self._runtime_profile_wire(profile, manifests) for profile in profiles
                 ],
@@ -13636,9 +14727,10 @@ class AuditionRepository:
         ) and authority.phase3a_decision_ids == tuple(
             cast(CastingGateDecisionRow, phase3a[gate_id]).id for gate_id in _PHASE3A_GATE_IDS
         )
-        provider_binding = self._active_provider_binding(session, KOKORO_PROVIDER_ID)
-        if provider_binding is None:
-            provider_binding = self._active_provider_binding(session, FIXTURE_PROVIDER_ID)
+        provider_bindings = {
+            provider_id: self._active_provider_binding(session, provider_id)
+            for provider_id in (FIXTURE_PROVIDER_ID, KOKORO_PROVIDER_ID)
+        }
         for role in rows:
             assignment = assignments_by_role.get(role.id)
             if assignment is None or assignment.voice_profile_record_id is None:
@@ -13667,6 +14759,59 @@ class AuditionRepository:
                     "AUDITION_ROLE_EVIDENCE_MISSING",
                     "The approved role voice or rights evidence is unavailable.",
                 )
+            source_provider = session.get(
+                VoiceProviderDescriptorRow,
+                voice.provider_descriptor_id,
+            )
+            governed_local_voice: dict[str, Any] | None = None
+            governed_identity_claimed = voice.profile_id == GOVERNED_KOKORO_VOICE_PROFILE_ID or (
+                source_provider is not None and source_provider.provider_id == KOKORO_PROVIDER_ID
+            )
+            if governed_identity_claimed:
+                role_catalog = session.get(VoiceCatalogRevisionRow, voice.catalog_revision_id)
+                if (
+                    source_provider is None
+                    or source_provider.provider_id != KOKORO_PROVIDER_ID
+                    or role_catalog is None
+                    or not self._governed_private_audition_rights_are_exact(
+                        session,
+                        voice=voice,
+                        rights=rights,
+                        catalog=role_catalog,
+                    )
+                ):
+                    raise ServiceError(
+                        500,
+                        "GOVERNED_VOICE_INVENTORY_INVALID",
+                        "The assigned governed local voice failed inventory validation.",
+                    )
+                governed_local_voice = self._governed_inventory_item()
+                if (
+                    not isinstance(governed_local_voice, dict)
+                    or governed_local_voice.get("voiceProfileId") != voice.profile_id
+                    or governed_local_voice.get("voiceProfileFingerprint")
+                    != voice.profile_fingerprint
+                    or governed_local_voice.get("inventoryFingerprint")
+                    != _GOVERNED_VOICE_INVENTORY_RECORD_FINGERPRINT
+                ):
+                    raise ServiceError(
+                        500,
+                        "GOVERNED_VOICE_INVENTORY_INVALID",
+                        "The assigned governed local voice failed inventory projection.",
+                    )
+            required_runtime_provider_id = (
+                FIXTURE_PROVIDER_ID
+                if source_provider is not None
+                and source_provider.provider_id == "synthetic-local-fixture"
+                else KOKORO_PROVIDER_ID
+                if governed_local_voice is not None
+                else None
+            )
+            provider_binding = (
+                provider_bindings.get(required_runtime_provider_id)
+                if required_runtime_provider_id is not None
+                else None
+            )
             current = self._current_role_audition_evidence(
                 session,
                 authority=authority,
@@ -13693,16 +14838,16 @@ class AuditionRepository:
             runtime_binding_status = (
                 "compatible"
                 if voice_runtime_binding is not None
-                else "incompatible"
-                if provider_binding is not None
                 else "unavailable"
+                if required_runtime_provider_id is not None and provider_binding is None
+                else "incompatible"
             )
             runtime_binding_reason_code = (
                 None
                 if voice_runtime_binding is not None
-                else "VOICE_RUNTIME_BINDING_INCOMPATIBLE"
-                if provider_binding is not None
                 else "VERIFIED_ACTIVE_MODEL_PACKAGE_REQUIRED"
+                if required_runtime_provider_id is not None and provider_binding is None
+                else "VOICE_RUNTIME_BINDING_INCOMPATIBLE"
             )
             evidence = (
                 self._session_evidence_for_role(
@@ -13740,6 +14885,7 @@ class AuditionRepository:
                     "assignmentRevision": assignment.revision,
                     "voiceProfileId": voice.profile_id,
                     "voiceDisplayLabel": voice.display_label,
+                    "governedLocalVoice": governed_local_voice,
                     "rightsState": rights.rights_state,
                     "latestSessionId": latest_session.id if latest_session is not None else None,
                     "latestClipId": latest_clip.id if latest_clip is not None else None,
@@ -13904,6 +15050,16 @@ class AuditionRepository:
                 409,
                 "AUDITION_RESTRICTED_MODEL_ACKNOWLEDGEMENT_MISSING",
                 "The restricted local model acknowledgement is unavailable.",
+            )
+        governed_activation = self._governed_local_voice_activation_wire(
+            session,
+            audition_session,
+        )
+        if governed_activation is None:
+            raise ServiceError(
+                409,
+                "AUDITION_ACTIVATION_EVIDENCE_INVALID",
+                "The governed real-voice activation is unavailable.",
             )
         return {
             "providerLanguage": "en-US",

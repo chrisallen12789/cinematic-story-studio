@@ -62,7 +62,7 @@ const RUNNER = Object.freeze({
   environment: "github-hosted",
   runId: "30478862847",
   runAttempt: "2",
-  workflow: "Phase 3B Windows CI",
+  workflow: "Phase 3B.1 Windows CI",
   job: "verify-and-build",
 });
 const PACKAGED_FIXTURE =
@@ -129,9 +129,13 @@ const PHASE_3_PACKAGED_FLOW = Object.freeze([
   "close_restarted_application",
   "verify_final_owned_process_exit",
 ]);
-const CASTING_PROFILE_ID = "governed-voice-casting-v1@1.0.0";
+const CASTING_PROFILE_ID = "governed-voice-casting-v1@1.0.1";
 const CASTING_PROFILE_FINGERPRINT =
-  "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6";
+  "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97";
+const GOVERNED_CATALOG_REVISION_ID =
+  "governed-local-voice-catalog-v2@2.0.0";
+const GOVERNED_CATALOG_FINGERPRINT =
+  "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc";
 const PROFILE_FINGERPRINT =
   "6ae73e83e89fbcfc0261ff339950407913cd990093fa13cdcc83ce3b1da810ec";
 const CORRECTION_REASON_FINGERPRINTS = Object.freeze({
@@ -385,9 +389,8 @@ function phase3PackagedResult(screenshotBytes) {
     casting: {
       profileId: CASTING_PROFILE_ID,
       profileFingerprint: CASTING_PROFILE_FINGERPRINT,
-      catalogRevisionId:
-        SYNTHETIC_VOICE_CATALOG.catalogRevision.catalogRevisionId,
-      catalogFingerprint: SYNTHETIC_VOICE_CATALOG.fingerprint,
+      catalogRevisionId: GOVERNED_CATALOG_REVISION_ID,
+      catalogFingerprint: GOVERNED_CATALOG_FINGERPRINT,
       castingRunId: "casting-run-1",
       approvedCastSnapshotId: "approved-cast-snapshot-1",
       approvedCastSnapshotRevision: 1,
@@ -523,19 +526,27 @@ function phase3VoiceCastingEvidence(packagedResult) {
       fingerprint: CASTING_PROFILE_FINGERPRINT,
       producerId: "voice-casting-orchestrator@1.0.0",
     },
-    providers: SYNTHETIC_VOICE_CATALOG.providers.map((provider) => ({
-      descriptorId: provider.providerId,
-      version: provider.providerVersion,
-    })),
-    models: SYNTHETIC_VOICE_CATALOG.models.map((model) => ({
-      descriptorId: model.modelId,
-      version: model.modelVersion,
-    })),
+    providers: [
+      ...SYNTHETIC_VOICE_CATALOG.providers.map((provider) => ({
+        descriptorId: provider.providerId,
+        version: provider.providerVersion,
+      })),
+      { descriptorId: "kokoro-local-onnx", version: "1.0.0" },
+    ],
+    models: [
+      ...SYNTHETIC_VOICE_CATALOG.models.map((model) => ({
+        descriptorId: model.modelId,
+        version: model.modelVersion,
+      })),
+      {
+        descriptorId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+        version: "1.0",
+      },
+    ],
     catalogRevision: {
-      catalogRevisionId:
-        SYNTHETIC_VOICE_CATALOG.catalogRevision.catalogRevisionId,
-      revision: SYNTHETIC_VOICE_CATALOG.catalogRevision.revision,
-      fingerprint: SYNTHETIC_VOICE_CATALOG.fingerprint,
+      catalogRevisionId: GOVERNED_CATALOG_REVISION_ID,
+      revision: 2,
+      fingerprint: GOVERNED_CATALOG_FINGERPRINT,
     },
     rightsPolicyId: "voice-rights-policy-v1",
     phase2Evidence: {
@@ -585,6 +596,103 @@ function phase3VoiceCastingEvidence(packagedResult) {
     restartPersistence: true,
     packagedE2e: packagedResult,
     assertions: packagedResult.assertions,
+  };
+}
+
+function phase3b1SyntheticMetadata() {
+  return {
+    catalog: {
+      catalogRevisionId: "governed-local-voice-catalog-v2@2.0.0",
+      catalogRevisionFingerprint:
+        "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc",
+      castingProfileId: "governed-voice-casting-v1@1.0.1",
+      castingProfileFingerprint:
+        "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97",
+      totalVoiceCount: 15,
+      deterministicFixtureVoiceCount: 14,
+      governedRealVoiceCount: 1,
+    },
+    governedRealVoice: {
+      neutralDisplayLabel: "Local Voice 001",
+      providerId: "kokoro-local-onnx",
+      providerVersion: "1.0.0",
+      modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+      modelVersion: "1.0",
+      modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart",
+      modelPackageVersion:
+        "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+      modelPackageFingerprint:
+        "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0",
+      voiceProfileId: "kokoro-local-voice-001",
+      voiceProfileVersion: "1.0.0",
+      voiceProfileFingerprint:
+        "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210",
+      providerVoiceId: "af_heart",
+      tensor: {
+        relativePath: "voices/af_heart.bin",
+        byteSize: 522_240,
+        sha256:
+          "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+        scalarFormat: "float32_le",
+        shape: [510, 256],
+        elementCount: 130_560,
+      },
+      rights: {
+        rightsRecordId: "kokoro-local-voice-001-rights-v1",
+        rightsRecordRevision: 1,
+        rightsRecordFingerprint:
+          "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038",
+        rightsState: "restricted",
+        consentStatus: "unknown",
+        productionExportEligible: false,
+      },
+    },
+    restriction: {
+      warningText:
+        "Private local audition only. This voice is not cleared by Cinematic Story Studio for production export, commercial distribution, marketplace resale, cloning, or real-person imitation.",
+      warningFingerprint:
+        "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645",
+      activationGovernance:
+        "restricted_audition_acknowledgement_required",
+      packagePresentInCi: false,
+      activationEligibleInCi: false,
+      failClosedReason: "model_package_absent",
+      humanListeningStatus: "pending",
+      humanListeningClaimed: false,
+      realSynthesisClaimed: false,
+    },
+    artifactBoundary: {
+      realModelBytesPresent: false,
+      realProviderAudioPresent: false,
+    },
+  };
+}
+
+function phase3b1AbsentPackageProof() {
+  return {
+    schemaVersion: 1,
+    classification: "verified_absent_package_fail_closed",
+    packagePresent: false,
+    providerId: "kokoro-local-onnx",
+    modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+    modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart",
+    modelPackageVersion:
+      "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+    manifestFingerprint:
+      "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0",
+    runtimeBindingStatus: "unavailable",
+    runtimeBindingReason: "VERIFIED_ACTIVE_MODEL_PACKAGE_REQUIRED",
+    sessionEvidencePresent: false,
+    generationRequestPresent: false,
+    counts: {
+      auditionSessions: 0,
+      providerDispatches: 0,
+      runtimeInstances: 0,
+      audioArtifacts: 0,
+      auditionClips: 0,
+    },
+    fallbackUsed: false,
+    productionExportEligible: false,
   };
 }
 
@@ -725,7 +833,7 @@ function phase3bPackagedResult(launches) {
     };
   });
   return {
-    schemaVersion: "7.0.0",
+    schemaVersion: "8.0.0",
     completedAt: COMPLETED_AT,
     status: "passed",
     evidenceClassification: "deterministic_fixture_lifecycle_only",
@@ -735,6 +843,7 @@ function phase3bPackagedResult(launches) {
       productionExportEligible: false,
       humanListeningClaimed: false,
     },
+    phase3b1SyntheticMetadata: phase3b1SyntheticMetadata(),
     runtime: {
       profileId: "deterministic-pcm-wav-fixture-windows-v1-0-1",
       profileFingerprint:
@@ -904,7 +1013,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   const secondBytes = await readFile(second.manifestPath, "utf8");
 
   assert.equal(secondBytes, firstBytes);
-  assert.equal(first.manifest.schemaVersion, "6.0.0");
+  assert.equal(first.manifest.schemaVersion, "7.0.0");
   assert.equal(first.manifest.artifactPathScope, "repository-root");
   assert.equal(first.manifest.workflowHeadSha, WORKFLOW_HEAD_SHA);
   assert.equal(first.manifest.testedCheckoutSha, WORKFLOW_HEAD_SHA);
@@ -943,7 +1052,22 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     phase2RestartDurabilityProven: true,
     phase2WholeBookAnalysisProven: true,
     phase3bLocalSpeechAuditionsProven: true,
+    phase3b1RealProviderFailsClosedWithoutPackageProven: true,
+    publicArtifactInventoryExcludesModelVoiceAndAudioData: true,
     packagedE2eEvidenceComplete: true,
+  });
+  assert.deepEqual(first.manifest.phase3b1AbsentPackage, {
+    testCase:
+      "apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py::test_real_provider_fails_closed_when_exact_package_is_absent",
+    databaseIsolation: "fresh_pytest_temporary_directory",
+    testResult: "passed",
+    evidenceFile: {
+      path:
+        "apps/desktop/release/0.1.0/phase-3b1-absent-package-evidence.json",
+      sizeBytes: fixture.phase3b1AbsentPackageEvidenceBytes.length,
+      sha256: sha256(fixture.phase3b1AbsentPackageEvidenceBytes),
+    },
+    proof: phase3b1AbsentPackageProof(),
   });
   assert.deepEqual(
     first.manifest.secureIngest.supportedFormats,
@@ -1104,7 +1228,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   );
   assert.equal(
     first.manifest.voiceCastingContract.catalogRevision.fingerprint,
-    SYNTHETIC_VOICE_CATALOG.fingerprint,
+    GOVERNED_CATALOG_FINGERPRINT,
   );
   assert.deepEqual(
     first.manifest.voiceCastingContract.counts,
@@ -1283,6 +1407,9 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   const resolveEvidenceIndex = workflow.indexOf(
     "- name: Resolve packaged E2E evidence paths",
   );
+  const absentPackageGateIndex = workflow.indexOf(
+    "id: phase3b1_absent_package",
+  );
   const packagedGateIndex = workflow.indexOf("id: packaged_e2e");
 
   assert.notEqual(developmentPreparationIndex, -1);
@@ -1295,7 +1422,8 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   assert.equal(buildIndex > developmentGateIndex, true);
   assert.equal(frozenRuntimeGateIndex > buildIndex, true);
   assert.equal(resolveEvidenceIndex > frozenRuntimeGateIndex, true);
-  assert.equal(packagedGateIndex > resolveEvidenceIndex, true);
+  assert.equal(absentPackageGateIndex > resolveEvidenceIndex, true);
+  assert.equal(packagedGateIndex > absentPackageGateIndex, true);
   for (const environmentName of [
     "CSS_PACKAGED_E2E_EXECUTABLE",
     "CSS_PACKAGED_E2E_EVIDENCE_PATH",
@@ -1312,6 +1440,14 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   }
   assert.match(
     workflow,
+    /CSS_PHASE3B1_ABSENT_PACKAGE_EVIDENCE_PATH/u,
+  );
+  assert.match(
+    workflow,
+    /CSS_PHASE3B1_ABSENT_PACKAGE_STEP_OUTCOME/u,
+  );
+  assert.match(
+    workflow,
     /apps\/desktop\/release\/\$version/u,
   );
   assert.match(
@@ -1319,8 +1455,8 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     /win-unpacked\/Cinematic Story Studio\.exe/u,
   );
   assert.match(workflow, /node scripts\/ci\/build-evidence\.mjs/u);
-  assert.match(workflow, /name: Phase 3B Windows CI/u);
-  assert.match(workflow, /group: phase-3b-windows-/u);
+  assert.match(workflow, /name: Phase 3B\.1 Windows CI/u);
+  assert.match(workflow, /group: phase-3b1-windows-/u);
   assert.match(
     workflow,
     /--validate-manifest \$env:CSS_BUILD_EVIDENCE_MANIFEST_PATH/u,
@@ -1363,12 +1499,13 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     "test_phase3b_text_normalization.py",
     "test_phase3b_schemas.py",
     "test_phase3b_scale.py",
+    "test_phase3b1_governed_real_voice_activation.py",
   ]) {
     assert.match(workflow, new RegExp(focusedTest, "u"));
   }
   assert.match(
     workflow,
-    /cinematic-story-studio-phase-3b-windows-unpacked-/u,
+    /cinematic-story-studio-phase-3b1-windows-unpacked-/u,
   );
   assert.match(
     workflow,
@@ -1381,6 +1518,10 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   assert.match(
     workflow,
     /phase-3b-packaged-e2e-result\.json/u,
+  );
+  assert.match(
+    workflow,
+    /phase-3b1-absent-package-evidence\.json/u,
   );
   assert.match(workflow, /sys\.version_info\[:3\] == \(3, 12, 10\)/u);
   assert.match(workflow, /piptools compile --allow-unsafe --generate-hashes --strip-extras/u);
@@ -1402,6 +1543,40 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     workflowStep("Run development governed local-speech auditions Electron E2E"),
     /playwright test tests\/e2e\/persistence\.spec\.ts/u,
   );
+  const phase3b1BackendStep = workflowStep(
+    "Run focused Phase 3B.1 governed real-voice backend suite",
+  );
+  assert.match(
+    phase3b1BackendStep,
+    /pytest -q apps\/local-service\/tests\/test_phase3b1_governed_real_voice_activation\.py/u,
+  );
+  const phase3b1AbsentPackageStep = workflowStep(
+    "Prove exact real provider fails closed without model package",
+  );
+  assert.match(
+    phase3b1AbsentPackageStep,
+    /test_phase3b1_governed_real_voice_activation\.py::test_real_provider_fails_closed_when_exact_package_is_absent/u,
+  );
+  assert.match(
+    phase3b1AbsentPackageStep,
+    /CSS_PHASE3B1_ABSENT_PACKAGE_EVIDENCE_PATH/u,
+  );
+  const phase3b1PublicStep = workflowStep(
+    "Run focused Phase 3B.1 desktop, schema, evidence, and repository-policy suites",
+  );
+  for (const focusedPublicTest of [
+    "src/main/audition-validation.test.ts",
+    "src/renderer/AuditionsWorkspace.test.tsx",
+    "src/verification/phase3b-packaged-e2e-evidence.test.ts",
+    "schemas/tests/phase3b-schema-structure.test.mjs",
+    "tests/tooling/build-evidence.test.mjs",
+    "tests/tooling/repository-policy.test.mjs",
+  ]) {
+    assert.match(
+      phase3b1PublicStep,
+      new RegExp(focusedPublicTest.replaceAll(".", "\\."), "u"),
+    );
+  }
   const frozenRuntimeStep = workflowStep(
     "Verify exact staged frozen service runtime",
   );
@@ -1432,7 +1607,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   );
   assert.doesNotMatch(
     printEvidenceStep,
-    /CSS_(?:PACKAGED_E2E_RESULT|PHASE3_PACKAGED_E2E_RESULT|PHASE3_VOICE_CASTING_EVIDENCE|PHASE3B_PACKAGED_E2E_RESULT)_PATH/u,
+    /CSS_(?:PACKAGED_E2E_RESULT|PHASE3_PACKAGED_E2E_RESULT|PHASE3_VOICE_CASTING_EVIDENCE|PHASE3B_PACKAGED_E2E_RESULT|PHASE3B1_ABSENT_PACKAGE_EVIDENCE)_PATH/u,
     "raw packaged results must not be echoed into CI logs",
   );
   for (const [gateName, gateId, enforcementName] of [
@@ -1447,12 +1622,17 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
       "Enforce packaged E2E result",
     ],
     [
+      "Prove exact real provider fails closed without model package",
+      "phase3b1_absent_package",
+      "Enforce absent-package fail-closed result",
+    ],
+    [
       "Generate deterministic build-evidence manifest",
       "build_evidence",
       "Enforce build-evidence generation",
     ],
     [
-      "Validate schema-v7 Phase 3B result and schema-v6 build manifest",
+      "Validate schema-v8 Phase 3B result and schema-v7 build manifest",
       "manifest_validation",
       "Enforce build-evidence manifest validation",
     ],
@@ -1481,6 +1661,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   );
   for (const prerequisiteGate of [
     "development_e2e",
+    "phase3b1_absent_package",
     "packaged_e2e",
     "build_evidence",
     "manifest_validation",
@@ -1512,6 +1693,10 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
     uploadStep,
     /apps\/desktop\/build-resources\/service\/cinematic-story-service\.exe/u,
   );
+  assert.match(
+    uploadStep,
+    /phase-3b1-absent-package-evidence\.json/u,
+  );
   assert.doesNotMatch(
     uploadStep,
     /release\/\*\/|build-resources\/service\/\*\*/u,
@@ -1534,6 +1719,7 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   );
   for (const failedGate of [
     "development_e2e",
+    "phase3b1_absent_package",
     "packaged_e2e",
     "build_evidence",
     "manifest_validation",
@@ -1552,7 +1738,11 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
   }
   assert.match(
     diagnosticsStep,
-    /phase-3b-ci-diagnostics-/u,
+    /phase-3b1-absent-package-evidence\.json/u,
+  );
+  assert.match(
+    diagnosticsStep,
+    /phase-3b1-ci-diagnostics-/u,
   );
   assert.match(
     diagnosticsStep,
@@ -1631,7 +1821,93 @@ test("writes stable relative-path evidence for a successful packaged gate", asyn
         os: "Linux",
       },
     }),
-    /runner does not match the Phase 3B Windows CI job/u,
+    /runner does not match the Phase 3B\.1 Windows CI job/u,
+  );
+});
+
+test("rejects model, voice, and audio data from the public artifact inventory", async (t) => {
+  const fixture = await createFixture(t);
+  const unpackedRoot = path.dirname(fixture.executablePath);
+  await writeFile(
+    path.join(unpackedRoot, "snapshot_blob.bin"),
+    Buffer.from("electron-runtime-snapshot", "utf8"),
+  );
+  await generateBuildEvidence(generationOptions(fixture, "success"));
+
+  for (const extension of [
+    ".onnx",
+    ".safetensors",
+    ".pt",
+    ".pth",
+    ".npy",
+    ".npz",
+    ".bin",
+    ".wav",
+  ]) {
+    const prohibitedPath = path.join(
+      unpackedRoot,
+      `private-real-provider-data${extension}`,
+    );
+    await writeFile(prohibitedPath, Buffer.from("private-data", "utf8"));
+    await assert.rejects(
+      generateBuildEvidence(generationOptions(fixture, "success")),
+      /public artifact inventory contained prohibited model, voice, or audio data/u,
+    );
+    await rm(prohibitedPath);
+  }
+});
+
+test("requires and hash-binds the exact fresh-database absent-package proof", async (t) => {
+  const fixture = await createFixture(t);
+
+  await rm(fixture.phase3b1AbsentPackageEvidencePath);
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /Phase 3B\.1 absent-package evidence is missing or unreadable/u,
+  );
+
+  await writeFile(
+    fixture.phase3b1AbsentPackageEvidencePath,
+    fixture.phase3b1AbsentPackageEvidenceBytes,
+  );
+  const failedTestOptions = generationOptions(fixture, "success");
+  failedTestOptions.packagedE2e.phase3b1AbsentPackageStepOutcome =
+    "failure";
+  await assert.rejects(
+    generateBuildEvidence(failedTestOptions),
+    /Phase 3B\.1 absent-package test did not pass/u,
+  );
+
+  const tamperedProof = phase3b1AbsentPackageProof();
+  tamperedProof.counts.providerDispatches = 1;
+  await writeFile(
+    fixture.phase3b1AbsentPackageEvidencePath,
+    `${JSON.stringify(tamperedProof, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    generateBuildEvidence(generationOptions(fixture, "success")),
+    /Phase 3B\.1 absent-package evidence is invalid or stale/u,
+  );
+
+  await writeFile(
+    fixture.phase3b1AbsentPackageEvidencePath,
+    fixture.phase3b1AbsentPackageEvidenceBytes,
+  );
+  const generated = await generateBuildEvidence(
+    generationOptions(fixture, "success"),
+  );
+  await writeFile(
+    fixture.phase3b1AbsentPackageEvidencePath,
+    `${JSON.stringify(tamperedProof, null, 2)}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    validateBuildEvidenceManifest({
+      repositoryRoot: fixture.root,
+      manifestPath: generated.manifestPath,
+    }),
+    /Phase 3B\.1 absent-package evidence is invalid or stale/u,
   );
 });
 
@@ -1647,7 +1923,7 @@ test("validates a complete Phase 3B manifest and rejects tampering", async (t) =
   });
 
   assert.equal(validated.manifestPath, generated.manifestPath);
-  assert.equal(validated.manifest.schemaVersion, "6.0.0");
+  assert.equal(validated.manifest.schemaVersion, "7.0.0");
   assert.match(validated.manifestSha256, /^[a-f0-9]{64}$/u);
 
   const missingRepeatedAuditionTamper = structuredClone(generated.manifest);
@@ -2060,6 +2336,17 @@ test("rejects noncanonical Phase 3B runtime provenance", async (t) => {
     ["arbitrary fixture package fingerprint", (value) => {
       value.model.modelPackageFingerprint = "f".repeat(64);
     }],
+    ["stale governed catalog fingerprint", (value) => {
+      value.phase3b1SyntheticMetadata.catalog.catalogRevisionFingerprint =
+        "f".repeat(64);
+    }],
+    ["real synthesis overclaim", (value) => {
+      value.phase3b1SyntheticMetadata.restriction.realSynthesisClaimed = true;
+    }],
+    ["real model bytes overclaim", (value) => {
+      value.phase3b1SyntheticMetadata.artifactBoundary.realModelBytesPresent =
+        true;
+    }],
   ];
   for (const [label, mutate] of mutations) {
     const tampered = structuredClone(original);
@@ -2275,10 +2562,10 @@ test("build evidence matches Python voice and rights fingerprints", async () => 
   ];
   const python = [
     "import json",
-    "from cinematic_story_service.casting import load_synthetic_catalog",
+    "from cinematic_story_service.casting import load_governed_voice_catalog",
     "from cinematic_story_service.util import request_fingerprint",
     `ids = ${JSON.stringify(voiceProfileIds)}`,
-    "catalog = load_synthetic_catalog()",
+    "catalog = load_governed_voice_catalog()",
     "voices = {value['voiceProfileId']: value for value in catalog.voices}",
     "rights = {value['voiceProfileId']: value for value in catalog.rights}",
     "result = {value: {'voiceEvidenceFingerprint': request_fingerprint(voices[value]), 'rightsEvidenceFingerprint': request_fingerprint(rights[value])} for value in ids}",
@@ -3193,6 +3480,10 @@ async function createFixture(t) {
     releaseRoot,
     "phase-3b-packaged-e2e-result.json",
   );
+  const phase3b1AbsentPackageEvidencePath = path.join(
+    releaseRoot,
+    "phase-3b1-absent-package-evidence.json",
+  );
   const manifestPath = path.join(releaseRoot, "build-evidence.json");
   const requirementsDirectory = path.join(
     root,
@@ -3221,6 +3512,10 @@ async function createFixture(t) {
     launchEvidence(2, 4200, 4201),
   ];
   const phase3bResult = phase3bPackagedResult(launches);
+  const phase3b1AbsentPackageEvidenceBytes = Buffer.from(
+    `${JSON.stringify(phase3b1AbsentPackageProof(), null, 2)}\n`,
+    "utf8",
+  );
 
   await Promise.all([
     mkdir(path.dirname(executablePath), { recursive: true }),
@@ -3333,6 +3628,10 @@ async function createFixture(t) {
       "utf8",
     ),
     writeFile(
+      phase3b1AbsentPackageEvidencePath,
+      phase3b1AbsentPackageEvidenceBytes,
+    ),
+    writeFile(
       path.join(
         syntheticVoiceCatalogDirectory,
         "synthetic_voice_catalog.v1.json",
@@ -3353,6 +3652,8 @@ async function createFixture(t) {
     phase3ResultPath,
     phase3VoiceCastingEvidencePath,
     phase3bResultPath,
+    phase3b1AbsentPackageEvidencePath,
+    phase3b1AbsentPackageEvidenceBytes,
     manifestPath,
   };
 }
@@ -3373,6 +3674,9 @@ function generationOptions(fixture, stepOutcome) {
       phase3VoiceCastingEvidencePath:
         fixture.phase3VoiceCastingEvidencePath,
       phase3bResultPath: fixture.phase3bResultPath,
+      phase3b1AbsentPackageEvidencePath:
+        fixture.phase3b1AbsentPackageEvidencePath,
+      phase3b1AbsentPackageStepOutcome: "success",
       stepOutcome,
     },
     manifestPath: fixture.manifestPath,
@@ -3396,12 +3700,16 @@ function syntheticCatalogAssignmentEvidence(voiceProfileId) {
   );
   assert.notEqual(voice, undefined);
   assert.notEqual(rights, undefined);
+  const governedVoice = {
+    ...structuredClone(voice),
+    catalogRevisionId: GOVERNED_CATALOG_REVISION_ID,
+  };
   return {
     voiceProfileId,
     voiceProfileVersion: voice.version,
     voiceEvidenceFingerprint: sha256(
       Buffer.from(
-        JSON.stringify(canonicalizeTestJson(voice)),
+        JSON.stringify(canonicalizeTestJson(governedVoice)),
         "utf8",
       ),
     ),
@@ -3413,8 +3721,7 @@ function syntheticCatalogAssignmentEvidence(voiceProfileId) {
         "utf8",
       ),
     ),
-    catalogRevisionId:
-      SYNTHETIC_VOICE_CATALOG.catalogRevision.catalogRevisionId,
+    catalogRevisionId: GOVERNED_CATALOG_REVISION_ID,
     rightsState: rights.state,
   };
 }

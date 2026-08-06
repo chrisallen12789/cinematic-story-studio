@@ -387,6 +387,66 @@ def test_provider_neutral_unbounded_g2p_result_fails_closed(
     assert error.value.code == "SPEECH_PRONUNCIATION_REVIEW_REQUIRED"
 
 
+def test_kokoro_token_boundary_accepts_509_and_rejects_510_without_inference_or_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import numpy as np
+
+    class BoundaryG2PModule:
+        @staticmethod
+        def phonemize(text: str, **_kwargs: Any) -> SimpleNamespace:
+            token_count = int(text.removeprefix("tokens-"))
+            return SimpleNamespace(
+                token_ids=list(range(1, token_count + 1)),
+                phonemes="a" * token_count,
+                warnings=[],
+            )
+
+    class RecordingSession:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def run(self, _outputs: None, inputs: dict[str, Any]) -> list[Any]:
+            self.calls.append(inputs)
+            return [np.asarray([0.0, 0.25, -0.25], dtype=np.float32)]
+
+    backend = _OnnxKokoroBackend.__new__(_OnnxKokoroBackend)
+    backend._np = np
+    backend._g2p_module = BoundaryG2PModule()
+    backend._g2p = object()
+    backend._voices = np.zeros((510, 256), dtype=np.float32)
+    backend._session = RecordingSession()
+    backend.runtime_version = "test-runtime"
+    backend.g2p_version = "test-g2p"
+
+    encoded_artifacts: list[tuple[int, ...]] = []
+
+    def recording_encoder(
+        samples: tuple[int, ...],
+        *,
+        sample_rate_hz: int,
+    ) -> bytes:
+        encoded_artifacts.append(samples)
+        return encode_pcm16_wav(samples, sample_rate_hz=sample_rate_hz)
+
+    monkeypatch.setattr(
+        "cinematic_story_service.speech_providers.encode_pcm16_wav",
+        recording_encoder,
+    )
+
+    accepted = backend.synthesize("tokens-509", 1.0, ())
+    assert len(accepted.token_ids) == 509
+    assert len(backend._session.calls) == 1
+    assert backend._session.calls[0]["input_ids"].shape == (1, 511)
+    assert len(encoded_artifacts) == 1
+
+    with pytest.raises(SpeechProviderError) as error:
+        backend.synthesize("tokens-510", 1.0, ())
+    assert error.value.code == "SPEECH_TEXT_TOKEN_LIMIT"
+    assert len(backend._session.calls) == 1
+    assert len(encoded_artifacts) == 1
+
+
 def test_provider_protocol_and_fixture_are_deterministic_pcm_wav() -> None:
     provider = DeterministicPcmWavSpeechProvider()
     request = _fixture_request()

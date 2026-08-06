@@ -173,12 +173,41 @@ transmission, or synthesis control in the Phase 3A workspace.
    decisions, runtime history, and readiness projection. Phase 3B does not
    render or export a book.
 
-The installed/activated Kokoro package is not currently a usable governed
-product voice. The retained real-provider evidence is a private component-only
-command using provider-internal voice `af_heart`; no Phase 3A voice profile,
-snapshot-selected cast assignment, or rights record binds that voice. Product
-use remains unavailable until an explicit governed binding exists and the
-separate legal, consent, likeness, provenance, and rights review is complete.
+Phase 3B.1 adds one narrowly governed real-provider path for the exact
+allow-listed Kokoro package. The user first reviews the neutral Real Local
+Voices inventory, package/runtime state, tensor hash, restricted rights and
+unknown consent state, then acknowledges the exact private-audition warning.
+Selecting the real voice still occurs through the Phase 3A immutable correction
+workflow and requires the applicable casting gates to be explicitly reapproved;
+the Auditions workspace cannot write around that history. A real session binds
+the current assignment and approved cast snapshot to the exact catalog,
+provider, model, package, tensor, rights record, acknowledgement, runtime, and
+pronunciation evidence. The comparison workspace never autoplays and requires
+an exact-clip listening attestation for a real per-role decision.
+
+For a retained private comparison set, each Real-provider clip exposes only
+the immutable per-role review bound to that clip. After listening, the user may
+record acceptable, needs changes, unacceptable, or undecided in chronological
+review order within the role. Restart restores the exact actor-derived
+decision, persistence time, rationale, clip/artifact hashes, and attestation.
+Historical acceptable outcomes remain comparison evidence only; Voice
+Readiness continues to depend on an acceptable decision for each exact current
+review.
+
+The generated replay launcher verifies its private package/state contract and
+the exact desktop and service executable hashes before using the bounded
+`%LOCALAPPDATA%\CSS-P3B1\<opaque-id>` state. The replay entry point refuses a
+live relevant process baseline without changing it. A separate direct launch
+of the exact same-state executable exercises Electron's single-instance
+handoff and exits without creating a second service. Stale on-disk lock markers
+are not deleted. Verification records and closes only the exact processes
+created by the replay and fails safely when ownership is ambiguous.
+
+This path authorizes only bounded private local audition. It does not establish
+performer consent, likeness clearance, commercial clearance, production-export
+eligibility, naturalness, artistic quality, or full-book readiness. The Voice
+Readiness gate remains blocked until the required current human listening
+decisions exist. See [Phase 3B.1 governed real local voice activation](phase-3b1-governed-real-voice-activation.md).
 
 ## 5. Observe, cancel, retry, and resume work
 

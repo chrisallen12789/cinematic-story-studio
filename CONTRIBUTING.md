@@ -29,11 +29,11 @@ The install hook creates `apps/local-service/.venv`, installs the exact,
 hash-verified transitive set in `apps/local-service/requirements.lock`, installs
 the local package without resolving a second dependency graph, and runs
 `pip check`. Direct pins in `requirements.in` stay aligned with
-`pyproject.toml`; regenerate the lock from Python 3.12 after an intentional
-dependency review:
+`pyproject.toml`; regenerate the lock from the CI-pinned Python 3.12.10 after
+an intentional dependency review:
 
 ```powershell
-pnpm service:python -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 'Lock generation requires Python 3.12.x')"
+pnpm service:python -c "import sys; raise SystemExit(0 if sys.version_info[:3] == (3, 12, 10) else 'Lock generation requires Python 3.12.10')"
 pnpm service:python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file apps/local-service/requirements.lock apps/local-service/requirements.in
 ```
 

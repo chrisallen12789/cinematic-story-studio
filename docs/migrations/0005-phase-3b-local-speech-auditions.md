@@ -133,8 +133,9 @@ decision evidence.
 `audition_evidence_invalidations` is an append-only targeted dependency ledger.
 It identifies the exact clip, session, role, changed source record, prior and
 current fingerprints, reason, and affected reviews. Assignment, rights, model,
-provider, runtime, applicable pronunciation, cast-snapshot, and audio-integrity
-drift can therefore invalidate dependent evidence without deleting unrelated
+provider (including session-owned governed activation authority), runtime,
+applicable pronunciation, cast-snapshot, and audio-integrity drift can therefore
+invalidate dependent evidence without deleting unrelated
 clips or historical decisions. A detected mismatch between a review and its
 persisted clip binding is recorded as `review_clip_binding`; that typed source is
 part of the frozen v5 check constraint and cannot be confused with byte-level

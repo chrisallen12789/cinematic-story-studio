@@ -89,6 +89,100 @@ describe("Phase 0 desktop workspace", () => {
     resolveRestore?.(ok(null));
   });
 
+  it("blocks project creation until initial workspace hydration settles", async () => {
+    let resolveRestore:
+      | ((result: DesktopResult<ProjectDetail | null>) => void)
+      | undefined;
+    const restorePromise = new Promise<DesktopResult<ProjectDetail | null>>(
+      (resolve) => {
+        resolveRestore = resolve;
+      }
+    );
+    const api = createApi();
+    vi.mocked(api.projects.restoreRecent).mockReturnValue(restorePromise);
+    render(<App api={api} />);
+
+    expect(await screen.findByText("Opening project...")).toBeVisible();
+    expect(screen.getByLabelText("New production")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create project" })).toBeDisabled();
+    expect(api.projects.create).not.toHaveBeenCalled();
+
+    resolveRestore?.(ok(null));
+    await waitFor(() => {
+      expect(screen.getByLabelText("New production")).toBeEnabled();
+    });
+  });
+
+  it("settles the post-create project list before opening the new project", async () => {
+    const createdProject: ProjectDetail = {
+      ...createProjectDetail(),
+      project: {
+        ...createProjectDetail().project,
+        projectId: "project-created",
+        name: "Deferred Project"
+      }
+    };
+    let resolvePostCreateList:
+      | ((result: DesktopResult<ProjectPageResponse>) => void)
+      | undefined;
+    const postCreateList = new Promise<DesktopResult<ProjectPageResponse>>(
+      (resolve) => {
+        resolvePostCreateList = resolve;
+      }
+    );
+    const api = createApi();
+    const user = userEvent.setup();
+    render(<App api={api} />);
+
+    expect(await screen.findAllByText("Backend ready")).not.toHaveLength(0);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Shape the page into a cinematic listening experience."
+      })
+    ).toBeVisible();
+    vi.mocked(api.projects.create).mockResolvedValue(
+      ok({
+        correlationId: "correlation-create-project",
+        project: createdProject.project
+      })
+    );
+    vi.mocked(api.projects.list).mockReturnValueOnce(postCreateList);
+    vi.mocked(api.projects.open).mockResolvedValue(ok(createdProject));
+
+    await user.type(screen.getByLabelText("New production"), "Deferred Project");
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+
+    await waitFor(() => expect(api.projects.list).toHaveBeenCalledTimes(2));
+    expect(api.projects.open).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("heading", { name: "Deferred Project" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Import document" })
+    ).not.toBeInTheDocument();
+
+    resolvePostCreateList?.(
+      ok({
+        correlationId: "correlation-post-create-list",
+        items: [
+          {
+            projectId: createdProject.project.projectId,
+            name: createdProject.project.name,
+            status: createdProject.project.status,
+            revision: createdProject.project.revision,
+            createdAt: createdProject.project.createdAt,
+            updatedAt: createdProject.project.updatedAt
+          }
+        ]
+      })
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Deferred Project" })
+    ).toBeVisible();
+    expect(api.projects.open).toHaveBeenCalledWith("project-created");
+  });
+
   it("loads a project and supports keyboard-operable chapter and scene navigation", async () => {
     const detail = createProjectDetail();
     const api = createApi({ project: detail });
@@ -830,7 +924,7 @@ describe("Phase 0 desktop workspace", () => {
     expect(
       screen.getByRole("heading", { name: "Phase 2 prerequisite status" })
     ).toBeVisible();
-    expect(screen.getByText("governed-voice-casting-v1@1.0.0")).toBeVisible();
+    expect(screen.getByText("governed-voice-casting-v1@1.0.1")).toBeVisible();
     expect(api.casting.getCatalog).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "project-1", limit: 50 })
     );

@@ -216,6 +216,42 @@ describe("BackendApiClient authenticated audition audio", () => {
     });
 
     await expect(
+      client.createAuditionSession({
+        projectId: "project-1",
+        roleId: "role-1",
+        evidence: auditionEvidence(),
+        idempotencyKey: "fixture-session-1"
+      })
+    ).rejects.toThrow();
+    expect(requestJsonBody(vi.mocked(fetch).mock.calls.at(-1))).toEqual({
+      roleId: "role-1",
+      evidence: auditionEvidence(),
+      idempotencyKey: "fixture-session-1"
+    });
+
+    const restrictedLocalAuditionActivation = {
+      expectedInventoryFingerprint: "f".repeat(64),
+      expectedWarningFingerprint:
+        "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645",
+      reason: "Create this exact bounded private local audition."
+    } as const;
+    await expect(
+      client.createAuditionSession({
+        projectId: "project-1",
+        roleId: "role-1",
+        evidence: auditionEvidence(),
+        restrictedLocalAuditionActivation,
+        idempotencyKey: "real-session-1"
+      })
+    ).rejects.toThrow();
+    expect(requestJsonBody(vi.mocked(fetch).mock.calls.at(-1))).toEqual({
+      roleId: "role-1",
+      evidence: auditionEvidence(),
+      restrictedLocalAuditionActivation,
+      idempotencyKey: "real-session-1"
+    });
+
+    await expect(
       client.decideAuditionReview({
         projectId: "project-1",
         gateId: "per_role_audition_review",
@@ -236,6 +272,40 @@ describe("BackendApiClient authenticated audition audio", () => {
       rationale: "Approve the deterministic fixture audition lifecycle.",
       supersedesDecisionId: null,
       idempotencyKey: "review-decision-1"
+    });
+
+    const listeningAttestation = {
+      auditionClipId: "clip-1",
+      auditionClipRevision: 2,
+      auditionClipFingerprint: "c".repeat(64),
+      audioArtifactId: "artifact-1",
+      audioArtifactSha256: "d".repeat(64),
+      listened: true,
+      disposition: "undecided"
+    } as const;
+    await expect(
+      client.decideAuditionReview({
+        projectId: "project-1",
+        gateId: "per_role_audition_review",
+        reviewId: "review-1",
+        roleId: "role-1",
+        expectedReviewRevision: 1,
+        expectedEvidenceFingerprint: "b".repeat(64),
+        decision: "request_changes",
+        rationale: "I listened to this exact private real-local audition.",
+        supersedesDecisionId: null,
+        listeningAttestation,
+        idempotencyKey: "real-review-decision-1"
+      })
+    ).rejects.toThrow();
+    expect(requestJsonBody(vi.mocked(fetch).mock.calls.at(-1))).toEqual({
+      expectedReviewRevision: 1,
+      expectedEvidenceFingerprint: "b".repeat(64),
+      decision: "request_changes",
+      rationale: "I listened to this exact private real-local audition.",
+      supersedesDecisionId: null,
+      listeningAttestation,
+      idempotencyKey: "real-review-decision-1"
     });
 
     await expect(
@@ -466,6 +536,50 @@ function input(sha256: string) {
     expectedArtifactSha256: sha256,
     mediaType: "audio/wav" as const,
     byteSize: pcmWave().byteLength
+  };
+}
+
+function auditionEvidence() {
+  return {
+    projectId: "project-1",
+    sourceDocumentId: "source-1",
+    sourceRevision: 1,
+    extractionId: "extraction-1",
+    extractionRevision: 1,
+    extractedTextSha256: "a".repeat(64),
+    phase2RunId: "phase2-run-1",
+    phase2SnapshotId: "phase2-snapshot-1",
+    phase2SnapshotRevision: 1,
+    phase2SnapshotFingerprint: "a".repeat(64),
+    phase2CorrectionSetFingerprint: "a".repeat(64),
+    castingRunId: "casting-run-1",
+    approvedCastSnapshotId: "cast-snapshot-1",
+    approvedCastSnapshotRevision: 1,
+    approvedCastSnapshotFingerprint: "a".repeat(64),
+    castAssignmentId: "assignment-1",
+    castAssignmentRevision: 1,
+    voiceProfileId: "voice-1",
+    voiceProfileVersion: "1.0.0",
+    voiceRuntimeBindingId: "binding-1",
+    voiceRuntimeBindingFingerprint: "a".repeat(64),
+    providerVoiceId: "provider-voice-1",
+    providerId: "provider-1",
+    providerVersion: "1.0.0",
+    modelId: "model-1",
+    modelVersion: "1.0.0",
+    catalogRevisionId: "catalog-1",
+    catalogFingerprint: "a".repeat(64),
+    rightsRecordId: "rights-1",
+    rightsRecordRevision: 1,
+    rightsRecordFingerprint: "a".repeat(64),
+    pronunciationDictionaryId: "dictionary-1",
+    pronunciationDictionaryRevision: 1,
+    pronunciationDictionaryFingerprint: "a".repeat(64),
+    runtimeProfileId: "runtime-1",
+    runtimeProfileFingerprint: "a".repeat(64),
+    modelPackageId: "package-1",
+    modelPackageFingerprint: "a".repeat(64),
+    producerVersion: "1.0.0"
   };
 }
 

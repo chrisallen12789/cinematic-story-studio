@@ -13,6 +13,7 @@ import {
 import { BackendApiClient } from "./api-client.js";
 import { registerDesktopIpc } from "./ipc.js";
 import { PreferenceStore } from "./preferences.js";
+import { rendererContentSecurityPolicy } from "./security-policy.js";
 import {
   ServiceManager,
   type ServiceStopResult
@@ -217,27 +218,7 @@ function configureSessionSecurity(): void {
     reply(false);
   });
   rendererSession.webRequest.onHeadersReceived((details, callback) => {
-    const connectSource = app.isPackaged
-      ? "'none'"
-      : "'self' ws://127.0.0.1:5173";
-    const styleSource = app.isPackaged
-      ? "'self'"
-      : "'self' 'unsafe-inline'";
-    const policy = [
-      "default-src 'self'",
-      "script-src 'self'",
-      `style-src ${styleSource}`,
-      "img-src 'self' data:",
-      "font-src 'self'",
-      `connect-src ${connectSource}`,
-      "media-src 'none'",
-      "object-src 'none'",
-      "frame-src 'none'",
-      "worker-src 'self'",
-      "base-uri 'none'",
-      "form-action 'none'",
-      "frame-ancestors 'none'"
-    ].join("; ");
+    const policy = rendererContentSecurityPolicy(app.isPackaged);
     callback({
       responseHeaders: {
         ...details.responseHeaders,

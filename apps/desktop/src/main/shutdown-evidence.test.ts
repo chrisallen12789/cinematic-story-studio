@@ -27,6 +27,33 @@ afterEach(async () => {
 });
 
 describe("packaged service shutdown evidence", () => {
+  it.each([
+    "packaged-e2e-service-shutdown-1.json",
+    "packaged-e2e-service-shutdown-2.json",
+    "phase3b1-real-service-shutdown-3.json",
+    "phase3b1-real-service-shutdown-4.json"
+  ])("allows the exact governed shutdown target %s", async (fileName) => {
+    const root = await createTemporaryRoot();
+    const target = path.join(root, fileName);
+
+    expect(resolvePackagedShutdownEvidencePath(target, root)).toBe(target);
+  });
+
+  it.each([
+    "packaged-e2e-service-shutdown-0.json",
+    "packaged-e2e-service-shutdown-3.json",
+    "phase3b1-real-service-shutdown-2.json",
+    "phase3b1-real-service-shutdown-5.json",
+    "phase3b1-real-service-shutdown-3.json.tmp",
+    "prefix-phase3b1-real-service-shutdown-3.json"
+  ])("rejects the near-match shutdown target %s", async (fileName) => {
+    const root = await createTemporaryRoot();
+
+    expect(() =>
+      resolvePackagedShutdownEvidencePath(path.join(root, fileName), root)
+    ).toThrow("escaped");
+  });
+
   it("round-trips bounded graceful process evidence atomically", async () => {
     const root = await createTemporaryRoot();
     const target = path.join(

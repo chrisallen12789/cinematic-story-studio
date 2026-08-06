@@ -1532,15 +1532,21 @@ class JobRepository:
             return self._finish_cancelled(session, job.id)
 
     def claim_next(self) -> dict[str, Any] | None:
+        candidate_query = (
+            select(JobRow.id)
+            .where(JobRow.state == "queued")
+            .order_by(JobRow.created_at, JobRow.id)
+            .limit(1)
+        )
+        # Keep an idle worker read-only. The preflight is advisory: a queued job
+        # can change before the claim, so the existing conditional UPDATE below
+        # remains the sole atomic claim boundary.
         with self.database.session() as session:
-            candidate_id = (
-                select(JobRow)
-                .where(JobRow.state == "queued")
-                .order_by(JobRow.created_at, JobRow.id)
-                .limit(1)
-                .with_only_columns(JobRow.id)
-                .scalar_subquery()
-            )
+            if session.scalar(candidate_query) is None:
+                return None
+
+        with self.database.session() as session:
+            candidate_id = candidate_query.scalar_subquery()
             now = utc_now()
             claimed = session.execute(
                 update(JobRow)

@@ -7,6 +7,20 @@ test("repository path policy allows only placeholders in private local roots", (
   assert.equal(inspectPath("local-projects/story.md"), "private-local-content");
   assert.equal(inspectPath("apps/local-service/data/project.sqlite"), "project-database");
   assert.equal(inspectPath("render.wav"), "generated-audio");
+  for (const extension of [
+    ".onnx",
+    ".safetensors",
+    ".pt",
+    ".pth",
+    ".npy",
+    ".npz",
+    ".bin",
+  ]) {
+    assert.equal(
+      inspectPath(`models/voice${extension}`),
+      "model-or-voice-data",
+    );
+  }
   assert.equal(inspectPath(".env.example"), null);
   assert.equal(inspectPath(".env.local"), "environment-file");
 });

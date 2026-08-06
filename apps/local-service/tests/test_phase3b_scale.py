@@ -33,6 +33,7 @@ from cinematic_story_service.models import (
     AudioQualityRecordRow,
     AuditionCacheRecordRow,
     AuditionClipRow,
+    AuditionReviewRecordRow,
     AuditionScriptRow,
     AuditionSessionRow,
     CastAssignmentRow,
@@ -815,6 +816,15 @@ def _seed_audition_and_cache_metadata(
             .order_by(AudioQualityRecordRow.revision.desc(), AudioQualityRecordRow.id.desc())
             .limit(1)
         )
+        template_review = session.scalar(
+            select(AuditionReviewRecordRow)
+            .where(AuditionReviewRecordRow.clip_id == template_clip.id)
+            .order_by(
+                AuditionReviewRecordRow.revision.desc(),
+                AuditionReviewRecordRow.id.desc(),
+            )
+            .limit(1)
+        )
         template_plan = (
             session.get(TextNormalizationPlanRow, template_request.normalization_plan_id)
             if template_request is not None
@@ -826,13 +836,16 @@ def _seed_audition_and_cache_metadata(
         assert template_artifact is not None
         assert template_cache is not None
         assert template_quality is not None
+        assert template_review is not None
         assert template_plan is not None
 
         template_provenance = parse_json(template_request.provenance_json, None)
         template_findings = parse_json(template_quality.findings_json, None)
+        template_review_evidence = parse_json(template_review.evidence_json, None)
         assert isinstance(template_provenance, dict)
         assert isinstance(template_provenance.get("details"), dict)
         assert isinstance(template_findings, dict)
+        assert isinstance(template_review_evidence, dict)
         blocking_finding_codes = template_findings.get("blockingFindingCodes")
         warning_codes = template_findings.get("warningCodes")
         assert isinstance(blocking_finding_codes, list)
@@ -927,6 +940,7 @@ def _seed_audition_and_cache_metadata(
         request_mappings: list[dict[str, Any]] = []
         clip_mappings: list[dict[str, Any]] = []
         quality_mappings: list[dict[str, Any]] = []
+        review_mappings: list[dict[str, Any]] = []
         maximum_quality_revision = int(
             session.scalar(
                 select(func.max(AudioQualityRecordRow.revision)).where(
@@ -935,6 +949,55 @@ def _seed_audition_and_cache_metadata(
             )
             or 0
         )
+        maximum_review_revision = int(
+            session.scalar(
+                select(func.max(AuditionReviewRecordRow.revision)).where(
+                    AuditionReviewRecordRow.project_id == project_id,
+                    AuditionReviewRecordRow.gate_id == template_review.gate_id,
+                    AuditionReviewRecordRow.scope_key == template_review.scope_key,
+                )
+            )
+            or 0
+        )
+
+        def append_review_mapping(
+            *,
+            ordinal: int,
+            created_at: str,
+            session_id: str,
+            clip_id: str,
+            clip_revision: int,
+            quality_fingerprint_value: str,
+            pronunciation_dictionary_fingerprint: str,
+        ) -> None:
+            evidence = dict(template_review_evidence)
+            evidence.update(
+                {
+                    "auditionSessionId": session_id,
+                    "auditionClipId": clip_id,
+                    "auditionClipRevision": clip_revision,
+                    "audioQualityFingerprint": quality_fingerprint_value,
+                    "pronunciationDictionaryFingerprint": (
+                        pronunciation_dictionary_fingerprint
+                    ),
+                }
+            )
+            evidence.pop("evidenceFingerprint", None)
+            evidence_fingerprint = request_fingerprint(evidence)
+            evidence["evidenceFingerprint"] = evidence_fingerprint
+            review_mapping = _row_mapping(template_review)
+            review_mapping.update(
+                {
+                    "id": f"scale-review-{ordinal:05d}",
+                    "revision": maximum_review_revision + ordinal + 1,
+                    "session_id": session_id,
+                    "clip_id": clip_id,
+                    "evidence_json": canonical_json(evidence),
+                    "evidence_fingerprint": evidence_fingerprint,
+                    "created_at": created_at,
+                }
+            )
+            review_mappings.append(review_mapping)
 
         paired_count = _AUDITION_METADATA_COUNT - existing_session_count
         for ordinal in range(paired_count):
@@ -1059,6 +1122,12 @@ def _seed_audition_and_cache_metadata(
 
             quality_record_id = f"scale-quality-{ordinal:05d}"
             quality_revision = maximum_quality_revision + ordinal + 1
+            quality_fingerprint_value = quality_fingerprint(
+                quality_record_id=quality_record_id,
+                clip_id=clip_id,
+                provider_request_id=provider_request_id,
+                revision=quality_revision,
+            )
             quality_mapping = _row_mapping(template_quality)
             quality_mapping.update(
                 {
@@ -1066,16 +1135,20 @@ def _seed_audition_and_cache_metadata(
                     "clip_id": clip_id,
                     "provider_request_id": provider_request_id,
                     "revision": quality_revision,
-                    "quality_fingerprint": quality_fingerprint(
-                        quality_record_id=quality_record_id,
-                        clip_id=clip_id,
-                        provider_request_id=provider_request_id,
-                        revision=quality_revision,
-                    ),
+                    "quality_fingerprint": quality_fingerprint_value,
                     "created_at": created_at,
                 }
             )
             quality_mappings.append(quality_mapping)
+            append_review_mapping(
+                ordinal=ordinal,
+                created_at=created_at,
+                session_id=session_id,
+                clip_id=clip_id,
+                clip_revision=1,
+                quality_fingerprint_value=quality_fingerprint_value,
+                pronunciation_dictionary_fingerprint=dictionary_fingerprint,
+            )
 
         remaining_clip_count = _AUDITION_METADATA_COUNT - existing_clip_count - paired_count
         assert remaining_clip_count >= 0
@@ -1146,6 +1219,13 @@ def _seed_audition_and_cache_metadata(
             clip_mappings.append(clip_mapping)
             quality_record_id = f"scale-quality-{ordinal:05d}"
             quality_revision = maximum_quality_revision + ordinal + 1
+            clip_revision = maximum_template_clip_revision + offset + 1
+            quality_fingerprint_value = quality_fingerprint(
+                quality_record_id=quality_record_id,
+                clip_id=clip_id,
+                provider_request_id=provider_request_id,
+                revision=quality_revision,
+            )
             quality_mapping = _row_mapping(template_quality)
             quality_mapping.update(
                 {
@@ -1153,16 +1233,22 @@ def _seed_audition_and_cache_metadata(
                     "clip_id": clip_id,
                     "provider_request_id": provider_request_id,
                     "revision": quality_revision,
-                    "quality_fingerprint": quality_fingerprint(
-                        quality_record_id=quality_record_id,
-                        clip_id=clip_id,
-                        provider_request_id=provider_request_id,
-                        revision=quality_revision,
-                    ),
+                    "quality_fingerprint": quality_fingerprint_value,
                     "created_at": created_at,
                 }
             )
             quality_mappings.append(quality_mapping)
+            append_review_mapping(
+                ordinal=ordinal,
+                created_at=created_at,
+                session_id=template_session.id,
+                clip_id=clip_id,
+                clip_revision=clip_revision,
+                quality_fingerprint_value=quality_fingerprint_value,
+                pronunciation_dictionary_fingerprint=(
+                    template_session.pronunciation_dictionary_fingerprint
+                ),
+            )
 
         session.execute(insert(AuditionSessionRow), session_mappings)
         session.execute(insert(AuditionScriptRow), script_mappings)
@@ -1170,6 +1256,7 @@ def _seed_audition_and_cache_metadata(
         session.execute(insert(SpeechProviderRequestRow), request_mappings)
         session.execute(insert(AuditionClipRow), clip_mappings)
         session.execute(insert(AudioQualityRecordRow), quality_mappings)
+        session.execute(insert(AuditionReviewRecordRow), review_mappings)
 
         generated_cache_keys = [
             _cache_identity(project_id, ordinal).key() for ordinal in range(_CACHE_COUNT)

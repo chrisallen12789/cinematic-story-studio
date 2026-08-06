@@ -955,6 +955,12 @@ export class BackendApiClient {
         {
           roleId: input.roleId,
           evidence: input.evidence,
+          ...(input.restrictedLocalAuditionActivation === undefined
+            ? {}
+            : {
+                restrictedLocalAuditionActivation:
+                  input.restrictedLocalAuditionActivation
+              }),
           idempotencyKey: input.idempotencyKey
         },
         input.idempotencyKey
@@ -1118,6 +1124,9 @@ export class BackendApiClient {
           decision: input.decision,
           rationale: input.rationale,
           supersedesDecisionId: input.supersedesDecisionId,
+          ...(input.listeningAttestation === undefined
+            ? {}
+            : { listeningAttestation: input.listeningAttestation }),
           idempotencyKey: input.idempotencyKey
         },
         input.idempotencyKey

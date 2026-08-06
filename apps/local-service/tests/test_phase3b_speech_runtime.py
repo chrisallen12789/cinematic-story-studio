@@ -250,6 +250,7 @@ def test_managed_runtime_executes_fixture_with_authenticated_identity_and_clean_
     assert evidence.owned_processes_confirmed_exited is True
     assert evidence.denied_network_attempt_count == 0
     assert runtime.is_running is False
+    assert runtime.has_owned_process_handle is False
 
 
 def test_startup_deadline_preserves_deadline_exit_reason(
@@ -277,6 +278,166 @@ def test_startup_deadline_preserves_deadline_exit_reason(
     assert evidence.confirmed_exited is True
     assert evidence.owned_processes_confirmed_exited is True
     assert runtime.is_running is False
+
+
+def test_startup_deadline_reaps_reader_before_descriptor_reuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = ManagedSpeechRuntime(_runtime_config(max_retries=0))
+    original_reader_loop = speech_runtime._reader_loop
+    reader_reached_eof = threading.Event()
+    release_reader = threading.Event()
+    join_called = threading.Event()
+    captured_readers: list[threading.Thread] = []
+
+    def delayed_reader_loop(
+        stream: object,
+        messages: object,
+    ) -> None:
+        original_reader_loop(stream, messages)  # type: ignore[arg-type]
+        reader_reached_eof.set()
+        release_reader.wait(timeout=2.0)
+
+    def expire_startup(_timeout_seconds: float) -> bytes:
+        assert runtime._reader is not None
+        reader = runtime._reader
+        captured_readers.append(reader)
+        original_join = reader.join
+
+        def release_then_join(timeout: float | None = None) -> None:
+            join_called.set()
+            release_reader.set()
+            original_join(timeout=timeout)
+
+        monkeypatch.setattr(reader, "join", release_then_join)
+        raise SpeechRuntimeError(
+            "SPEECH_WORKER_DEADLINE_EXCEEDED",
+            "The speech worker did not respond before its deadline.",
+            retryable=True,
+        )
+
+    monkeypatch.setattr(speech_runtime, "_reader_loop", delayed_reader_loop)
+    monkeypatch.setattr(runtime, "_await_frame", expire_startup)
+    try:
+        with pytest.raises(SpeechRuntimeError) as error:
+            runtime.start()
+        assert error.value.code == "SPEECH_WORKER_DEADLINE_EXCEEDED"
+        assert reader_reached_eof.wait(timeout=1.0)
+        assert len(captured_readers) == 1
+        assert join_called.is_set()
+        assert captured_readers[0].is_alive() is False
+
+        monkeypatch.setattr(speech_runtime, "_reader_loop", original_reader_loop)
+        successor = ManagedSpeechRuntime(_runtime_config(max_retries=0))
+        identity = successor.start()
+        successor_exit = successor.stop(reason="clean")
+        assert identity.launcher_pid > 0
+        assert successor_exit is not None
+        assert successor_exit.confirmed_exited is True
+        assert successor_exit.owned_processes_confirmed_exited is True
+    finally:
+        release_reader.set()
+        for reader in captured_readers:
+            reader.join(timeout=1.0)
+
+
+def test_reader_join_timeout_retains_ownership_until_recheck(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = ManagedSpeechRuntime(_runtime_config(max_retries=0))
+    original_reader_loop = speech_runtime._reader_loop
+    reader_reached_eof = threading.Event()
+    release_reader = threading.Event()
+    captured_readers: list[threading.Thread] = []
+    join_attempts: list[float | None] = []
+
+    def delayed_reader_loop(
+        stream: object,
+        messages: object,
+    ) -> None:
+        original_reader_loop(stream, messages)  # type: ignore[arg-type]
+        reader_reached_eof.set()
+        release_reader.wait(timeout=2.0)
+
+    def expire_startup(_timeout_seconds: float) -> bytes:
+        assert runtime._reader is not None
+        reader = runtime._reader
+        captured_readers.append(reader)
+        original_join = reader.join
+
+        def staged_join(timeout: float | None = None) -> None:
+            join_attempts.append(timeout)
+            if len(join_attempts) == 1:
+                return
+            release_reader.set()
+            original_join(timeout=timeout)
+
+        monkeypatch.setattr(reader, "join", staged_join)
+        raise SpeechRuntimeError(
+            "SPEECH_WORKER_DEADLINE_EXCEEDED",
+            "The speech worker did not respond before its deadline.",
+            retryable=True,
+        )
+
+    monkeypatch.setattr(speech_runtime, "_reader_loop", delayed_reader_loop)
+    monkeypatch.setattr(runtime, "_await_frame", expire_startup)
+    try:
+        with pytest.raises(SpeechRuntimeError) as error:
+            runtime.start()
+        assert error.value.code == "SPEECH_WORKER_DEADLINE_EXCEEDED"
+        assert reader_reached_eof.wait(timeout=1.0)
+        assert len(captured_readers) == 1
+        reader = captured_readers[0]
+        assert join_attempts == [speech_runtime._PROCESS_EXIT_GRACE_SECONDS]
+        assert reader.is_alive() is True
+
+        incomplete = runtime.last_exit
+        assert incomplete is not None
+        assert incomplete.reason == "deadline"
+        assert incomplete.graceful_shutdown_confirmed is False
+        assert incomplete.confirmed_exited is False
+        assert incomplete.owned_processes_confirmed_exited is False
+        assert runtime.last_exit is incomplete
+        assert runtime.has_owned_process_handle is True
+        assert runtime._process is not None
+        assert runtime._process.poll() is not None
+        assert runtime._process.stdin is not None
+        assert runtime._process.stdin.closed is False
+        assert runtime._process.stdout is not None
+        assert runtime._process.stdout.closed is False
+        assert runtime._reader is reader
+        assert runtime._job is not None
+
+        recovered = runtime.stop(reason="clean")
+        assert recovered is not None
+        assert recovered.pid == incomplete.pid
+        assert recovered.launcher_pid == incomplete.launcher_pid
+        assert recovered.exit_code == incomplete.exit_code
+        assert recovered.reason == "deadline"
+        assert recovered.graceful_shutdown_confirmed is False
+        assert recovered.confirmed_exited is True
+        assert recovered.owned_processes_confirmed_exited is True
+        assert reader.is_alive() is False
+        assert runtime.has_owned_process_handle is False
+        assert runtime._process is None
+        assert runtime._reader is None
+        assert runtime._messages is None
+        assert runtime._secret is None
+        assert runtime._job is None
+
+        monkeypatch.undo()
+        successor_identity = runtime.start()
+        successor_exit = runtime.stop(reason="clean")
+        assert successor_identity.launcher_pid > 0
+        assert successor_exit is not None
+        assert successor_exit.graceful_shutdown_confirmed is True
+        assert successor_exit.confirmed_exited is True
+        assert successor_exit.owned_processes_confirmed_exited is True
+        assert runtime.has_owned_process_handle is False
+    finally:
+        release_reader.set()
+        for reader in captured_readers:
+            reader.join(timeout=1.0)
 
 
 def test_shutdown_rejects_forged_authenticated_acknowledgement(
@@ -337,6 +498,7 @@ def test_clean_shutdown_accepts_authenticated_natural_idle_race(
     assert evidence.confirmed_exited is True
     assert evidence.owned_processes_confirmed_exited is True
     assert evidence.denied_network_attempt_count == 0
+    assert runtime.has_owned_process_handle is False
 
 
 @pytest.mark.parametrize(
@@ -383,6 +545,7 @@ def test_clean_shutdown_recovers_authenticated_idle_after_write_exit_race(
     assert evidence.confirmed_exited is True
     assert evidence.owned_processes_confirmed_exited is True
     assert evidence.denied_network_attempt_count == 0
+    assert runtime.has_owned_process_handle is False
 
 
 def test_clean_shutdown_rejects_authenticated_disallowed_stop_reason(
@@ -543,6 +706,7 @@ def test_authenticated_runtime_dispatch_preserves_exact_pronunciation_override_p
     assert evidence is not None
     assert evidence.confirmed_exited is True
     assert evidence.owned_processes_confirmed_exited is True
+    assert runtime.has_owned_process_handle is False
 
 
 def test_managed_runtime_reaps_only_its_authenticated_idle_child() -> None:

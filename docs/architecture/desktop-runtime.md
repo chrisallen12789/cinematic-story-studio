@@ -91,7 +91,14 @@ For import, the renderer asks main to show a native picker with supported filter
 
 ## Health, reconnect, and shutdown
 
-Main owns a connection state machine: `starting → ready ↔ degraded/disconnected → stopping → stopped`. It uses bounded health timeouts and exponential backoff with jitter. A service exit is reported by stable code plus sanitized stderr; raw story/provider content is excluded by the service before emission.
+Main owns a connection state machine:
+`starting → ready ↔ degraded/disconnected → stopping → stopped`. It uses bounded
+health timeouts and exponential backoff with jitter. A service exit is reported
+by stable code plus sanitized stderr; raw story/provider content is excluded by
+the service before emission. An unexpected startup exit retains its bounded
+diagnostic, exit code, signal, and readiness/health stage;
+`SERVICE_START_CANCELLED` is reserved for an explicit stop or superseding
+cancellation path.
 
 Automatic restart is bounded (for example, two retries in a rolling minute) and only for the child main launched. During disconnection, mutating UI controls are disabled while unsaved form state is preserved. After reconnection, the client reloads authoritative revisions rather than replaying unknown writes.
 

@@ -88,6 +88,15 @@ export interface OwnedProcess extends ProcessIdentity {
   readonly kind: "app" | "service" | "provider_worker";
 }
 
+export interface ConfirmedExitedTransientProcess
+  extends PendingProcessIdentity {
+  readonly executablePath: null;
+  readonly kind: "app";
+  readonly pathStatus: "unavailable_before_exit";
+  readonly verifiedParentCreationDate: string;
+  readonly absenceObservations: 2;
+}
+
 export interface PackagedProcessPaths {
   readonly executablePath: string;
   readonly serviceExecutablePath: string;
@@ -139,6 +148,7 @@ export interface AdoptProcessTreeInput {
 
 export interface ConfirmedProcessTreeAdoptionInput
   extends AdoptProcessTreeInput {
+  readonly confirmedExitedTransientProcesses?: readonly ConfirmedExitedTransientProcess[];
   readonly queryCurrent: (
     deadlineAt: number
   ) => Promise<readonly ProcessIdentity[]>;
@@ -151,6 +161,7 @@ export interface ConfirmedProcessTreeAdoptionInput
 
 export interface ConfirmedProcessTreeAdoption {
   readonly ownedProcesses: readonly OwnedProcess[];
+  readonly confirmedExitedTransientProcesses: readonly ConfirmedExitedTransientProcess[];
   readonly observedProcesses: readonly ProcessIdentity[];
 }
 
@@ -159,6 +170,12 @@ export interface BindProviderWorkerProcessTreeInput {
   readonly rootPid: number;
   readonly workerPid: number;
   readonly reportedParentPid: number;
+}
+
+export interface OwnedServiceRootInput {
+  readonly owned: readonly OwnedProcess[];
+  readonly rootPid: number;
+  readonly packaged: PackagedProcessPaths;
 }
 
 const processInventoryScript = [
@@ -484,6 +501,7 @@ export async function adoptVerifiedProcessTreeWithPathConfirmation({
   current: initialCurrent,
   baseline,
   owned,
+  confirmedExitedTransientProcesses: initialConfirmedExitedTransientProcesses = [],
   rootPid,
   packaged,
   queryCurrent,
@@ -506,9 +524,21 @@ export async function adoptVerifiedProcessTreeWithPathConfirmation({
   }
 
   let current = initialCurrent;
+  let confirmedExitedTransientProcesses = [
+    ...initialConfirmedExitedTransientProcesses
+  ];
   let pending: PendingProcessIdentity | null = null;
   let confirmationDeadline = deadlineAt;
+  let consecutiveAbsenceObservations = 0;
   while (true) {
+    assertConfirmedExitedTransientProcessesRemainAbsent(
+      current,
+      confirmedExitedTransientProcesses,
+      owned,
+      baseline,
+      rootPid,
+      packaged
+    );
     if (pending !== null) {
       if (now() >= confirmationDeadline) {
         throw new ProcessInventoryError(
@@ -519,18 +549,86 @@ export async function adoptVerifiedProcessTreeWithPathConfirmation({
         );
       }
       const expectedPending = pending;
-      const observed = current.find((item) =>
-        samePendingProcessIdentity(item, expectedPending)
+      const unexpectedIdentity = current.find(
+        (item) =>
+          !containsStableProcessIdentity(baseline, item) &&
+          !containsStableProcessIdentity(owned, item) &&
+          !samePendingProcessIdentity(item, expectedPending)
       );
-      if (observed === undefined) {
+      if (unexpectedIdentity !== undefined) {
         throw new ProcessInventoryError(
           "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
           false,
           "NEW_CHILD_PATH_CONFIRMATION_LOST",
-          pending
+          pendingProcessIdentity(unexpectedIdentity)
         );
       }
-      if (observed.executablePath === null) {
+      const observed = current.find((item) =>
+        samePendingProcessIdentity(item, expectedPending)
+      );
+      if (observed === undefined) {
+        const samePid = current.find(
+          (item) => item.pid === expectedPending.pid
+        );
+        const verifiedParent = owned.find(
+          (item) => item.pid === expectedPending.parentPid
+        );
+        const parentObservation =
+          verifiedParent === undefined
+            ? undefined
+            : current.find((item) =>
+                sameProcessIdentity(item, verifiedParent)
+              );
+        if (
+          samePid !== undefined ||
+          expectedPending.name !== appExecutableName ||
+          verifiedParent?.kind !== "app" ||
+          verifiedParent.executablePath === null ||
+          !matchesPackagedProcessPath(verifiedParent, packaged) ||
+          parentObservation === undefined
+        ) {
+          throw new ProcessInventoryError(
+            "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+            false,
+            "NEW_CHILD_PATH_CONFIRMATION_LOST",
+            pending
+          );
+        }
+        consecutiveAbsenceObservations += 1;
+        if (consecutiveAbsenceObservations >= 2) {
+          const confirmedExitedTransientProcess: ConfirmedExitedTransientProcess = {
+            ...expectedPending,
+            executablePath: null,
+            kind: "app",
+            pathStatus: "unavailable_before_exit",
+            verifiedParentCreationDate: verifiedParent.creationDate,
+            absenceObservations: 2
+          };
+          confirmedExitedTransientProcesses = [
+            ...confirmedExitedTransientProcesses,
+            confirmedExitedTransientProcess
+          ].sort((left, right) => left.pid - right.pid);
+        } else {
+          await delay(
+            Math.max(
+              1,
+              Math.min(confirmationPollMs, confirmationDeadline - now())
+            )
+          );
+          if (now() >= confirmationDeadline) {
+            throw new ProcessInventoryError(
+              "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+              false,
+              "NEW_CHILD_PATH_CONFIRMATION_TIMEOUT",
+              pending
+            );
+          }
+          current = await queryCurrent(confirmationDeadline);
+          continue;
+        }
+      }
+      if (observed?.executablePath === null) {
+        consecutiveAbsenceObservations = 0;
         if (now() >= confirmationDeadline) {
           throw new ProcessInventoryError(
             "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
@@ -567,6 +665,7 @@ export async function adoptVerifiedProcessTreeWithPathConfirmation({
           rootPid,
           packaged
         }),
+        confirmedExitedTransientProcesses,
         observedProcesses: current
       };
     } catch (error) {
@@ -579,7 +678,29 @@ export async function adoptVerifiedProcessTreeWithPathConfirmation({
       ) {
         throw error;
       }
+      const unverifiedCandidates = current.filter(
+        (item) =>
+          !containsStableProcessIdentity(baseline, item) &&
+          !containsStableProcessIdentity(owned, item)
+      );
+      const onlyUnverifiedCandidate = unverifiedCandidates[0];
+      if (
+        unverifiedCandidates.length !== 1 ||
+        onlyUnverifiedCandidate === undefined ||
+        !samePendingProcessIdentity(
+          onlyUnverifiedCandidate,
+          error.candidate
+        )
+      ) {
+        throw new ProcessInventoryError(
+          "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+          false,
+          "NEW_CHILD_PATH_CONFIRMATION_LOST",
+          error.candidate
+        );
+      }
       pending = error.candidate;
+      consecutiveAbsenceObservations = 0;
       confirmationDeadline = Math.min(
         deadlineAt,
         now() + confirmationWindowMs
@@ -609,6 +730,79 @@ export async function adoptVerifiedProcessTreeWithPathConfirmation({
       current = await queryCurrent(confirmationDeadline);
     }
   }
+}
+
+function assertConfirmedExitedTransientProcessesRemainAbsent(
+  current: readonly ProcessIdentity[],
+  confirmedExitedTransientProcesses: readonly ConfirmedExitedTransientProcess[],
+  owned: readonly OwnedProcess[],
+  baseline: readonly ProcessIdentity[],
+  rootPid: number,
+  packaged: PackagedProcessPaths
+): void {
+  const seenPids = new Set<number>();
+  const ownedByPid = new Map(owned.map((item) => [item.pid, item]));
+  const root = ownedByPid.get(rootPid);
+  for (const item of confirmedExitedTransientProcesses) {
+    const verifiedParent = ownedByPid.get(item.parentPid);
+    if (
+      ownedByPid.size !== owned.length ||
+      seenPids.has(item.pid) ||
+      ownedByPid.has(item.pid) ||
+      containsStableProcessIdentity(baseline, item) ||
+      item.name !== appExecutableName ||
+      item.executablePath !== null ||
+      item.kind !== "app" ||
+      item.pathStatus !== "unavailable_before_exit" ||
+      item.absenceObservations !== 2 ||
+      verifiedParent?.kind !== "app" ||
+      verifiedParent.executablePath === null ||
+      !matchesPackagedProcessPath(verifiedParent, packaged) ||
+      root?.kind !== "app" ||
+      !isOwnedDescendant(verifiedParent, rootPid, ownedByPid) ||
+      item.verifiedParentCreationDate !== verifiedParent.creationDate ||
+      item.creationDate < root.creationDate ||
+      item.creationDate < verifiedParent.creationDate ||
+      current.some((candidate) => candidate.pid === item.pid)
+    ) {
+      throw new ProcessInventoryError(
+        "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+        false,
+        "NEW_CHILD_PATH_CONFIRMATION_LOST",
+        pendingProcessIdentity(item)
+      );
+    }
+    seenPids.add(item.pid);
+  }
+}
+
+export function ownedServiceRootProcesses({
+  owned,
+  rootPid,
+  packaged
+}: OwnedServiceRootInput): readonly OwnedProcess[] {
+  const root = owned.find(
+    (item) =>
+      item.pid === rootPid &&
+      item.kind === "app" &&
+      item.name === appExecutableName &&
+      item.executablePath !== null &&
+      samePath(item.executablePath, packaged.executablePath)
+  );
+  if (root === undefined) {
+    throw new ProcessInventoryError(
+      "PROCESS_INVENTORY_AMBIGUOUS_IDENTITY",
+      false
+    );
+  }
+  return owned.filter(
+    (item) =>
+      item.parentPid === root.pid &&
+      item.kind === "service" &&
+      item.name === serviceExecutableName &&
+      item.executablePath !== null &&
+      samePath(item.executablePath, packaged.serviceExecutablePath)
+  );
 }
 
 /**

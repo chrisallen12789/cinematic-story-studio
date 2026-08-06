@@ -19,6 +19,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { CASTING_PROFILE_FINGERPRINT } from "../shared/casting-api";
 import {
   BackendApiClient,
   IMPORT_LIMIT_BYTES,
@@ -884,7 +885,8 @@ describe("BackendApiClient casting routes", () => {
       expectedCatalogFingerprint: "b".repeat(64),
       expectedSnapshotId: "snapshot-1",
       expectedSnapshotRevision: 2,
-      expectedSnapshotFingerprint: "c".repeat(64)
+      expectedSnapshotFingerprint: "c".repeat(64),
+      expectedCastingProfileFingerprint: CASTING_PROFILE_FINGERPRINT
     };
 
     try {

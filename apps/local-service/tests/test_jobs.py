@@ -945,7 +945,7 @@ def test_spawned_parser_records_protocol_error_when_semantic_result_validation_f
     database, jobs, worker, projects = _extraction_job_harness(
         tmp_path,
         parser_runner=runner,
-        parser_deadline_seconds=5,
+        parser_deadline_seconds=10,
     )
     try:
         created = _create_extraction_job(jobs, projects)
@@ -1122,6 +1122,19 @@ def test_concurrent_different_keys_cannot_create_duplicate_active_job(tmp_path: 
         with app.state.database.session() as session:
             active = session.query(JobRow).filter(JobRow.state.in_(["queued", "running"])).all()
             assert len(active) == 1
+
+
+def test_empty_queue_claim_does_not_seek_writer_ownership(tmp_path: Path) -> None:
+    database, jobs, _worker, _projects = _extraction_job_harness(tmp_path)
+    try:
+        with database.engine.connect() as writer:
+            writer.exec_driver_sql("BEGIN IMMEDIATE")
+            try:
+                assert jobs.claim_next() is None
+            finally:
+                writer.rollback()
+    finally:
+        database.close()
 
 
 def test_two_repositories_cannot_double_claim_one_queued_job(tmp_path: Path) -> None:

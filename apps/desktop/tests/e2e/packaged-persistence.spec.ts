@@ -83,16 +83,34 @@ import {
   matchesPackagedProcessPath,
   remainingOwnedProcesses,
   serviceExecutableName,
+  type ConfirmedExitedTransientProcess,
   type OwnedProcess,
   type PackagedProcessPaths,
   type ProcessIdentity
 } from "../../src/verification/packaged-process-inventory";
+import {
+  observeRelevantProcessBaselineAfterRejectedLaunch,
+  packagedElectronFirstWindowTimeout,
+  packagedElectronLaunchTimeout,
+  type PackagedElectronLaunchPurpose,
+  type RejectedLaunchBaselineObservation
+} from "../../src/verification/packaged-launch-rejection";
+import {
+  writePhase3b1PrivateFailureSidecar,
+  type Phase3b1PrivateFailureCode,
+  type Phase3b1PrivateFailureStage,
+  type Phase3b1PrivateFailureStartupObservation
+} from "../../src/verification/phase3b1-private-failure-sidecar";
+import {
+  phase3b1RendererErrorCodeFromError
+} from "../../src/verification/phase3b1-renderer-error-evidence";
 import {
   observeStableOwnedProcessNetworkEndpoints,
   type OwnedProcessNetworkObservation
 } from "../../src/verification/owned-process-network-observation";
 import {
   phase3bAssertionKeys,
+  phase3b1SyntheticMetadataEvidence,
   phase3bFixtureEvidenceClassification,
   phase3bPackagedE2eResultEnvironment,
   phase3bPackagedE2eSchemaVersion,
@@ -106,6 +124,17 @@ import {
   type Phase3bRestartEvidence,
   type Phase3bWorkflowEvidence
 } from "./phase3b-local-speech-auditions";
+import {
+  completePrivateListeningPackage,
+  phase3b1PrivateEvidenceRootEnvironment,
+  phase3b1RealModelPackageZipEnvironment,
+  phase3b1SourceHeadEnvironment,
+  preservePhase3b1PrivateReplayState,
+  provePhase3b1RestartPersistence,
+  requirePhase3b1LocalInputs,
+  runPhase3b1RealProductPathWorkflow,
+  type Phase3b1LocalInputs
+} from "./phase3b1-real-product-path";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -115,6 +144,7 @@ const encodedFixturePath = path.resolve(
   desktopRoot,
   "../../fixtures/synthetic-story/sample-story.docx.base64"
 );
+const localRendersRoot = path.resolve(desktopRoot, "../../local-renders");
 const packagedExecutableEnvironment = "CSS_PACKAGED_E2E_EXECUTABLE";
 const evidencePathEnvironment = "CSS_PACKAGED_E2E_EVIDENCE_PATH";
 const resultPathEnvironment = "CSS_PACKAGED_E2E_RESULT_PATH";
@@ -124,6 +154,7 @@ const correctionReason = "packaged fixture correction";
 const ownershipSampleIntervalMs = 100;
 const ownershipSampleDeadlineMs = 10_000;
 const gracefulApplicationShutdownTimeoutMs = 30_000;
+const phase3b1StartupProbeTimeoutMs = 10_000;
 
 test.describe("packaged desktop verification", () => {
   test.skip(
@@ -137,7 +168,37 @@ test.describe("packaged desktop verification", () => {
   );
 
   test("runs the synthetic persistence flow in the packaged application", async () => {
-    test.setTimeout(900_000);
+    const realModelPackageConfigured = hasEnvironmentValue(
+      phase3b1RealModelPackageZipEnvironment
+    );
+    const privateEvidenceRootConfigured = hasEnvironmentValue(
+      phase3b1PrivateEvidenceRootEnvironment
+    );
+    const sourceHeadConfigured = hasEnvironmentValue(
+      phase3b1SourceHeadEnvironment
+    );
+    if (
+      new Set([
+        realModelPackageConfigured,
+        privateEvidenceRootConfigured,
+        sourceHeadConfigured
+      ]).size !== 1
+    ) {
+      throw new Error(
+        `Set all or none of ${phase3b1RealModelPackageZipEnvironment}, ${phase3b1PrivateEvidenceRootEnvironment}, and ${phase3b1SourceHeadEnvironment}.`
+      );
+    }
+    const runRealProductPath = realModelPackageConfigured;
+    test.setTimeout(runRealProductPath ? 1_800_000 : 900_000);
+    const phase3b1Inputs: Phase3b1LocalInputs | null = runRealProductPath
+      ? await requirePhase3b1LocalInputs(
+          requiredEnvironment(phase3b1RealModelPackageZipEnvironment),
+          requiredEnvironment(phase3b1PrivateEvidenceRootEnvironment)
+        )
+      : null;
+    const phase3b1SourceHead = runRealProductPath
+      ? requireSourceHead(requiredEnvironment(phase3b1SourceHeadEnvironment))
+      : null;
     const packaged = await requirePackagedExecutable(
       requiredEnvironment(packagedExecutableEnvironment)
     );
@@ -172,16 +233,41 @@ test.describe("packaged desktop verification", () => {
     let preexistingProcesses: readonly ProcessIdentity[] | null = null;
     let first: ElectronApplication | null = null;
     let second: ElectronApplication | null = null;
+    let third: ElectronApplication | null = null;
+    let fourth: ElectronApplication | null = null;
     let firstOwnership: LaunchOwnership | null = null;
     let secondOwnership: LaunchOwnership | null = null;
+    let thirdOwnership: LaunchOwnership | null = null;
+    let fourthOwnership: LaunchOwnership | null = null;
     let firstOwnershipSampler: OwnershipSampler | null = null;
     let secondOwnershipSampler: OwnershipSampler | null = null;
+    let thirdOwnershipSampler: OwnershipSampler | null = null;
+    let fourthOwnershipSampler: OwnershipSampler | null = null;
     let firstShutdownEvidencePath: string | null = null;
     let secondShutdownEvidencePath: string | null = null;
+    let thirdShutdownEvidencePath: string | null = null;
+    let fourthShutdownEvidencePath: string | null = null;
     let operationError: Error | null = null;
     let failureStage: PackagedFailureStage | null = null;
     let failureCode: PackagedFailureCode | null = null;
     let currentStage: PackagedFailureStage = "isolation_setup";
+    let syntheticGateCompleted = false;
+    let phase3b1Stage: Phase3b1PrivateFailureStage | null = null;
+    let phase3b1CurrentLaunch: 3 | 4 | null = null;
+    let phase3b1StartedAt: string | null = null;
+    let phase3b1LaunchReturnedAt: string | null = null;
+    let phase3b1FirstWindowWaitStartedAt: string | null = null;
+    let phase3b1OperationFailedAt: string | null = null;
+    let phase3b1ExplicitFailureCode: Phase3b1PrivateFailureCode | null = null;
+    let phase3b1StartupObservations:
+      Phase3b1PrivateFailureStartupObservation[] = [];
+    let phase3b1RejectedLaunchObservation:
+      | RejectedLaunchBaselineObservation
+      | null = null;
+    let phase3b1CurrentLaunchOwnershipEstablished = false;
+    let phase3b1CurrentLaunchOwnedProcessExitClaimed = false;
+    let phase3b1IsolationCleanupAllowed = true;
+    const phase3b1UnownedApplications = new WeakSet<ElectronApplication>();
     let screenshotCaptured = false;
     let importReviewEvidence: PackagedImportReviewEvidence | null = null;
     let storyAnalysisEvidence: PackagedStoryAnalysisEvidence | null = null;
@@ -244,6 +330,152 @@ test.describe("packaged desktop verification", () => {
       failureCode = packagedFailureCode(stage, undefined);
       await writeMachineResult("failed", false);
     };
+    const beginPhase3b1Launch = (launch: 3 | 4) => {
+      phase3b1CurrentLaunch = launch;
+      phase3b1StartedAt = new Date().toISOString();
+      phase3b1LaunchReturnedAt = null;
+      phase3b1FirstWindowWaitStartedAt = null;
+      phase3b1OperationFailedAt = null;
+      phase3b1ExplicitFailureCode = null;
+      phase3b1StartupObservations = [];
+      phase3b1CurrentLaunchOwnershipEstablished = false;
+      phase3b1CurrentLaunchOwnedProcessExitClaimed = false;
+      phase3b1RejectedLaunchObservation = null;
+    };
+    const observePhase3b1Startup = async (
+      application: ElectronApplication,
+      phase: Phase3b1PrivateFailureStartupObservation["phase"]
+    ): Promise<Phase3b1PrivateFailureStartupObservation> => {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      try {
+        const state = await Promise.race([
+          application.evaluate(({ app, BrowserWindow }) => ({
+            appReady: app.isReady(),
+            singleInstanceLockHeld: app.hasSingleInstanceLock(),
+            browserWindowCount: BrowserWindow.getAllWindows().length
+          })),
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(() => {
+              reject(
+                new Error("The bounded Electron startup probe timed out.")
+              );
+            }, phase3b1StartupProbeTimeoutMs);
+          })
+        ]);
+        if (
+          typeof state.appReady !== "boolean" ||
+          typeof state.singleInstanceLockHeld !== "boolean" ||
+          !Number.isSafeInteger(state.browserWindowCount) ||
+          state.browserWindowCount < 0 ||
+          state.browserWindowCount > 256
+        ) {
+          throw new Error("The Electron startup probe result was invalid.");
+        }
+        const observation: Phase3b1PrivateFailureStartupObservation = {
+          phase,
+          recordedAt: new Date().toISOString(),
+          appReady: state.appReady,
+          singleInstanceLockHeld: state.singleInstanceLockHeld,
+          browserWindowCount: state.browserWindowCount
+        };
+        phase3b1StartupObservations.push(observation);
+        return observation;
+      } finally {
+        if (timeout !== null) {
+          clearTimeout(timeout);
+        }
+      }
+    };
+    const waitForPhase3b1FirstWindow = async (
+      application: ElectronApplication
+    ): Promise<Page> => {
+      let initialObservation: Phase3b1PrivateFailureStartupObservation;
+      try {
+        initialObservation = await observePhase3b1Startup(
+          application,
+          "after_root_ownership"
+        );
+      } catch (error) {
+        phase3b1ExplicitFailureCode = "startup_probe_failed";
+        throw error;
+      }
+      if (!initialObservation.singleInstanceLockHeld) {
+        phase3b1ExplicitFailureCode = "single_instance_lock_not_held";
+        throw new Error(
+          "The owned Electron root did not hold the single-instance lock."
+        );
+      }
+      phase3b1FirstWindowWaitStartedAt = new Date().toISOString();
+      try {
+        return await application.firstWindow({
+          timeout: packagedElectronFirstWindowTimeout("phase3b1_real")
+        });
+      } catch (error) {
+        if (error instanceof Error && error.name === "TimeoutError") {
+          phase3b1ExplicitFailureCode = "first_window_timeout";
+        }
+        try {
+          await observePhase3b1Startup(
+            application,
+            "after_first_window_failure"
+          );
+        } catch {
+          // The primary first-window failure remains authoritative.
+        }
+        throw error;
+      }
+    };
+    const launchPhase3b1Packaged = async (
+      launch: 3 | 4,
+      isolatedPaths: IsolatedPaths,
+      shutdownEvidencePath: string,
+      beforeLaunch: readonly ProcessIdentity[]
+    ): Promise<ElectronApplication> => {
+      phase3b1Stage = launch === 3 ? "launch_3" : "launch_4";
+      try {
+        const application = await launchPackaged(
+          packaged.executablePath,
+          isolatedPaths,
+          shutdownEvidencePath,
+          "phase3b1_real"
+        );
+        phase3b1LaunchReturnedAt = new Date().toISOString();
+        return application;
+      } catch (launchError) {
+        phase3b1Stage =
+          launch === 3
+            ? "post_rejection_inventory_3"
+            : "post_rejection_inventory_4";
+        const observation =
+          await observeRelevantProcessBaselineAfterRejectedLaunch({
+            baseline: beforeLaunch,
+            queryCurrent: (deadlineAt) => queryRelevantProcesses(deadlineAt),
+            deadlineAt:
+              monotonicNow() +
+              defaultProcessInventoryPolicy.totalDeadlineMs
+          });
+        phase3b1RejectedLaunchObservation = observation;
+        if (
+          observation.baselineDeltaStatus === "observed_absent" &&
+          observation.consecutiveDeltaFreeObservations ===
+            observation.requiredConsecutiveDeltaFreeObservations
+        ) {
+          phase3b1Stage = launch === 3 ? "launch_3" : "launch_4";
+          throw launchError;
+        }
+        phase3b1IsolationCleanupAllowed = false;
+        throw new AggregateError(
+          [
+            launchError,
+            new Error(
+              "The allow-listed relevant-process baseline was not proved restored after Playwright rejected the Electron launch."
+            )
+          ],
+          "The Phase 3B.1 Electron launch was rejected and its relevant-process baseline was not restored.",
+          { cause: launchError }
+        );
+      }
+    };
     try {
       await Promise.all([
         mkdir(path.dirname(evidencePath), { recursive: true }),
@@ -285,6 +517,16 @@ test.describe("packaged desktop verification", () => {
         isolatedUserDataPath,
         "packaged-e2e-service-shutdown-2.json"
       );
+      if (phase3b1Inputs !== null) {
+        thirdShutdownEvidencePath = path.join(
+          isolatedUserDataPath,
+          "phase3b1-real-service-shutdown-3.json"
+        );
+        fourthShutdownEvidencePath = path.join(
+          isolatedUserDataPath,
+          "phase3b1-real-service-shutdown-4.json"
+        );
+      }
       await Promise.all([
         mkdir(isolatedPaths.localAppData, { recursive: true }),
         mkdir(isolatedPaths.roamingAppData, { recursive: true }),
@@ -305,7 +547,8 @@ test.describe("packaged desktop verification", () => {
       first = await launchPackaged(
         packaged.executablePath,
         { ...isolatedPaths },
-        firstShutdownEvidencePath
+        firstShutdownEvidencePath,
+        "synthetic_fixture"
       );
       await checkpointStage("root_ownership_1");
       firstOwnership = await establishRootOwnership(
@@ -314,9 +557,19 @@ test.describe("packaged desktop verification", () => {
         packaged
       );
       await checkpointStage("readiness_1");
-      const firstPage = await first.firstWindow();
+      const firstPage = await first.firstWindow({
+        timeout: packagedElectronFirstWindowTimeout("synthetic_fixture")
+      });
       await expect(
         firstPage.getByText("Backend ready", { exact: true }).first()
+      ).toBeVisible({ timeout: 45_000 });
+      await expect(
+        firstPage.getByRole("heading", {
+          name: "Shape the page into a cinematic listening experience."
+        })
+      ).toBeVisible({ timeout: 45_000 });
+      await expect(
+        firstPage.getByText("No projects yet.", { exact: true })
       ).toBeVisible({ timeout: 45_000 });
       await checkpointStage("service_ownership_1");
       firstOwnership = await expandOwnership(
@@ -340,6 +593,11 @@ test.describe("packaged desktop verification", () => {
         { exact: true }
       );
       await expect(createdNotice).toBeVisible();
+      const createdProjectLink = firstPage
+        .getByRole("navigation", { name: "Projects" })
+        .getByRole("button", { name: /Packaged Persistence Demo/u });
+      await expect(createdProjectLink).toBeVisible({ timeout: 30_000 });
+      await expect(createdProjectLink).toHaveClass(/(?:^|\s)active(?:\s|$)/u);
       await firstPage
         .getByRole("button", { name: "Dismiss notification" })
         .click();
@@ -579,7 +837,8 @@ test.describe("packaged desktop verification", () => {
       second = await launchPackaged(
         packaged.executablePath,
         { ...isolatedPaths },
-        secondShutdownEvidencePath
+        secondShutdownEvidencePath,
+        "synthetic_fixture"
       );
       await checkpointStage("root_ownership_2");
       secondOwnership = await establishRootOwnership(
@@ -588,7 +847,9 @@ test.describe("packaged desktop verification", () => {
         packaged
       );
       await checkpointStage("readiness_2");
-      const secondPage = await second.firstWindow();
+      const secondPage = await second.firstWindow({
+        timeout: packagedElectronFirstWindowTimeout("synthetic_fixture")
+      });
       await expect(
         secondPage.getByText("Backend ready", { exact: true }).first()
       ).toBeVisible({ timeout: 45_000 });
@@ -781,20 +1042,221 @@ test.describe("packaged desktop verification", () => {
       phase3Workflow.flowRecorder.complete();
       second = null;
       secondOwnership = null;
+      syntheticGateCompleted = true;
+
+      if (
+        phase3b1Inputs !== null &&
+        phase3b1SourceHead !== null &&
+        thirdShutdownEvidencePath !== null &&
+        fourthShutdownEvidencePath !== null
+      ) {
+        beginPhase3b1Launch(3);
+        phase3b1Stage = "prelaunch_inventory_3";
+        const beforeThirdLaunch = await queryRelevantProcesses();
+        third = await launchPhase3b1Packaged(
+          3,
+          { ...isolatedPaths },
+          thirdShutdownEvidencePath,
+          beforeThirdLaunch
+        );
+        phase3b1Stage = "root_ownership_3";
+        try {
+          thirdOwnership = await establishRootOwnership(
+            third,
+            beforeThirdLaunch,
+            packaged
+          );
+        } catch (error) {
+          phase3b1UnownedApplications.add(third);
+          phase3b1IsolationCleanupAllowed = false;
+          throw error;
+        }
+        phase3b1CurrentLaunchOwnershipEstablished = true;
+        phase3b1Stage = "readiness_3";
+        const thirdPage = await waitForPhase3b1FirstWindow(third);
+        await expect(
+          thirdPage.getByText("Backend ready", { exact: true }).first()
+        ).toBeVisible({ timeout: 45_000 });
+        phase3b1Stage = "workflow_3";
+        thirdOwnership = await expandOwnership(thirdOwnership, true);
+        thirdOwnershipSampler = startOwnershipSampler(thirdOwnership);
+        const phase3b1Workflow = await runPhase3b1RealProductPathWorkflow(
+          thirdPage,
+          third,
+          phase3b1Inputs
+        );
+        const completedThirdOwnershipSampler = thirdOwnershipSampler;
+        thirdOwnershipSampler = null;
+        await completedThirdOwnershipSampler.stop();
+        thirdOwnership = await bindPhase3bProviderWorkerOwnership(
+          thirdOwnership,
+          phase3b1Workflow.liveRuntimeInstance.workerPid,
+          phase3b1Workflow.liveRuntimeInstance.parentPid
+        );
+        const realNetworkObservation =
+          await requireNoOwnedPythonExternalEndpoints(
+            thirdOwnership,
+            phase3b1Workflow.liveRuntimeInstance.workerPid,
+            phase3b1Workflow.liveRuntimeInstance.parentPid
+          );
+        phase3b1Stage = "shutdown_3";
+        const thirdExitProof = await closeOwnedElectron(
+          third,
+          thirdOwnership,
+          thirdShutdownEvidencePath
+        );
+        const realRuntimeExit = provePhase3bRuntimeShutdown(
+          thirdExitProof.runtimeShutdownEvidence,
+          phase3b1Workflow.liveRuntimeInstance
+        );
+        const thirdLaunchProof = phase3b1LocalLaunchProof(
+          3,
+          thirdOwnership,
+          thirdExitProof
+        );
+        phase3b1CurrentLaunchOwnedProcessExitClaimed = true;
+        third = null;
+        thirdOwnership = null;
+
+        beginPhase3b1Launch(4);
+        phase3b1Stage = "prelaunch_inventory_4";
+        const beforeFourthLaunch = await queryRelevantProcesses();
+        fourth = await launchPhase3b1Packaged(
+          4,
+          { ...isolatedPaths },
+          fourthShutdownEvidencePath,
+          beforeFourthLaunch
+        );
+        phase3b1Stage = "root_ownership_4";
+        try {
+          fourthOwnership = await establishRootOwnership(
+            fourth,
+            beforeFourthLaunch,
+            packaged
+          );
+        } catch (error) {
+          phase3b1UnownedApplications.add(fourth);
+          phase3b1IsolationCleanupAllowed = false;
+          throw error;
+        }
+        phase3b1CurrentLaunchOwnershipEstablished = true;
+        phase3b1Stage = "readiness_4";
+        const fourthPage = await waitForPhase3b1FirstWindow(fourth);
+        await expect(
+          fourthPage.getByText("Backend ready", { exact: true }).first()
+        ).toBeVisible({ timeout: 45_000 });
+        phase3b1Stage = "restore_4";
+        fourthOwnership = await expandOwnership(fourthOwnership, true);
+        fourthOwnershipSampler = startOwnershipSampler(fourthOwnership);
+        const phase3b1RestartEvidence = await provePhase3b1RestartPersistence(
+          fourthPage,
+          phase3b1Workflow.evidence
+        );
+        const completedFourthOwnershipSampler = fourthOwnershipSampler;
+        fourthOwnershipSampler = null;
+        await completedFourthOwnershipSampler.stop();
+        fourthOwnership = await expandOwnership(fourthOwnership, true);
+        phase3b1Stage = "shutdown_4";
+        const fourthExitProof = await closeOwnedElectron(
+          fourth,
+          fourthOwnership,
+          fourthShutdownEvidencePath
+        );
+        const fourthLaunchProof = phase3b1LocalLaunchProof(
+          4,
+          fourthOwnership,
+          fourthExitProof
+        );
+        phase3b1CurrentLaunchOwnedProcessExitClaimed = true;
+        fourth = null;
+        fourthOwnership = null;
+
+        if (isolationRoot === null) {
+          throw new Error("The isolated private replay state was unavailable.");
+        }
+        phase3b1Stage = "private_evidence_generation";
+        const privateReplayPreservation =
+          await preservePhase3b1PrivateReplayState(
+            isolationRoot,
+            phase3b1Workflow.listeningPackage,
+            packaged.version
+          );
+        const listeningPackagePath = await completePrivateListeningPackage(
+          phase3b1Workflow.listeningPackage,
+          {
+            schemaVersion: 1,
+            completedAt: new Date().toISOString(),
+            status: "passed",
+            sourceHeadSha: phase3b1SourceHead,
+            packagedVersion: packaged.version,
+            executable:
+              `release/${packaged.version}/win-unpacked/${appExecutableName}`,
+            workflow: phase3b1Workflow.evidence,
+            restart: phase3b1RestartEvidence,
+            process: {
+              launches: [thirdLaunchProof, fourthLaunchProof],
+              providerRuntimeExit: realRuntimeExit,
+              networkObservation: realNetworkObservation,
+              exactOwnedProcessesExited: true,
+              forcedTerminationUsed: false,
+              unrelatedProcessesInspected: false,
+              unrelatedProcessesTerminated: false
+            },
+            privateListeningPackage: {
+              directoryName: phase3b1Workflow.listeningPackage.directoryName,
+              replayStateStorage: "local_application_data",
+              replayStateDirectoryName:
+                privateReplayPreservation.replayStateDirectoryName,
+              replayStateId: privateReplayPreservation.replayStateId,
+              replayLauncherFileName:
+                phase3b1Workflow.listeningPackage.replayLauncherFileName,
+              replayContractSha256:
+                privateReplayPreservation.replayContractSha256,
+              replayStateSentinelSha256:
+                privateReplayPreservation.replayStateSentinelSha256,
+              maximumRetainedPathLength:
+                privateReplayPreservation.maximumRetainedPathLength,
+              isolatedDesktopStateRetained: true,
+              listeningIndexSha256:
+                phase3b1Workflow.listeningPackage.indexSha256,
+              listeningScorecardSha256:
+                phase3b1Workflow.listeningPackage.scorecardSha256,
+              committed: false,
+              uploaded: false
+            },
+            claims: {
+              humanListeningStatus: "pending",
+              humanListeningClaimed: false,
+              humanPerceivedQualityClaimed: false,
+              productionExportEligible: false,
+              commercialClearanceClaimed: false,
+              consentClaimed: false
+            }
+          }
+        );
+        process.stdout.write(
+          `PHASE3B1_PRIVATE_LISTENING_PACKAGE=${listeningPackagePath}\n`
+        );
+      }
     } catch (error) {
+      phase3b1OperationFailedAt = new Date().toISOString();
       operationError =
         error instanceof Error
           ? error
           : new Error("Packaged verification failed.");
-      failureStage = currentStage;
-      failureCode = packagedFailureCode(currentStage, error);
-      try {
-        await writeMachineResult("failed", false);
-      } catch (checkpointError) {
-        cleanupErrors.push(checkpointError);
+      if (!syntheticGateCompleted) {
+        failureStage = currentStage;
+        failureCode = packagedFailureCode(currentStage, error);
+        try {
+          await writeMachineResult("failed", false);
+        } catch (checkpointError) {
+          cleanupErrors.push(checkpointError);
+        }
       }
     } finally {
       for (const sampler of [
+        fourthOwnershipSampler,
+        thirdOwnershipSampler,
         secondOwnershipSampler,
         firstOwnershipSampler
       ]) {
@@ -805,9 +1267,17 @@ test.describe("packaged desktop verification", () => {
         }
       }
       for (const [application, ownership, shutdownEvidencePath] of [
+        [fourth, fourthOwnership, fourthShutdownEvidencePath],
+        [third, thirdOwnership, thirdShutdownEvidencePath],
         [second, secondOwnership, secondShutdownEvidencePath],
         [first, firstOwnership, firstShutdownEvidencePath]
       ] as const) {
+        if (
+          application !== null &&
+          phase3b1UnownedApplications.has(application)
+        ) {
+          continue;
+        }
         try {
           await closeOwnedElectron(
             application,
@@ -818,7 +1288,11 @@ test.describe("packaged desktop verification", () => {
           cleanupErrors.push(error);
         }
       }
-      if (isolationRoot !== null) {
+      if (
+        isolationRoot !== null &&
+        phase3b1IsolationCleanupAllowed &&
+        cleanupErrors.length === 0
+      ) {
         try {
           assertOwnedTemporaryRoot(isolationRoot);
           await rm(isolationRoot, {
@@ -831,13 +1305,19 @@ test.describe("packaged desktop verification", () => {
           cleanupErrors.push(error);
         }
       }
-      const cleanupCompleted = cleanupErrors.length === 0;
-      if (operationError === null && !cleanupCompleted) {
+      const cleanupCompleted =
+        cleanupErrors.length === 0 && phase3b1IsolationCleanupAllowed;
+      if (!syntheticGateCompleted && operationError === null && !cleanupCompleted) {
         failureStage = "cleanup";
         failureCode = "CLEANUP_FAILED";
       }
       const completedAt = new Date().toISOString();
-      if (operationError === null && cleanupCompleted) {
+      if (syntheticGateCompleted && !cleanupCompleted) {
+        failureStage = "cleanup";
+        failureCode = "CLEANUP_FAILED";
+      }
+      let syntheticEvidenceGenerated = false;
+      if (syntheticGateCompleted && cleanupCompleted) {
         failureStage = "evidence_generation";
         failureCode = "EVIDENCE_GENERATION_FAILED";
         if (
@@ -886,6 +1366,7 @@ test.describe("packaged desktop verification", () => {
                 runtimeExits: phase3bRuntimeExits
               })
             );
+            syntheticEvidenceGenerated = true;
           } catch (error) {
             cleanupErrors.push(error);
           }
@@ -893,8 +1374,9 @@ test.describe("packaged desktop verification", () => {
       }
       try {
         await writeMachineResult(
-          operationError === null &&
+          syntheticGateCompleted &&
             cleanupCompleted &&
+            syntheticEvidenceGenerated &&
             cleanupErrors.length === 0
             ? "passed"
             : "failed",
@@ -903,6 +1385,65 @@ test.describe("packaged desktop verification", () => {
         );
       } catch (error) {
         cleanupErrors.push(error);
+      }
+      if (
+        syntheticGateCompleted &&
+        phase3b1Inputs !== null &&
+        phase3b1SourceHead !== null &&
+        phase3b1StartedAt !== null &&
+        phase3b1CurrentLaunch !== null &&
+        phase3b1Stage !== null &&
+        (operationError !== null || !cleanupCompleted)
+      ) {
+        const privateFailureStage =
+          operationError === null ? "cleanup" : phase3b1Stage;
+        try {
+          const sidecar = await writePhase3b1PrivateFailureSidecar({
+            expectedLocalRendersParent: localRendersRoot,
+            privateRoot: phase3b1Inputs.privateEvidenceRoot,
+            sourceHeadSha: phase3b1SourceHead,
+            applicationVersion: packaged.version,
+            executableRelativePath:
+              `apps/desktop/release/${packaged.version}/win-unpacked/${appExecutableName}`,
+            launch: phase3b1CurrentLaunch,
+            stage: privateFailureStage,
+            failureCode:
+              phase3b1ExplicitFailureCode ??
+              phase3b1PrivateFailureCode(
+                privateFailureStage,
+                operationError
+              ),
+            rendererErrorCode:
+              phase3b1RendererErrorCodeFromError(operationError),
+            configuredLaunchTimeoutMs: packagedElectronLaunchTimeout(
+              "phase3b1_real"
+            ),
+            configuredFirstWindowTimeoutMs:
+              packagedElectronFirstWindowTimeout("phase3b1_real"),
+            startedAt: phase3b1StartedAt,
+            launchReturnedAt: phase3b1LaunchReturnedAt,
+            firstWindowWaitStartedAt:
+              phase3b1FirstWindowWaitStartedAt,
+            failedAt:
+              operationError === null
+                ? completedAt
+                : (phase3b1OperationFailedAt ?? completedAt),
+            startupObservations: phase3b1StartupObservations,
+            syntheticGateCompleted,
+            ownershipEstablished:
+              phase3b1CurrentLaunchOwnershipEstablished,
+            ownedProcessExitClaimed:
+              phase3b1CurrentLaunchOwnedProcessExitClaimed,
+            cleanupCompleted,
+            rejectedLaunchBaselineObservation:
+              phase3b1RejectedLaunchObservation
+          });
+          process.stdout.write(
+            `PHASE3B1_PRIVATE_FAILURE_SIDECAR=local-renders/phase3b1-real-product-path/${sidecar.relativePath}\n`
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
     }
     if (operationError !== null) {
@@ -937,6 +1478,7 @@ interface LaunchOwnership {
   readonly launcherPid: number;
   readonly rootPid: number;
   processes: readonly OwnedProcess[];
+  confirmedExitedTransientProcesses: readonly ConfirmedExitedTransientProcess[];
   readonly baseline: readonly ProcessIdentity[];
   readonly packaged: PackagedPaths;
 }
@@ -1188,10 +1730,31 @@ function reviewEvidence(card: Locator, label: string): Locator {
     .locator("dd");
 }
 
+function phase3b1PrivateFailureCode(
+  stage: Phase3b1PrivateFailureStage,
+  error: Error | null
+): Phase3b1PrivateFailureCode {
+  if (stage === "launch_3" || stage === "launch_4") {
+    return error?.name === "TimeoutError"
+      ? "launch_timeout"
+      : "launch_rejected";
+  }
+  if (
+    stage === "prelaunch_inventory_3" ||
+    stage === "prelaunch_inventory_4" ||
+    stage === "post_rejection_inventory_3" ||
+    stage === "post_rejection_inventory_4"
+  ) {
+    return "inventory_failure";
+  }
+  return "other";
+}
+
 async function launchPackaged(
   executablePath: string,
   isolatedPaths: IsolatedPaths,
-  shutdownEvidencePath: string
+  shutdownEvidencePath: string,
+  purpose: PackagedElectronLaunchPurpose
 ): Promise<ElectronApplication> {
   const environment: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -1205,6 +1768,9 @@ async function launchPackaged(
   environment.TMP = isolatedPaths.temporaryDirectory;
   delete environment.CSS_DESKTOP_DEV_URL;
   delete environment.CSS_E2E_DATA_DIR;
+  delete environment[phase3b1RealModelPackageZipEnvironment];
+  delete environment[phase3b1PrivateEvidenceRootEnvironment];
+  delete environment[phase3b1SourceHeadEnvironment];
   environment[packagedShutdownEvidenceEnvironment] =
     shutdownEvidencePath;
   environment[phase3bRuntimeShutdownEvidenceEnvironment] = "1";
@@ -1213,7 +1779,7 @@ async function launchPackaged(
     executablePath,
     cwd: path.dirname(executablePath),
     env: environment,
-    timeout: 45_000
+    timeout: packagedElectronLaunchTimeout(purpose)
   });
 }
 
@@ -1378,9 +1944,13 @@ async function closeOwnedElectron(
   );
   verifiedOwnership = {
     ...verifiedOwnership,
-    processes: exitObservation.processes
+    processes: exitObservation.processes,
+    confirmedExitedTransientProcesses:
+      exitObservation.confirmedExitedTransientProcesses
   };
   ownership.processes = verifiedOwnership.processes;
+  ownership.confirmedExitedTransientProcesses =
+    verifiedOwnership.confirmedExitedTransientProcesses;
   const remaining = exitObservation.remaining;
   if (remaining.length > 0) {
     throw new Error(
@@ -1410,7 +1980,9 @@ async function closeOwnedElectron(
     );
   }
   return {
-    ownedPids: verifiedOwnership.processes.map((item) => item.pid),
+    ownedPids: allOwnedProcessesForEvidence(verifiedOwnership).map(
+      (item) => item.pid
+    ),
     graceful: true,
     forcedPids: [],
     remainingPids: [],
@@ -1548,6 +2120,7 @@ async function establishRootOwnership(
         launcherPid,
         rootPid,
         processes: [{ ...root, kind: "app" }],
+        confirmedExitedTransientProcesses: [],
         baseline: [...beforeLaunch],
         packaged
       };
@@ -1573,6 +2146,8 @@ function startOwnershipSampler(
             current,
             baseline: ownership.baseline,
             owned: ownership.processes,
+            confirmedExitedTransientProcesses:
+              ownership.confirmedExitedTransientProcesses,
             rootPid: ownership.rootPid,
             packaged: ownership.packaged,
             deadlineAt: deadline,
@@ -1580,6 +2155,8 @@ function startOwnershipSampler(
               queryRelevantProcesses(confirmationDeadline)
           });
         ownership.processes = adoption.ownedProcesses;
+        ownership.confirmedExitedTransientProcesses =
+          adoption.confirmedExitedTransientProcesses;
       } catch (error) {
         failure =
           error instanceof Error
@@ -1615,6 +2192,8 @@ async function expandOwnership(
     current,
     baseline: ownership.baseline,
     owned: ownership.processes,
+    confirmedExitedTransientProcesses:
+      ownership.confirmedExitedTransientProcesses,
     rootPid: ownership.rootPid,
     packaged: ownership.packaged,
     deadlineAt,
@@ -1626,6 +2205,8 @@ async function expandOwnership(
     throw new Error("The packaged Electron root identity was lost.");
   }
   ownership.processes = owned;
+  ownership.confirmedExitedTransientProcesses =
+    adoption.confirmedExitedTransientProcesses;
   if (
     requireService &&
     (!owned.some((item) => item.kind === "service") ||
@@ -1773,6 +2354,7 @@ async function waitForOwnedProcessesGone(
   callerDeadline: number
 ): Promise<{
   readonly processes: readonly OwnedProcess[];
+  readonly confirmedExitedTransientProcesses: readonly ConfirmedExitedTransientProcess[];
   readonly remaining: readonly OwnedProcess[];
 }> {
   const deadline = Math.min(
@@ -1780,6 +2362,8 @@ async function waitForOwnedProcessesGone(
     monotonicNow() + timeoutMs
   );
   let processes = ownership.processes;
+  let confirmedExitedTransientProcesses =
+    ownership.confirmedExitedTransientProcesses;
   let remaining: readonly OwnedProcess[] = processes;
   let consecutiveAbsenceObservations = 0;
   while (monotonicNow() < deadline) {
@@ -1788,6 +2372,7 @@ async function waitForOwnedProcessesGone(
       current,
       baseline: ownership.baseline,
       owned: processes,
+      confirmedExitedTransientProcesses,
       rootPid: ownership.rootPid,
       packaged: ownership.packaged,
       deadlineAt: deadline,
@@ -1795,7 +2380,11 @@ async function waitForOwnedProcessesGone(
         queryRelevantProcesses(confirmationDeadline)
     });
     processes = adoption.ownedProcesses;
+    confirmedExitedTransientProcesses =
+      adoption.confirmedExitedTransientProcesses;
     ownership.processes = processes;
+    ownership.confirmedExitedTransientProcesses =
+      confirmedExitedTransientProcesses;
     remaining = remainingOwnedProcesses(
       adoption.observedProcesses,
       processes
@@ -1803,7 +2392,11 @@ async function waitForOwnedProcessesGone(
     if (remaining.length === 0) {
       consecutiveAbsenceObservations += 1;
       if (consecutiveAbsenceObservations >= 2) {
-        return { processes, remaining: [] };
+        return {
+          processes,
+          confirmedExitedTransientProcesses,
+          remaining: []
+        };
       }
     } else {
       consecutiveAbsenceObservations = 0;
@@ -1815,7 +2408,7 @@ async function waitForOwnedProcessesGone(
       "Owned packaged process absence was not confirmed by two inventories."
     );
   }
-  return { processes, remaining };
+  return { processes, confirmedExitedTransientProcesses, remaining };
 }
 
 function samePath(left: string, right: string): boolean {
@@ -1829,7 +2422,7 @@ function evidenceOwnership(ownership: LaunchOwnership) {
   return {
     launcherPid: ownership.launcherPid,
     rootPid: ownership.rootPid,
-    processes: ownership.processes.map((item) => ({
+    processes: allOwnedProcessesForEvidence(ownership).map((item) => ({
       pid: item.pid,
       parentPid: item.parentPid,
       kind: item.kind,
@@ -1857,6 +2450,98 @@ function machineLaunchEvidence(
       remainingPids: exitProof.remainingPids
     }
   };
+}
+
+function phase3b1LocalLaunchProof(
+  launch: 3 | 4,
+  ownership: LaunchOwnership,
+  exitProof: ExitProof
+) {
+  const allOwnedProcesses = allOwnedProcessesForEvidence(ownership);
+  const ownedPids = [...exitProof.ownedPids].sort(
+    (left, right) => left - right
+  );
+  const expectedPids = allOwnedProcesses
+    .map((item) => item.pid)
+    .sort((left, right) => left - right);
+  if (
+    !exitProof.graceful ||
+    exitProof.electronExitCode !== 0 ||
+    exitProof.forcedPids.length !== 0 ||
+    exitProof.remainingPids.length !== 0 ||
+    exitProof.serviceShutdown === null ||
+    ownedPids.join(",") !== expectedPids.join(",") ||
+    !allOwnedProcesses.some((item) => item.kind === "app") ||
+    !allOwnedProcesses.some((item) => item.kind === "service")
+  ) {
+    throw new Error(
+      `The exact Phase 3B.1 owned-process exit proof for launch ${launch} was incomplete.`
+    );
+  }
+  return {
+    launch,
+    preexistingRelevantProcesses: ownership.baseline
+      .map(redactPreexistingProcess)
+      .sort(compareEvidenceProcess),
+    ownedProcesses: allOwnedProcesses.map((item) => ({
+      pid: item.pid,
+      parentPid: item.parentPid,
+      kind: item.kind === "app" ? "electron" : item.kind,
+      executableName: item.name,
+      creationIdentity: item.creationDate,
+      goneAfterShutdown: true,
+      ...phase3b1OwnershipBasis(item)
+    })),
+    electron: {
+      launcherPid: ownership.launcherPid,
+      rootPid: ownership.rootPid,
+      exitCode: 0,
+      forceKillUsed: false
+    },
+    service: { ...exitProof.serviceShutdown },
+    forcedPids: [],
+    remainingPids: [],
+    unrelatedProcessesInspected: false,
+    unrelatedProcessesTerminated: false
+  } as const;
+}
+
+function phase3b1OwnershipBasis(
+  item: OwnedProcess | ConfirmedExitedTransientProcess
+) {
+  if ("pathStatus" in item) {
+    return {
+      ownershipBasis:
+        "verified_exact_parent_and_two_absence_observations" as const,
+      executablePathStatus: item.pathStatus,
+      absenceObservations: item.absenceObservations,
+      verifiedParentCreationIdentity: item.verifiedParentCreationDate
+    };
+  }
+  if (item.executablePath === null) {
+    throw new Error(
+      "An exact-path owned process lost its executable-path provenance."
+    );
+  }
+  return {
+    ownershipBasis: "exact_executable_path_and_verified_ancestry" as const,
+    executablePathStatus: "exact_path_confirmed" as const,
+    absenceObservations: 0 as const,
+    verifiedParentCreationIdentity: null
+  };
+}
+
+function allOwnedProcessesForEvidence(
+  ownership: LaunchOwnership
+): readonly (OwnedProcess | ConfirmedExitedTransientProcess)[] {
+  const processes = [
+    ...ownership.processes,
+    ...ownership.confirmedExitedTransientProcesses
+  ].sort((left, right) => left.pid - right.pid);
+  if (new Set(processes.map((item) => item.pid)).size !== processes.length) {
+    throw new Error("The packaged ownership evidence repeated a PID.");
+  }
+  return processes;
 }
 
 function phase3LaunchShutdownProof(
@@ -2271,6 +2956,7 @@ function buildPhase3bMachineResult({
       productionExportEligible: false,
       humanListeningClaimed: false
     },
+    phase3b1SyntheticMetadata: phase3b1SyntheticMetadataEvidence,
     runtime: {
       ...workflow.runtime,
       runtimeInstanceIds: sortedUniqueStrings([
@@ -2358,6 +3044,15 @@ function requiredEnvironment(name: string): string {
     throw new Error(`${name} is required.`);
   }
   return value.trim();
+}
+
+function requireSourceHead(value: string): string {
+  if (!/^[a-f0-9]{40}$/u.test(value)) {
+    throw new Error(
+      `${phase3b1SourceHeadEnvironment} must be an exact lowercase Git commit SHA.`
+    );
+  }
+  return value;
 }
 
 function hasEnvironmentValue(name: string): boolean {

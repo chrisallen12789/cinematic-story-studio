@@ -262,10 +262,10 @@ test("catalog provides the complete governed edge-case matrix", async () => {
 test("casting profile constants and canonical fingerprint stay pinned", async () => {
   const source = await readFile(contractsPath, "utf8");
   const canonicalMatch = source.match(
-    /GOVERNED_VOICE_CASTING_PROFILE_CANONICAL_JSON\s*=\s*\n?\s*'([^']+)' as const;/,
+    /^export const GOVERNED_VOICE_CASTING_PROFILE_CANONICAL_JSON\s*=\s*\n?\s*'([^']+)' as const;/mu,
   );
   const fingerprintMatch = source.match(
-    /GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT\s*=\s*\n?\s*"([a-f0-9]{64})" as const;/,
+    /^export const GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT\s*=\s*\n?\s*"([a-f0-9]{64})" as const;/mu,
   );
 
   assert.ok(canonicalMatch);
@@ -273,10 +273,10 @@ test("casting profile constants and canonical fingerprint stay pinned", async ()
   assert.equal(sha256(canonicalMatch[1]), fingerprintMatch[1]);
   assert.equal(
     fingerprintMatch[1],
-    "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6",
+    "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97",
   );
   const profile = JSON.parse(canonicalMatch[1]);
-  assert.equal(profile.profileId, "governed-voice-casting-v1@1.0.0");
+  assert.equal(profile.profileId, "governed-voice-casting-v1@1.0.1");
   assert.equal(profile.producerId, "voice-casting-orchestrator@1.0.0");
   assert.equal(profile.rightsPolicyId, "voice-rights-policy-v1");
   assert.equal(profile.providerNeutral, true);
@@ -293,6 +293,7 @@ test("casting profile constants and canonical fingerprint stay pinned", async ()
     "restricted_requires_acknowledgement",
     "unknown_ineligible",
     "prohibited_ineligible",
+    "restricted_private_audition_pending_evidence",
   ]);
   assert.deepEqual(profile.limits, {
     defaultPageSize: 50,

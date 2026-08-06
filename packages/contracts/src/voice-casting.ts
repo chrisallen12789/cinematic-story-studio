@@ -9,14 +9,18 @@ import type {
 } from "./story-analysis.js";
 
 export const VOICE_CASTING_CONTRACT_VERSION = "3.0.0" as const;
-export const GOVERNED_VOICE_CASTING_PROFILE_ID =
+export const LEGACY_GOVERNED_VOICE_CASTING_PROFILE_ID =
   "governed-voice-casting-v1@1.0.0" as const;
+export const GOVERNED_VOICE_CASTING_PROFILE_ID =
+  "governed-voice-casting-v1@1.0.1" as const;
 export const VOICE_CASTING_PRODUCER_ID =
   "voice-casting-orchestrator@1.0.0" as const;
 export const VOICE_RIGHTS_POLICY_ID =
   "voice-rights-policy-v1" as const;
-export const GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT =
+export const LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT =
   "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6" as const;
+export const GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT =
+  "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97" as const;
 
 export const VOICE_CASTING_LIMITS = Object.freeze({
   maximumProductionRoles: 300,
@@ -53,11 +57,16 @@ export const CASTING_COMPATIBILITY_RULES = [
   "declared_metadata_only"
 ] as const;
 
-export const CASTING_RIGHTS_ELIGIBILITY_RULES = [
+export const LEGACY_CASTING_RIGHTS_ELIGIBILITY_RULES = [
   "verified_eligible",
   "restricted_requires_acknowledgement",
   "unknown_ineligible",
   "prohibited_ineligible"
+] as const;
+
+export const CASTING_RIGHTS_ELIGIBILITY_RULES = [
+  ...LEGACY_CASTING_RIGHTS_ELIGIBILITY_RULES,
+  "restricted_private_audition_pending_evidence"
 ] as const;
 
 export const CASTING_HARD_CONSTRAINT_IDS = [
@@ -124,6 +133,9 @@ export const CASTING_GATE_IDS = [
  * lexicographically ordered; rule-array order is policy order.
  */
 export const GOVERNED_VOICE_CASTING_PROFILE_CANONICAL_JSON =
+  '{"castingContractVersion":"3.0.0","compatibilityRules":["hard_constraints_fail_closed","soft_preferences_score_separately","unknown_remains_unknown","no_automatic_assignment","declared_metadata_only"],"conflictRules":["incompatible_voice_reuse","narrator_major_character_reuse","metadata_similarity_risk","accent_or_locale_mismatch","insufficient_expressive_range","rights_conflict","provider_or_model_unavailable","deprecated_voice","role_length_suitability","unresolved_role_assignment","voice_reuse_threshold_exceeded"],"deterministic":true,"explanationRequired":true,"externalSemanticDependency":false,"hardConstraints":["language_support","provider_available","model_available","rights_not_prohibited","rights_known","required_consent","voice_not_blocked","declared_capabilities","role_length_suitability"],"limits":{"defaultPageSize":50,"maximumConflictsPerRun":10000,"maximumExplanationCodePoints":2000,"maximumFinalCandidatesPerRole":12,"maximumHardConstraintResults":16,"maximumPageSize":200,"maximumPreReductionCandidatesPerRole":50,"maximumProductionRoles":300,"maximumSoftPreferenceResults":16,"maximumVoiceProfiles":5000,"maximumVoiceReusePerProfile":2,"maximumWarningsPerEntity":32},"producerId":"voice-casting-orchestrator@1.0.0","profileId":"governed-voice-casting-v1@1.0.1","providerNeutral":true,"rightsEligibilityRules":["verified_eligible","restricted_requires_acknowledgement","unknown_ineligible","prohibited_ineligible","restricted_private_audition_pending_evidence"],"rightsPolicyId":"voice-rights-policy-v1","softPreferences":["locale_match","narration_suitability","dialogue_suitability","expressive_range","age_presentation","vocal_presentation","vocal_texture","speaking_rate","emotional_range","long_form_preference"]}' as const;
+
+export const LEGACY_GOVERNED_VOICE_CASTING_PROFILE_CANONICAL_JSON =
   '{"castingContractVersion":"3.0.0","compatibilityRules":["hard_constraints_fail_closed","soft_preferences_score_separately","unknown_remains_unknown","no_automatic_assignment","declared_metadata_only"],"conflictRules":["incompatible_voice_reuse","narrator_major_character_reuse","metadata_similarity_risk","accent_or_locale_mismatch","insufficient_expressive_range","rights_conflict","provider_or_model_unavailable","deprecated_voice","role_length_suitability","unresolved_role_assignment","voice_reuse_threshold_exceeded"],"deterministic":true,"explanationRequired":true,"externalSemanticDependency":false,"hardConstraints":["language_support","provider_available","model_available","rights_not_prohibited","rights_known","required_consent","voice_not_blocked","declared_capabilities","role_length_suitability"],"limits":{"defaultPageSize":50,"maximumConflictsPerRun":10000,"maximumExplanationCodePoints":2000,"maximumFinalCandidatesPerRole":12,"maximumHardConstraintResults":16,"maximumPageSize":200,"maximumPreReductionCandidatesPerRole":50,"maximumProductionRoles":300,"maximumSoftPreferenceResults":16,"maximumVoiceProfiles":5000,"maximumVoiceReusePerProfile":2,"maximumWarningsPerEntity":32},"producerId":"voice-casting-orchestrator@1.0.0","profileId":"governed-voice-casting-v1@1.0.0","providerNeutral":true,"rightsEligibilityRules":["verified_eligible","restricted_requires_acknowledgement","unknown_ineligible","prohibited_ineligible"],"rightsPolicyId":"voice-rights-policy-v1","softPreferences":["locale_match","narration_suitability","dialogue_suitability","expressive_range","age_presentation","vocal_presentation","vocal_texture","speaking_rate","emotional_range","long_form_preference"]}' as const;
 
 export type VoiceCastingContractVersion =
@@ -321,7 +333,7 @@ export interface CastingVoiceProfile {
   readonly agePresentationRange: {
     readonly minimum: number;
     readonly maximum: number;
-  };
+  } | null;
   readonly vocalPresentation: VocalPresentation;
   readonly vocalTexture: VocalTexture;
   readonly pitchRange: PitchRange;
@@ -333,7 +345,7 @@ export interface CastingVoiceProfile {
   readonly energyRange: {
     readonly minimum: number;
     readonly maximum: number;
-  };
+  } | null;
   readonly expressiveRange: readonly string[];
   readonly narrationSuitability: Suitability;
   readonly dialogueSuitability: Suitability;
@@ -573,11 +585,18 @@ export interface CastingProfile {
     typeof GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT;
 }
 
-export interface CastingProfileReference {
-  readonly profileId: typeof GOVERNED_VOICE_CASTING_PROFILE_ID;
-  readonly fingerprint:
-    typeof GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT;
-}
+export type CastingProfileReference =
+  | {
+      readonly profileId: typeof GOVERNED_VOICE_CASTING_PROFILE_ID;
+      readonly fingerprint:
+        typeof GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT;
+    }
+  | {
+      readonly profileId:
+        typeof LEGACY_GOVERNED_VOICE_CASTING_PROFILE_ID;
+      readonly fingerprint:
+        typeof LEGACY_GOVERNED_VOICE_CASTING_PROFILE_FINGERPRINT;
+    };
 
 export interface CastingPhase2Prerequisites {
   readonly projectId: EntityId;

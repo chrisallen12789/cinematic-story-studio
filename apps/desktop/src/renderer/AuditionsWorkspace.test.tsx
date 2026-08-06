@@ -3,18 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Job, ProjectDetail } from "@cinematic-story-studio/contracts/api";
-import type {
-  AuditionClip,
-  AuditionGateId,
-  AuditionReview,
-  AuditionReviewDecision,
-  AuditionRoleStatus,
-  AuditionSession,
-  AuditionWorkspaceSnapshot,
-  PronunciationEntry,
-  PronunciationDictionary,
-  SpeechAuditionProvenance,
-  SpeechPreviewRequest
+import {
+  GOVERNED_PRIVATE_AUDITION_WARNING,
+  GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+  type AuditionClip,
+  type AuditionGateId,
+  type AuditionReview,
+  type AuditionReviewDecision,
+  type AuditionRoleStatus,
+  type AuditionSession,
+  type AuditionWorkspaceSnapshot,
+  type PronunciationEntry,
+  type PronunciationDictionary,
+  type SpeechAuditionProvenance,
+  type SpeechPreviewRequest
 } from "@cinematic-story-studio/contracts";
 
 import type {
@@ -65,6 +67,9 @@ describe("AuditionsWorkspace", () => {
       screen.getAllByRole("button", { name: "Generate audition" })
     ).toHaveLength(3);
     expect(screen.getByText("Fixture-provider clip · Verified Hit")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Record acceptable" })
+    ).not.toBeInTheDocument();
     for (const gate of [
       "Per-Role Audition Review · role-narrator",
       "Narrator Audition Review",
@@ -231,37 +236,309 @@ describe("AuditionsWorkspace", () => {
     }
   );
 
-  it("refreshes a terminal audition job once across fresh session identities", async () => {
+  it.each([
+    ["Record acceptable", "approve", "approved", "acceptable"],
+    [
+      "Record needs changes",
+      "request_changes",
+      "changes_requested",
+      "needs_changes"
+    ],
+    ["Record undecided", "request_changes", "changes_requested", "undecided"],
+    ["Record unacceptable", "reject", "rejected", "unacceptable"]
+  ] as const)(
+    "records a historical exact-clip %s decision with the latest scope decision as superseded evidence",
+    async (buttonLabel, requestDecision, persistedDecisionState, disposition) => {
+      const api = createApi();
+      const workspace = realLocalWorkspace(false);
+      const session = realLocalSession(workspace);
+      const baseClip = realLocalClip(workspace);
+      const currentReview = workspace.reviews[0];
+      if (currentReview === undefined) {
+        throw new Error("Missing current real per-role review.");
+      }
+      const scopeLatestDecision = reviewDecision({
+        decisionId: "decision-scope-latest",
+        reviewId: "review-scope-prior",
+        gateId: "per_role_audition_review",
+        roleId: "role-narrator",
+        decision: "invalidated",
+        rationale: "Superseded scope evidence.",
+        decidedAt: "2026-07-31T11:59:00Z",
+        supersedesDecisionId: null,
+        expectedReviewRevision: 1
+      });
+      const historicalReview: AuditionReview = {
+        ...baseClip.review,
+        reviewId: "review-historical-clip",
+        revision: 7,
+        latestDecision: null
+      };
+      const historicalClip: AuditionClip = {
+        ...baseClip,
+        review: historicalReview
+      };
+      const projectedWorkspace: AuditionWorkspaceSnapshot = {
+        ...workspace,
+        reviews: [
+          {
+            ...currentReview,
+            reviewId: "review-current-clip",
+            revision: 8,
+            state: "pending",
+            evidence: {
+              ...currentReview.evidence,
+              auditionClipId: "clip-current",
+              auditionClipRevision: 2,
+              evidenceFingerprint: otherDigest
+            },
+            latestDecision: scopeLatestDecision
+          },
+          ...workspace.reviews.slice(1)
+        ],
+        voiceReadinessSnapshot: null
+      };
+      const rationale = `Historical ${disposition} listening rationale.`;
+      const persistedDecision: AuditionReviewDecision = {
+        ...reviewDecision({
+          decisionId: `decision-${disposition}`,
+          reviewId: historicalReview.reviewId,
+          gateId: historicalReview.gateId,
+          roleId: historicalReview.roleId,
+          decision: persistedDecisionState,
+          rationale,
+          decidedAt: now,
+          supersedesDecisionId: scopeLatestDecision.decisionId,
+          expectedReviewRevision: historicalReview.revision
+        }),
+        listeningAttestation: {
+          auditionClipId: historicalClip.auditionClipId,
+          auditionClipRevision: historicalClip.revision,
+          auditionClipFingerprint: historicalClip.clipFingerprint,
+          audioArtifactId: historicalClip.audioArtifact.audioArtifactId,
+          audioArtifactSha256: historicalClip.audioArtifact.sha256,
+          listened: true,
+          disposition,
+          attestationId: `attestation-${disposition}`,
+          actor: { classification: "human", actorId: "desktop-user" },
+          recordedAt: now,
+          rationale,
+          attestationFingerprint: otherDigest,
+          immutable: true
+        }
+      };
+      const persistedReview: AuditionReview = {
+        ...historicalReview,
+        state: persistedDecisionState,
+        latestDecision: persistedDecision,
+        updatedAt: now
+      };
+      const persistedClip: AuditionClip = {
+        ...historicalClip,
+        review: persistedReview,
+        state:
+          persistedDecisionState === "changes_requested"
+            ? "reviewable"
+            : persistedDecisionState
+      };
+      vi.mocked(api.auditions.getWorkspace).mockResolvedValue(
+        ok({
+          correlationId: "correlation-historical-workspace",
+          workspace: projectedWorkspace
+        })
+      );
+      vi.mocked(api.auditions.listSessions).mockResolvedValue(
+        ok({
+          correlationId: "correlation-historical-sessions",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          items: [session]
+        })
+      );
+      vi.mocked(api.auditions.listClips)
+        .mockResolvedValueOnce(
+          ok({
+            correlationId: "correlation-historical-clips-initial",
+            projectId: "project-1",
+            pageSize: 1,
+            total: 1,
+            items: [historicalClip]
+          })
+        )
+        .mockResolvedValue(
+          ok({
+            correlationId: "correlation-historical-clips-persisted",
+            projectId: "project-1",
+            pageSize: 1,
+            total: 1,
+            items: [persistedClip]
+          })
+        );
+      vi.mocked(api.auditions.decideReview).mockResolvedValue(
+        ok({
+          correlationId: "correlation-historical-decision",
+          review: persistedReview,
+          decision: persistedDecision,
+          voiceReadinessSnapshot: null
+        })
+      );
+
+      const user = userEvent.setup();
+      renderWorkspace(api);
+      const clipCard = await screen.findByTestId("audition-clip-clip-1");
+      const scoped = within(clipCard);
+      const decisionButton = scoped.getByRole("button", { name: buttonLabel });
+      expect(decisionButton).toBeDisabled();
+      await user.click(
+        scoped.getByTestId("listened-exact-clip-clip-1")
+      );
+      fireEvent.change(
+        scoped.getByLabelText("Exact-clip decision rationale"),
+        { target: { value: rationale } }
+      );
+      expect(decisionButton).toBeEnabled();
+      await user.click(decisionButton);
+
+      await waitFor(() =>
+        expect(api.auditions.decideReview).toHaveBeenCalledTimes(1)
+      );
+      const request = vi.mocked(api.auditions.decideReview).mock.calls[0]?.[0];
+      expect(request).toEqual({
+        projectId: "project-1",
+        gateId: "per_role_audition_review",
+        roleId: "role-narrator",
+        reviewId: historicalReview.reviewId,
+        expectedReviewRevision: historicalReview.revision,
+        expectedEvidenceFingerprint:
+          historicalReview.evidence.evidenceFingerprint,
+        decision: requestDecision,
+        rationale,
+        supersedesDecisionId: scopeLatestDecision.decisionId,
+        listeningAttestation: {
+          auditionClipId: historicalClip.auditionClipId,
+          auditionClipRevision: historicalClip.revision,
+          auditionClipFingerprint: historicalClip.clipFingerprint,
+          audioArtifactId: historicalClip.audioArtifact.audioArtifactId,
+          audioArtifactSha256: historicalClip.audioArtifact.sha256,
+          listened: true,
+          disposition
+        },
+        idempotencyKey: request?.idempotencyKey
+      });
+      expect(request?.idempotencyKey).toMatch(/^exact-clip-review-/u);
+      const persisted = await screen.findByTestId(
+        "persisted-listening-decision-clip-1"
+      );
+      expect(
+        within(persisted).getByText(`Recorded listening: ${humanizeForTest(disposition)}`)
+      ).toBeVisible();
+      expect(within(persisted).getByText(rationale)).toBeVisible();
+      for (const action of [
+        "Record acceptable",
+        "Record needs changes",
+        "Record undecided",
+        "Record unacceptable"
+      ]) {
+        expect(
+          within(await screen.findByTestId("audition-clip-clip-1")).getByRole(
+            "button",
+            { name: action }
+          )
+        ).toBeDisabled();
+      }
+      expect(screen.getByText("No current readiness snapshot.")).toBeVisible();
+    },
+    10_000
+  );
+
+  it.each(["mismatched", "missing"] as const)(
+    "does not render exact-clip decision controls for a %s review binding",
+    async (kind) => {
+      const api = createApi();
+      const workspace = realLocalWorkspace(false);
+      const clip = realLocalClip(workspace);
+      const malformedClip =
+        kind === "mismatched"
+          ? ({
+              ...clip,
+              review: {
+                ...clip.review,
+                evidence: {
+                  ...clip.review.evidence,
+                  auditionClipId: "clip-unrelated"
+                }
+              }
+            } as AuditionClip)
+          : (Object.fromEntries(
+              Object.entries(clip).filter(([key]) => key !== "review")
+            ) as unknown as AuditionClip);
+      vi.mocked(api.auditions.getWorkspace).mockResolvedValue(
+        ok({ correlationId: "correlation-invalid-binding", workspace })
+      );
+      vi.mocked(api.auditions.listSessions).mockResolvedValue(
+        ok({
+          correlationId: "correlation-invalid-binding-sessions",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          items: [realLocalSession(workspace)]
+        })
+      );
+      vi.mocked(api.auditions.listClips).mockResolvedValue(
+        ok({
+          correlationId: "correlation-invalid-binding-clips",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          items: [malformedClip]
+        })
+      );
+
+      renderWorkspace(api);
+      const clipCard = await screen.findByTestId("audition-clip-clip-1");
+      const scoped = within(clipCard);
+      expect(
+        scoped.getByText(
+          "Exact governed review binding unavailable; human controls are disabled."
+        )
+      ).toBeVisible();
+      expect(
+        scoped.queryByTestId("listened-exact-clip-clip-1")
+      ).not.toBeInTheDocument();
+      expect(
+        scoped.queryByRole("button", { name: "Record acceptable" })
+      ).not.toBeInTheDocument();
+      expect(api.auditions.decideReview).not.toHaveBeenCalled();
+    }
+  );
+
+  it("retains a restored terminal audition job without polling or reloading", async () => {
     const api = createApi();
     const session = {
       ...auditionSession(),
       jobId: "audition-job-1"
     };
-    vi.mocked(api.auditions.listSessions).mockImplementation(async () =>
+    vi.mocked(api.auditions.listSessions).mockResolvedValue(
       ok({
         correlationId: "correlation-sessions-terminal",
         projectId: "project-1",
         pageSize: 1,
         total: 1,
-        items: [{ ...session }]
+        items: [session]
       })
     );
-    vi.mocked(api.jobs.get)
-      .mockResolvedValueOnce(
-        ok({
-          correlationId: "job-terminal",
-          job: auditionJob("succeeded", 1, "complete")
-        })
-      )
-      .mockResolvedValue(fail("NOT_CONFIGURED"));
+    const terminalJob = auditionJob("succeeded", 1, "complete");
 
-    renderWorkspace(api);
+    renderWorkspace(api, { ...projectDetail(), jobs: [terminalJob] });
 
+    const inspector = await screen.findByTestId("audition-job-inspector");
+    expect(await within(inspector).findByText("Complete")).toBeVisible();
+    expect(within(inspector).getByText("Succeeded")).toBeVisible();
     await waitFor(() =>
-      expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(2)
-    );
-    await waitFor(() =>
-      expect(api.auditions.listSessions).toHaveBeenCalledTimes(2)
+      expect(
+        screen.getByRole("button", { name: "Refresh evidence" })
+      ).toBeEnabled()
     );
     await act(async () => {
       await new Promise<void>((resolve) => {
@@ -269,8 +546,214 @@ describe("AuditionsWorkspace", () => {
       });
     });
 
+    expect(api.jobs.get).not.toHaveBeenCalled();
+    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(1);
+    expect(api.auditions.listSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps full hydration busy and disables evidence refresh until it completes", async () => {
+    const api = createApi();
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations).mockImplementationOnce(
+      async () => {
+        await hydrationGate;
+        return ok({
+          correlationId: "correlation-pronunciations-deferred",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        });
+      }
+    );
+
+    renderWorkspace(api);
+
+    await screen.findByRole("heading", {
+      name: "Auditions & Pronunciation"
+    });
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(1)
+    );
+    const workspace = document.querySelector(".auditions-workspace");
+    expect(workspace).toHaveAttribute("aria-busy", "true");
+    expect(workspace).toHaveAttribute("inert");
+    expect(screen.getByText("Refresh evidence")).toBeDisabled();
+    const generateButton = screen.getAllByText("Generate audition")[0];
+    if (!(generateButton instanceof HTMLButtonElement)) {
+      throw new Error("The audition-generation control was unavailable.");
+    }
+    fireEvent.click(generateButton);
+    expect(api.auditions.generate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      releaseHydration();
+      await hydrationGate;
+    });
+    await waitFor(() => expect(workspace).toHaveAttribute("aria-busy", "false"));
+    expect(
+      screen.getByRole("button", { name: "Refresh evidence" })
+    ).toBeEnabled();
+  });
+
+  it("serializes a terminal-job refresh behind an active workspace hydration", async () => {
+    const api = createApi();
+    const session = {
+      ...auditionSession(),
+      jobId: "audition-job-1"
+    };
+    vi.mocked(api.auditions.listSessions).mockResolvedValue(
+      ok({
+        correlationId: "correlation-sessions-serialized",
+        projectId: "project-1",
+        pageSize: 1,
+        total: 1,
+        items: [session]
+      })
+    );
+    vi.mocked(api.jobs.get).mockResolvedValue(
+      ok({
+        correlationId: "job-terminal-serialized",
+        job: auditionJob("succeeded", 1, "complete")
+      })
+    );
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations).mockImplementationOnce(
+      async () => {
+        await hydrationGate;
+        return ok({
+          correlationId: "correlation-pronunciations-serialized",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        });
+      }
+    );
+
+    renderWorkspace(api);
+
+    await waitFor(() => expect(api.jobs.get).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(1)
+    );
+    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      releaseHydration();
+      await hydrationGate;
+    });
+    await waitFor(() =>
+      expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh evidence" })
+      ).toBeEnabled()
+    );
     expect(api.jobs.get).toHaveBeenCalledTimes(1);
-    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds a queued hydration to the new project during a deferred rerender", async () => {
+    const api = createApi();
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations).mockImplementationOnce(
+      async () => {
+        await hydrationGate;
+        return ok({
+          correlationId: "correlation-pronunciations-old-project",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [
+            {
+              ...pronunciationEntry(),
+              writtenForm: "Old project only"
+            }
+          ]
+        });
+      }
+    );
+    const onNotice = vi.fn();
+    const onError = vi.fn();
+    const firstProject = projectDetail();
+    const secondProject: ProjectDetail = {
+      ...projectDetail(),
+      project: {
+        ...projectDetail().project,
+        projectId: "project-2",
+        name: "Second synthetic project"
+      }
+    };
+    const rendered = render(
+      <AuditionsWorkspace
+        project={firstProject}
+        api={api}
+        connected
+        onNotice={onNotice}
+        onError={onError}
+      />
+    );
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(1)
+    );
+
+    rendered.rerender(
+      <AuditionsWorkspace
+        project={secondProject}
+        api={api}
+        connected
+        onNotice={onNotice}
+        onError={onError}
+      />
+    );
+    expect(api.auditions.getWorkspace).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      releaseHydration();
+      await hydrationGate;
+    });
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(2)
+    );
+    expect(api.auditions.getWorkspace).toHaveBeenNthCalledWith(2, {
+      projectId: "project-2",
+      roleLimit: 12
+    });
+    expect(api.auditions.listModelPackages).toHaveBeenLastCalledWith({
+      projectId: "project-2",
+      limit: 50
+    });
+    expect(api.auditions.listSessions).toHaveBeenLastCalledWith({
+      projectId: "project-2",
+      limit: 50
+    });
+    expect(api.auditions.listClips).toHaveBeenLastCalledWith({
+      projectId: "project-2",
+      limit: 50
+    });
+    expect(api.auditions.listPronunciations).toHaveBeenLastCalledWith({
+      projectId: "project-2",
+      limit: 50,
+      expectedDictionaryRevision: 1,
+      expectedDictionaryFingerprint: digest
+    });
+    expect(screen.queryByText("Old project only")).not.toBeInTheDocument();
   });
 
   it("creates an explicit governed pronunciation-test script", async () => {
@@ -609,6 +1092,9 @@ describe("AuditionsWorkspace", () => {
     const user = userEvent.setup();
     renderWorkspace(api);
     await screen.findByText("Harbor");
+    await waitFor(() =>
+      expect(screen.getByText("Refresh evidence")).toBeEnabled()
+    );
 
     await user.type(
       screen.getByLabelText("Pronunciation decision rationale"),
@@ -696,6 +1182,325 @@ describe("AuditionsWorkspace", () => {
       });
   });
 
+  it("requires an exact restricted acknowledgement for a real-local session", async () => {
+    const api = createApi();
+    const workspace = realLocalWorkspace(true);
+    vi.mocked(api.auditions.getWorkspace).mockResolvedValue(
+      ok({
+        correlationId: "correlation-real-local-sessionless-workspace",
+        workspace
+      })
+    );
+    vi.mocked(api.auditions.listSessions).mockResolvedValue(
+      ok({
+        correlationId: "correlation-real-local-no-sessions",
+        projectId: "project-1",
+        pageSize: 0,
+        total: 0,
+        items: []
+      })
+    );
+    vi.mocked(api.auditions.listClips).mockResolvedValue(
+      ok({
+        correlationId: "correlation-real-local-no-clips",
+        projectId: "project-1",
+        pageSize: 0,
+        total: 0,
+        items: []
+      })
+    );
+    const user = userEvent.setup();
+    renderWorkspace(api);
+
+    const inventory = await screen.findByTestId("real-local-voice-inventory");
+    expect(
+      within(inventory).getByRole("heading", { name: "Real Local Voices" })
+    ).toBeVisible();
+    expect(within(inventory).getByText(GOVERNED_PRIVATE_AUDITION_WARNING))
+      .toBeVisible();
+    expect(
+      within(inventory).getByText(
+        `Warning SHA-256: ${GOVERNED_PRIVATE_AUDITION_WARNING_SHA256}`
+      )
+    ).toBeVisible();
+    expect(within(inventory).getByText("Local Voice 001")).toBeVisible();
+    expect(within(inventory).getByText("Production export: prohibited"))
+      .toBeVisible();
+    expect(
+      within(inventory).getByText("kokoro-82m-v1.0-onnx-q8-af-heart")
+    ).toBeVisible();
+    expect(within(inventory).getByText("runtime-profile-1")).toBeVisible();
+    expect(
+      within(inventory).getByText(/kokoro-local-voice-001-rights-v1 r1/u)
+    ).toBeVisible();
+    expect(within(inventory).queryByText("voices/af_heart.bin"))
+      .not.toBeInTheDocument();
+    expect(within(inventory).queryByText("522240"))
+      .not.toBeInTheDocument();
+
+    const createSession = await screen.findByRole("button", {
+      name: "Create audition session"
+    });
+    expect(createSession).toBeDisabled();
+    await user.click(
+      within(inventory).getByTestId(
+        "restricted-local-audition-acknowledgement"
+      )
+    );
+    const reason = within(inventory).getByLabelText(
+      "Restricted-audition reason"
+    );
+    await user.clear(reason);
+    await user.type(reason, "Create one exact private comparison audition.");
+    expect(createSession).toBeEnabled();
+    await user.click(createSession);
+
+    await waitFor(() =>
+      expect(api.auditions.createSession).toHaveBeenCalledTimes(1)
+    );
+    const narrator = workspace.roles.items[0];
+    if (narrator === undefined) throw new Error("Missing real narrator role.");
+    const request = vi.mocked(api.auditions.createSession).mock.calls[0]?.[0];
+    expect(request).toEqual({
+      projectId: "project-1",
+      roleId: narrator.roleId,
+      evidence: narrator.sessionEvidence,
+      restrictedLocalAuditionActivation: {
+        expectedInventoryFingerprint:
+          workspace.voiceInventory?.inventoryFingerprint,
+        expectedWarningFingerprint:
+          GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+        reason: "Create one exact private comparison audition."
+      },
+      idempotencyKey: request?.idempotencyKey
+    });
+    expect(request?.idempotencyKey).toMatch(/^audition-session-/u);
+  }, 10_000);
+
+  it.each([
+    ["Approve", "approve", "acceptable"],
+    ["Request changes", "request_changes", "needs_changes"],
+    ["Record undecided", "request_changes", "undecided"],
+    ["Reject", "reject", "unacceptable"]
+  ] as const)(
+    "requires exact-clip listening before %s and maps the disposition",
+    async (buttonLabel, decision, disposition) => {
+      const api = createApi();
+      const workspace = realLocalWorkspace(false);
+      const session = realLocalSession(workspace);
+      const clip = realLocalClip(workspace);
+      vi.mocked(api.auditions.getWorkspace).mockResolvedValue(
+        ok({ correlationId: "correlation-real-local-workspace", workspace })
+      );
+      vi.mocked(api.auditions.listSessions).mockResolvedValue(
+        ok({
+          correlationId: "correlation-real-local-sessions",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          items: [session]
+        })
+      );
+      vi.mocked(api.auditions.listClips).mockResolvedValue(
+        ok({
+          correlationId: "correlation-real-local-clips",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          items: [clip]
+        })
+      );
+      const user = userEvent.setup();
+      renderWorkspace(api);
+
+      const reviewLabel = await screen.findByText(
+        /Per-Role Audition Review/u
+      );
+      const reviewCard = reviewLabel.closest("article");
+      expect(reviewCard).not.toBeNull();
+      const reviewScope = within(reviewCard as HTMLElement);
+      const decisionButton = reviewScope.getByRole("button", {
+        name: buttonLabel
+      });
+      expect(decisionButton).toBeDisabled();
+
+      await user.click(
+        await screen.findByTestId("listened-exact-clip-clip-1")
+      );
+      expect(decisionButton).toBeEnabled();
+      fireEvent.change(reviewScope.getByLabelText("Decision rationale"), {
+        target: { value: "I listened to this exact private real-local clip." }
+      });
+      await user.click(decisionButton);
+
+      await waitFor(() =>
+        expect(api.auditions.decideReview).toHaveBeenCalledTimes(1)
+      );
+      const request = vi.mocked(api.auditions.decideReview).mock.calls[0]?.[0];
+      expect(request).toEqual({
+        projectId: "project-1",
+        gateId: "per_role_audition_review",
+        roleId: "role-narrator",
+        reviewId: "review-role",
+        expectedReviewRevision: 1,
+        expectedEvidenceFingerprint: digest,
+        decision,
+        rationale: "I listened to this exact private real-local clip.",
+        supersedesDecisionId: null,
+        listeningAttestation: {
+          auditionClipId: clip.auditionClipId,
+          auditionClipRevision: clip.revision,
+          auditionClipFingerprint: clip.clipFingerprint,
+          audioArtifactId: clip.audioArtifact.audioArtifactId,
+          audioArtifactSha256: clip.audioArtifact.sha256,
+          listened: true,
+          disposition
+        },
+        idempotencyKey: request?.idempotencyKey
+      });
+      expect(request?.idempotencyKey).toMatch(
+        /^review-per_role_audition_review-/u
+      );
+    }
+  );
+
+  it("renders a persisted undecided listening record without claiming readiness", async () => {
+    const api = createApi();
+    const workspace = realLocalWorkspace(false);
+    const clip = realLocalClip(workspace);
+    const review = workspace.reviews[0];
+    if (review === undefined) throw new Error("Missing real per-role review.");
+    const rationale =
+      "I listened to this exact private clip and have not made a quality decision.";
+    const latestDecision: AuditionReviewDecision = {
+      ...reviewDecision({
+        decisionId: "decision-undecided",
+        reviewId: review.reviewId,
+        gateId: review.gateId,
+        roleId: review.roleId,
+        decision: "changes_requested",
+        rationale,
+        decidedAt: now,
+        supersedesDecisionId: null,
+        expectedReviewRevision: review.revision
+      }),
+      listeningAttestation: {
+        auditionClipId: clip.auditionClipId,
+        auditionClipRevision: clip.revision,
+        auditionClipFingerprint: clip.clipFingerprint,
+        audioArtifactId: clip.audioArtifact.audioArtifactId,
+        audioArtifactSha256: clip.audioArtifact.sha256,
+        listened: true,
+        disposition: "undecided",
+        attestationId: "listening-attestation-undecided",
+        actor: { classification: "human", actorId: "desktop-user" },
+        recordedAt: now,
+        rationale,
+        attestationFingerprint: otherDigest,
+        immutable: true
+      }
+    };
+    const persistedWorkspace: AuditionWorkspaceSnapshot = {
+      ...workspace,
+      reviews: [
+        {
+          ...review,
+          state: "changes_requested",
+          latestDecision,
+          updatedAt: latestDecision.decidedAt
+        },
+        ...workspace.reviews.slice(1)
+      ],
+      voiceReadinessSnapshot: null
+    };
+    vi.mocked(api.auditions.getWorkspace).mockResolvedValue(
+      ok({
+        correlationId: "correlation-undecided-workspace",
+        workspace: persistedWorkspace
+      })
+    );
+    vi.mocked(api.auditions.listSessions).mockResolvedValue(
+      ok({
+        correlationId: "correlation-undecided-sessions",
+        projectId: "project-1",
+        pageSize: 1,
+        total: 1,
+        items: [realLocalSession(workspace)]
+      })
+    );
+    vi.mocked(api.auditions.listClips).mockResolvedValue(
+      ok({
+        correlationId: "correlation-undecided-clips",
+        projectId: "project-1",
+        pageSize: 1,
+        total: 1,
+        items: [clip]
+      })
+    );
+
+    renderWorkspace(api);
+
+    expect(
+      await screen.findByText(
+        "Changes Requested · Listening Undecided · immutable history"
+      )
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Undecided is not approval; voice readiness remains blocked."
+      )
+    ).toBeVisible();
+    expect(screen.getByText("Not ready")).toBeVisible();
+    expect(screen.getByText("No current readiness snapshot.")).toBeVisible();
+  });
+
+  it("fails closed when a per-role review's exact clip is off the bounded page", async () => {
+    const api = createApi();
+    const workspace = realLocalWorkspace(false);
+    vi.mocked(api.auditions.getWorkspace).mockResolvedValue(
+      ok({ correlationId: "correlation-off-page-real-workspace", workspace })
+    );
+    vi.mocked(api.auditions.listSessions).mockResolvedValue(
+      ok({
+        correlationId: "correlation-off-page-real-sessions",
+        projectId: "project-1",
+        pageSize: 1,
+        total: 1,
+        items: [realLocalSession(workspace)]
+      })
+    );
+    vi.mocked(api.auditions.listClips).mockResolvedValue(
+      ok({
+        correlationId: "correlation-off-page-real-clips",
+        projectId: "project-1",
+        pageSize: 0,
+        total: 1,
+        nextCursor: "opaque-real-clip-page",
+        items: []
+      })
+    );
+    renderWorkspace(api);
+
+    const reviewLabel = await screen.findByText(/Per-Role Audition Review/u);
+    const reviewCard = reviewLabel.closest("article");
+    expect(reviewCard).not.toBeNull();
+    const reviewScope = within(reviewCard as HTMLElement);
+    expect(
+      reviewScope.getByText(
+        "Exact review clip is not on this bounded page. Load it before deciding whether listening evidence applies."
+      )
+    ).toBeVisible();
+    for (const label of [
+      "Approve",
+      "Request changes",
+      "Record undecided",
+      "Reject"
+    ]) {
+      expect(reviewScope.getByRole("button", { name: label })).toBeDisabled();
+    }
+    expect(api.auditions.decideReview).not.toHaveBeenCalled();
+  });
+
   it("clears only the project-owned audition cache with an explicit reason", async () => {
     const api = createApi();
     const user = userEvent.setup();
@@ -720,8 +1525,34 @@ describe("AuditionsWorkspace", () => {
       });
   });
 
-  it("requires restricted-use acknowledgement and never sends the selected ZIP path", async () => {
+  it("defers install completion until refreshed evidence settles and never sends the ZIP path", async () => {
     const api = createApi();
+    let releaseRefresh: () => void = () => undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations)
+      .mockResolvedValueOnce(
+        ok({
+          correlationId: "correlation-initial-pronunciations",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        })
+      )
+      .mockImplementationOnce(async () => {
+        await refreshGate;
+        return ok({
+          correlationId: "correlation-refreshed-pronunciations",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        });
+      });
     vi.mocked(api.auditions.listModelPackages).mockResolvedValue(
       ok({
         correlationId: "correlation-real-model",
@@ -738,11 +1569,35 @@ describe("AuditionsWorkspace", () => {
       })
     );
     const user = userEvent.setup();
-    renderWorkspace(api);
+    const onNotice = vi.fn();
+    render(
+      <AuditionsWorkspace
+        project={projectDetail()}
+        api={api}
+        connected
+        onNotice={onNotice}
+        onError={vi.fn()}
+      />
+    );
 
     const install = await screen.findByRole("button", {
       name: "Choose ZIP & install"
     });
+    const modelTable = screen.getByRole("table", {
+      name: "Installed model packages and verification"
+    });
+    expect(within(modelTable).getByTitle(otherDigest)).toBeVisible();
+    expect(screen.getByLabelText("Model Packages pagination")).toBeVisible();
+    const installControls = screen.getByRole("group", {
+      name: "Local model ZIP install & repair"
+    });
+    expect(
+      within(installControls).getByRole("textbox", {
+        name: "Install or repair reason"
+      })
+    ).toHaveValue(
+      "Use these exact local model bytes only for restricted local auditions."
+    );
     expect(install).toBeDisabled();
     await user.click(
       screen.getByRole("checkbox", {
@@ -753,6 +1608,13 @@ describe("AuditionsWorkspace", () => {
     await user.click(install);
     await waitFor(() =>
       expect(api.auditions.selectLocalModelPackage).toHaveBeenCalledTimes(1)
+    );
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(2)
+    );
+    expect(install).toBeDisabled();
+    expect(onNotice).not.toHaveBeenCalledWith(
+      "The local model install completed from verified ZIP bytes."
     );
     const request = vi.mocked(api.auditions.selectLocalModelPackage).mock
       .calls[0]?.[0];
@@ -765,6 +1627,15 @@ describe("AuditionsWorkspace", () => {
       acknowledgeRestrictedLocalUse: true
     });
     expect(request).not.toHaveProperty("sourcePath");
+    await act(async () => {
+      releaseRefresh();
+      await refreshGate;
+    });
+    await waitFor(() =>
+      expect(onNotice).toHaveBeenCalledWith(
+        "The local model install completed from verified ZIP bytes."
+      )
+    );
   });
 
   it("pages every governed role while rendering only one bounded role page", async () => {
@@ -1166,6 +2037,32 @@ describe("AuditionsWorkspace", () => {
 
   it("removes only an exact inactive model revision through the governed action", async () => {
     const api = createApi();
+    let releaseRefresh: () => void = () => undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    vi.mocked(api.auditions.listPronunciations)
+      .mockResolvedValueOnce(
+        ok({
+          correlationId: "correlation-initial-remove-pronunciations",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        })
+      )
+      .mockImplementationOnce(async () => {
+        await refreshGate;
+        return ok({
+          correlationId: "correlation-refreshed-remove-pronunciations",
+          projectId: "project-1",
+          pageSize: 1,
+          total: 1,
+          dictionary: dictionary(),
+          items: [pronunciationEntry()]
+        });
+      });
     const workspace = workspaceSnapshot();
     const currentInstallation = workspace.modelInstallations[0];
     if (currentInstallation === undefined) {
@@ -1198,13 +2095,30 @@ describe("AuditionsWorkspace", () => {
       })
     );
     const user = userEvent.setup();
-    renderWorkspace(api);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Remove inactive model" })
+    const onNotice = vi.fn();
+    render(
+      <AuditionsWorkspace
+        project={projectDetail()}
+        api={api}
+        connected
+        onNotice={onNotice}
+        onError={vi.fn()}
+      />
     );
+
+    const remove = await screen.findByRole("button", {
+      name: "Remove inactive model"
+    });
+    await user.click(remove);
     await waitFor(() =>
       expect(api.auditions.performModelPackageAction).toHaveBeenCalledTimes(1)
+    );
+    await waitFor(() =>
+      expect(api.auditions.listPronunciations).toHaveBeenCalledTimes(2)
+    );
+    expect(remove).toBeDisabled();
+    expect(onNotice).not.toHaveBeenCalledWith(
+      "The model remove operation completed."
     );
     const removeModelInput =
       vi.mocked(api.auditions.performModelPackageAction).mock.calls[0]?.[0];
@@ -1219,13 +2133,25 @@ describe("AuditionsWorkspace", () => {
           "User requested governed removal of this exact inactive local model package.",
         idempotencyKey: removeModelInput?.idempotencyKey
       });
+    await act(async () => {
+      releaseRefresh();
+      await refreshGate;
+    });
+    await waitFor(() =>
+      expect(onNotice).toHaveBeenCalledWith(
+        "The model remove operation completed."
+      )
+    );
   });
 });
 
-function renderWorkspace(api: CinematicStoryDesktopApi) {
+function renderWorkspace(
+  api: CinematicStoryDesktopApi,
+  project: ProjectDetail = projectDetail()
+) {
   return render(
     <AuditionsWorkspace
-      project={projectDetail()}
+      project={project}
       api={api}
       connected
       onNotice={vi.fn()}
@@ -1633,6 +2559,330 @@ function workspaceSnapshot(): AuditionWorkspaceSnapshot {
   };
 }
 
+function realLocalWorkspace(sessionless: boolean): AuditionWorkspaceSnapshot {
+  const workspace = workspaceSnapshot();
+  const inventory = governedVoiceInventory();
+  const voice = inventory.items[0];
+  const narrator = workspace.roles.items[0];
+  if (voice === undefined || narrator === undefined) {
+    throw new Error("The real-local workspace fixtures were unavailable.");
+  }
+  const binding = realLocalRuntimeBinding(voice);
+  const evidence = realLocalEvidence(narrator, voice, binding);
+  const realNarrator: AuditionRoleStatus = {
+    ...narrator,
+    voiceProfileId: voice.voiceProfileId,
+    voiceDisplayLabel: voice.neutralDisplayLabel,
+    governedLocalVoice: voice,
+    voiceRuntimeBinding: binding,
+    rightsState: "restricted",
+    latestSessionId: sessionless ? null : "session-narrator",
+    latestClipId: sessionless ? null : "clip-1",
+    sessionEvidence: evidence,
+    generationRequest: null,
+    productionExportEligible: false
+  };
+  return {
+    ...workspace,
+    voiceInventory: inventory,
+    providers: workspace.providers.map((item) =>
+      item.providerClass === "real_local"
+        ? { ...item, productionExportEligible: false }
+        : item
+    ),
+    runtimeProfiles: workspace.runtimeProfiles.map((profile) => ({
+      ...profile,
+      compatibleModelPackageIds: [
+        ...new Set([
+          ...profile.compatibleModelPackageIds,
+          voice.modelPackageId
+        ])
+      ]
+    })),
+    roles: {
+      ...workspace.roles,
+      items: [realNarrator, ...workspace.roles.items.slice(1)]
+    }
+  };
+}
+
+function governedVoiceInventory(): NonNullable<
+  AuditionWorkspaceSnapshot["voiceInventory"]
+> {
+  return {
+    inventoryId: "kokoro-local-voice-inventory-v1",
+    inventoryRevision: 1,
+    inventoryFingerprint: "c".repeat(64),
+    warningText: GOVERNED_PRIVATE_AUDITION_WARNING,
+    warningFingerprint: GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+    items: [
+      {
+        contractVersion: "1.0.0",
+        inventoryRecordId: "kokoro-local-voice-001-inventory",
+        neutralDisplayLabel: "Local Voice 001",
+        providerId: "real-provider",
+        providerVersion: "1.0.0",
+        providerVoiceId: "af_heart",
+        modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+        modelVersion: "1.0",
+        modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart",
+        modelPackageFingerprint:
+          "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0",
+        voiceProfileId: "kokoro-local-voice-001",
+        voiceProfileVersion: "1.0.0",
+        voiceProfileFingerprint:
+          "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210",
+        catalogRevisionId: "governed-local-voice-catalog-v2@2.0.0",
+        catalogRevisionFingerprint:
+          "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc",
+        voiceTensor: {
+          relativePath: "voices/af_heart.bin",
+          byteSize: 522_240,
+          sha256:
+            "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+          scalarFormat: "float32_le",
+          shape: [510, 256],
+          elementCount: 130_560
+        },
+        rights: {
+          rightsRecordId: "kokoro-local-voice-001-rights-v1",
+          rightsRecordRevision: 1,
+          rightsRecordFingerprint:
+            "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038",
+          rightsState: "restricted",
+          consentStatus: "unknown",
+          commercialUseClassification: "unknown",
+          redistributionClassification: "prohibited",
+          evidenceReferences: [
+            "https://huggingface.co/hexgrad/Kokoro-82M",
+            "official-package-metadata:kokoro-local-voice-001"
+          ]
+        },
+        language: "en",
+        locale: "en-US",
+        providerDeclaredPresentationCategory: "American / Female",
+        providerDeclaredMetadataIndependentlyVerified: false,
+        technicalCompatibility: "compatible",
+        activationEligibility: "restricted_private_audition",
+        activationReasonCode: "RESTRICTED_PRIVATE_LOCAL_AUDITION_ONLY",
+        knownLimitations: [
+          "Human listening and performer-consent evidence remain pending."
+        ],
+        unresolvedEvidenceCodes: ["PERFORMER_CONSENT_UNKNOWN"],
+        productionExportEligible: false,
+        inventoryFingerprint: "1".repeat(64),
+        provenance: provenance("application")
+      }
+    ]
+  };
+}
+
+function realLocalRuntimeBinding(
+  voice: NonNullable<
+    AuditionWorkspaceSnapshot["voiceInventory"]
+  >["items"][number]
+): NonNullable<AuditionRoleStatus["voiceRuntimeBinding"]> {
+  return {
+    contractVersion: "1.0.0",
+    bindingId: "voice-runtime-binding-role-narrator",
+    bindingKind: "exact_provider_match",
+    voiceProfileId: voice.voiceProfileId,
+    voiceProfileVersion: voice.voiceProfileVersion,
+    voiceProfileFingerprint: voice.voiceProfileFingerprint,
+    sourceProviderId: voice.providerId,
+    sourceProviderVersion: voice.providerVersion,
+    sourceProviderFingerprint: "2".repeat(64),
+    sourceModelId: voice.modelId,
+    sourceModelVersion: voice.modelVersion,
+    sourceModelFingerprint: "3".repeat(64),
+    providerId: voice.providerId,
+    providerVersion: voice.providerVersion,
+    providerVoiceId: voice.providerVoiceId,
+    modelId: voice.modelId,
+    modelVersion: voice.modelVersion,
+    modelPackageId: voice.modelPackageId,
+    modelPackageFingerprint: voice.modelPackageFingerprint,
+    runtimeProfileId: "runtime-profile-1",
+    runtimeProfileFingerprint: digest,
+    bindingFingerprint: "4".repeat(64),
+    active: true,
+    provenance: provenance("application"),
+    createdAt: now
+  };
+}
+
+function realLocalEvidence(
+  roleStatus: AuditionRoleStatus,
+  voice: NonNullable<
+    AuditionWorkspaceSnapshot["voiceInventory"]
+  >["items"][number],
+  binding: NonNullable<AuditionRoleStatus["voiceRuntimeBinding"]>
+): NonNullable<AuditionRoleStatus["sessionEvidence"]> {
+  const evidence = roleStatus.sessionEvidence;
+  if (evidence === null) throw new Error("Missing role evidence fixture.");
+  return {
+    ...evidence,
+    voiceProfileId: voice.voiceProfileId,
+    voiceProfileVersion: voice.voiceProfileVersion,
+    voiceRuntimeBindingId: binding.bindingId,
+    voiceRuntimeBindingFingerprint: binding.bindingFingerprint,
+    providerVoiceId: voice.providerVoiceId,
+    providerId: voice.providerId,
+    providerVersion: voice.providerVersion,
+    modelId: voice.modelId,
+    modelVersion: voice.modelVersion,
+    catalogRevisionId: voice.catalogRevisionId,
+    catalogFingerprint: voice.catalogRevisionFingerprint,
+    rightsRecordId: voice.rights.rightsRecordId,
+    rightsRecordRevision: voice.rights.rightsRecordRevision,
+    rightsRecordFingerprint: voice.rights.rightsRecordFingerprint,
+    runtimeProfileId: binding.runtimeProfileId,
+    runtimeProfileFingerprint: binding.runtimeProfileFingerprint,
+    modelPackageId: voice.modelPackageId,
+    modelPackageFingerprint: voice.modelPackageFingerprint
+  };
+}
+
+function realLocalActivation(
+  workspace: AuditionWorkspaceSnapshot
+): NonNullable<AuditionSession["governedLocalVoiceActivation"]> {
+  const inventory = workspace.voiceInventory;
+  const voice = inventory?.items[0];
+  const roleStatus = workspace.roles.items[0];
+  const evidence = roleStatus?.sessionEvidence;
+  const binding = roleStatus?.voiceRuntimeBinding;
+  if (
+    inventory === undefined ||
+    voice === undefined ||
+    roleStatus === undefined ||
+    evidence === null ||
+    evidence === undefined ||
+    binding === null ||
+    binding === undefined
+  ) {
+    throw new Error("The real-local activation fixture was incomplete.");
+  }
+  return {
+    contractVersion: "1.0.0",
+    acknowledgement: {
+      contractVersion: "1.0.0",
+      acknowledgementId: "restricted-audition-acknowledgement-1",
+      actor: { classification: "human", actorId: "desktop-user" },
+      acknowledgedAt: now,
+      reason: "Create one exact private comparison audition.",
+      warningText: GOVERNED_PRIVATE_AUDITION_WARNING,
+      warningFingerprint: GOVERNED_PRIVATE_AUDITION_WARNING_SHA256,
+      inventoryRecordId: voice.inventoryRecordId,
+      inventoryFingerprint: inventory.inventoryFingerprint,
+      providerId: voice.providerId,
+      providerVersion: voice.providerVersion,
+      modelId: voice.modelId,
+      modelVersion: voice.modelVersion,
+      modelPackageId: voice.modelPackageId,
+      modelPackageFingerprint: voice.modelPackageFingerprint,
+      voiceProfileId: voice.voiceProfileId,
+      voiceProfileVersion: voice.voiceProfileVersion,
+      voiceProfileFingerprint: voice.voiceProfileFingerprint,
+      catalogRevisionId: voice.catalogRevisionId,
+      catalogRevisionFingerprint: voice.catalogRevisionFingerprint,
+      voiceTensorSha256: voice.voiceTensor.sha256,
+      rightsRecordId: voice.rights.rightsRecordId,
+      rightsRecordRevision: voice.rights.rightsRecordRevision,
+      rightsRecordFingerprint: voice.rights.rightsRecordFingerprint,
+      restrictedRightsCorrectionId: "restricted-rights-correction-1",
+      restrictedRightsCorrectionFingerprint: "5".repeat(64),
+      modelInstallationAcknowledgementEventId: "model-event-real-1",
+      modelVerificationId: "model-verification-real-1",
+      modelVerificationFingerprint: "6".repeat(64),
+      privateLocalAuditionOnly: true,
+      productionExportAuthorized: false,
+      commercialDistributionAuthorized: false,
+      marketplaceResaleAuthorized: false,
+      cloningAuthorized: false,
+      realPersonImitationAuthorized: false,
+      acknowledgementFingerprint: "7".repeat(64),
+      immutable: true,
+      provenance: provenance("human") as SpeechAuditionProvenance & {
+        readonly origin: "human";
+      }
+    },
+    castAssignmentId: evidence.castAssignmentId,
+    castAssignmentRevision: evidence.castAssignmentRevision,
+    castAssignmentFingerprint: "8".repeat(64),
+    approvedCastSnapshotId: evidence.approvedCastSnapshotId,
+    approvedCastSnapshotRevision: evidence.approvedCastSnapshotRevision,
+    approvedCastSnapshotFingerprint:
+      evidence.approvedCastSnapshotFingerprint,
+    runtimeProfileId: binding.runtimeProfileId,
+    runtimeProfileFingerprint: binding.runtimeProfileFingerprint,
+    privateLocalAuditionOnly: true,
+    productionExportEligible: false,
+    bindingFingerprint: "9".repeat(64)
+  };
+}
+
+function realLocalSession(workspace: AuditionWorkspaceSnapshot): AuditionSession {
+  const roleStatus = workspace.roles.items[0];
+  const binding = roleStatus?.voiceRuntimeBinding;
+  const evidence = roleStatus?.sessionEvidence;
+  if (
+    roleStatus === undefined ||
+    binding === null ||
+    binding === undefined ||
+    evidence === null ||
+    evidence === undefined
+  ) {
+    throw new Error("The real-local session fixture was incomplete.");
+  }
+  return {
+    ...auditionSession(),
+    castAssignmentId: evidence.castAssignmentId,
+    castAssignmentRevision: evidence.castAssignmentRevision,
+    approvedCastSnapshotId: evidence.approvedCastSnapshotId,
+    approvedCastSnapshotRevision: evidence.approvedCastSnapshotRevision,
+    approvedCastSnapshotFingerprint:
+      evidence.approvedCastSnapshotFingerprint,
+    voiceRuntimeBindingId: binding.bindingId,
+    voiceRuntimeBindingFingerprint: binding.bindingFingerprint,
+    providerVoiceId: binding.providerVoiceId,
+    voiceRuntimeBinding: binding,
+    governedLocalVoiceActivation: realLocalActivation(workspace),
+    providerId: binding.providerId,
+    providerVersion: binding.providerVersion,
+    modelPackageFingerprint: binding.modelPackageFingerprint,
+    runtimeProfileFingerprint: binding.runtimeProfileFingerprint
+  };
+}
+
+function realLocalClip(workspace: AuditionWorkspaceSnapshot): AuditionClip {
+  const roleStatus = workspace.roles.items[0];
+  const binding = roleStatus?.voiceRuntimeBinding;
+  if (roleStatus === undefined || binding === null || binding === undefined) {
+    throw new Error("The real-local clip fixture was incomplete.");
+  }
+  return {
+    ...auditionClip(),
+    providerId: binding.providerId,
+    providerVersion: binding.providerVersion,
+    voiceRuntimeBindingId: binding.bindingId,
+    voiceRuntimeBindingFingerprint: binding.bindingFingerprint,
+    providerVoiceId: binding.providerVoiceId,
+    providerClass: "real_local",
+    governedLocalVoiceActivation: realLocalActivation(workspace),
+    modelId: binding.modelId,
+    modelVersion: binding.modelVersion,
+    modelPackageFingerprint: binding.modelPackageFingerprint,
+    runtimeProfileFingerprint: binding.runtimeProfileFingerprint,
+    productionExportEligible: false,
+    cacheProof: {
+      ...auditionClip().cacheProof,
+      voiceRuntimeBindingId: binding.bindingId,
+      voiceRuntimeBindingFingerprint: binding.bindingFingerprint,
+      providerVoiceId: binding.providerVoiceId
+    }
+  };
+}
+
 function provider(
   providerId: string,
   displayName: string,
@@ -1999,6 +3249,11 @@ function auditionClip(): AuditionClip {
       measuredAt: now,
       provenance: provenance("application")
     },
+    review: review(
+      "per_role_audition_review",
+      "review-role",
+      "role-narrator"
+    ),
     state: "reviewable",
     clipFingerprint: digest,
     revision: 1,
@@ -2132,6 +3387,12 @@ function humanizedJobState(state: Job["state"]): string {
   return state.replaceAll("_", " ").replace(/\b\w/gu, (letter) =>
     letter.toUpperCase()
   );
+}
+
+function humanizeForTest(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/gu, (letter) => letter.toUpperCase());
 }
 
 function ok<T>(value: T): DesktopResult<T> {

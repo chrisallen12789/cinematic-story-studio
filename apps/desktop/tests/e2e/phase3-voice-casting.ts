@@ -73,6 +73,18 @@ export interface Phase3WorkflowEvidence {
   ];
 }
 
+export interface Phase3b1RealVoiceAssignmentEvidence {
+  readonly voiceProfileId: "kokoro-local-voice-001";
+  readonly narratorRoleId: string;
+  readonly characterRoleId: string;
+  readonly assignmentIds: readonly [string, string];
+  readonly assignmentRevisions: readonly [number, number];
+  readonly restrictedRightsCorrectionIds: readonly [string, string];
+  readonly approvedCastSnapshotId: string;
+  readonly approvedCastSnapshotRevision: number;
+  readonly approvedCastSnapshotFingerprint: string;
+}
+
 export interface Phase3PersistenceEvidence {
   readonly casting: Phase3CastingProof;
   readonly assertions: Phase3Assertions;
@@ -116,14 +128,14 @@ export async function runPhase3GovernanceWorkflow(
 
   const initialCatalog = await readCatalog(page);
   expect(initialCatalog.catalogRevision.catalogRevisionId).toBe(
-    "synthetic-voice-catalog-v1@1.0.0"
+    "governed-local-voice-catalog-v2@2.0.0"
   );
-  expect(initialCatalog.catalogRevision.catalogFingerprint).toMatch(
-    /^[a-f0-9]{64}$/u
+  expect(initialCatalog.catalogRevision.catalogFingerprint).toBe(
+    "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc"
   );
-  expect(initialCatalog.items).toHaveLength(14);
-  expect(initialCatalog.providers.length).toBeGreaterThanOrEqual(2);
-  expect(initialCatalog.models.length).toBeGreaterThanOrEqual(5);
+  expect(initialCatalog.items).toHaveLength(15);
+  expect(initialCatalog.providers.length).toBeGreaterThanOrEqual(3);
+  expect(initialCatalog.models.length).toBeGreaterThanOrEqual(6);
   await expect(
     page.getByText(GOVERNED_VOICE_CASTING_PROFILE_ID, { exact: true })
   ).toBeVisible();
@@ -407,6 +419,193 @@ export async function runPhase3GovernanceWorkflow(
     governed,
     flowRecorder,
     ineligibleRightsRejections: ["prohibited", "unknown"]
+  };
+}
+
+/**
+ * Rebind one narrator and one character through the ordinary Phase 3A UI.
+ * This helper deliberately uses immutable corrections and gate reapproval; it
+ * never writes an assignment directly or treats the restricted voice as
+ * production-cleared.
+ */
+export async function assignPhase3b1RealVoiceForPrivateAuditions(
+  page: Page
+): Promise<Phase3b1RealVoiceAssignmentEvidence> {
+  const voiceProfileId = "kokoro-local-voice-001" as const;
+  await page.getByRole("button", { name: "Casting", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Casting workspace", exact: true })
+  ).toBeVisible({ timeout: 30_000 });
+
+  let snapshot = await readPhase3RuntimeSnapshot(page);
+  const narrator = requiredRole(
+    snapshot.roles,
+    (role) => role.roleType === "primary_narrator",
+    "Phase 3B.1 primary narrator"
+  );
+  const character = requiredRole(
+    snapshot.roles,
+    (role) => role.roleType === "named_character",
+    "Phase 3B.1 named character"
+  );
+
+  for (const role of [narrator, character]) {
+    await loadCandidatesForRole(page, role);
+    const candidate = requiredItem(
+      snapshot.candidates[role.roleId]?.find(
+        (item) => item.voiceProfileId === voiceProfileId
+      ),
+      `governed real candidate for ${role.roleId}`
+    );
+    expect(candidate.assessment.compatibilityStatus).toBe(
+      "compatible_with_warnings"
+    );
+    expect(candidate.assessment.rightsEligibility).toBe(
+      "restricted_requires_acknowledgement"
+    );
+    expect(candidate.assessment.longFormSuitability).toBe("unknown");
+    expect(candidate.assessment.confidence.classification).toBe("unknown");
+    const hardConstraints = new Map(
+      candidate.assessment.hardConstraints.map((item) => [
+        item.constraintId,
+        item
+      ])
+    );
+    expect(hardConstraints.get("rights_not_prohibited")?.result).toBe("pass");
+    for (const constraintId of [
+      "rights_known",
+      "required_consent",
+      "declared_capabilities",
+      "role_length_suitability"
+    ] as const) {
+      const constraint = hardConstraints.get(constraintId);
+      expect(constraint?.result).toBe("unknown");
+      expect(constraint?.explanation.toLowerCase()).toContain(
+        "exact fingerprint-bound"
+      );
+    }
+    const realVoice = requiredItem(
+      snapshot.catalog.items.find(
+        (item) => item.voiceProfileId === voiceProfileId
+      ),
+      "governed real voice profile"
+    );
+    const realRights = requiredItem(
+      snapshot.catalog.rights.find(
+        (item) => item.rightsRecordId === realVoice.rightsRecordId
+      ),
+      "governed real voice rights record"
+    );
+    expect(realVoice.rightsState).toBe("restricted");
+    expect(realVoice.commercialUse).toBe("restricted");
+    expect(realVoice.consentStatus).toBe("unknown");
+    expect(realVoice.narrationSuitability).toBe("unknown");
+    expect(realVoice.dialogueSuitability).toBe("unknown");
+    expect(realVoice.longFormSuitability).toBe("unknown");
+    expect(realRights.state).toBe("restricted");
+    expect(realRights.commercialUsePermission).toBe("restricted");
+    expect(realRights.consentStatus).toBe("unknown");
+    await selectVoice(page, snapshot.catalog, voiceProfileId);
+    await lockSelectedAssignment(page);
+    await selectRole(page, role);
+    const acknowledge = page.getByRole("button", {
+      name: "Acknowledge restricted rights",
+      exact: true
+    });
+    await expect(acknowledge).toBeVisible({ timeout: 30_000 });
+    await acknowledge.click();
+    await expectCorrectionNotice(page, "Acknowledge Restricted Rights");
+    snapshot = await readPhase3RuntimeSnapshot(page);
+  }
+
+  for (;;) {
+    snapshot = await readPhase3RuntimeSnapshot(page);
+    const conflictIndex = snapshot.conflicts.findIndex(
+      (conflict) =>
+        conflict.resolutionState === "open" &&
+        conflict.roleIds.some(
+          (roleId) => roleId === narrator.roleId || roleId === character.roleId
+        ) &&
+        [
+          "incompatible_voice_reuse",
+          "narrator_major_character_reuse",
+          "metadata_similarity_risk",
+          "voice_reuse_threshold_exceeded"
+        ].includes(conflict.category)
+    );
+    if (conflictIndex < 0) break;
+    const conflict = requiredItem(
+      snapshot.conflicts[conflictIndex],
+      "Phase 3B.1 real-voice reuse conflict"
+    );
+    const role = requiredItem(
+      snapshot.roles.find((item) => conflict.roleIds.includes(item.roleId)),
+      "Phase 3B.1 conflict role"
+    );
+    await selectRole(page, role);
+    const row = await loadConflictRow(
+      page,
+      conflict.conflictId,
+      sentenceCaseForE2e(conflict.category),
+      Math.floor(conflictIndex / 50)
+    );
+    await row
+      .getByRole("button", { name: "Approve planned reuse", exact: true })
+      .click();
+    await expectCorrectionNotice(page, "Approve Voice Reuse");
+  }
+
+  snapshot = await readPhase3RuntimeSnapshot(page);
+  assertFinalAssignments(snapshot);
+  for (const gateId of CASTING_GATE_IDS) {
+    await approveCastingGate(page, gateId, snapshot.conflicts.length);
+  }
+
+  const governed = await readPhase3RuntimeSnapshot(page);
+  assertGovernedCasting(governed);
+  const castSnapshot = requiredItem(
+    governed.run.approvedCastSnapshot,
+    "Phase 3B.1 approved cast snapshot"
+  );
+  const assignments = [narrator, character].map((role) =>
+    requiredItem(
+      governed.assignments.find(
+        (assignment) =>
+          assignment.roleId === role.roleId &&
+          assignment.voiceProfileId === voiceProfileId &&
+          assignment.effective
+      ),
+      `Phase 3B.1 real assignment for ${role.roleId}`
+    )
+  );
+  const corrections = assignments.map((assignment) =>
+    requiredItem(
+      governed.corrections.find(
+        (correction) =>
+          correction.category === "acknowledge_restricted_rights" &&
+          correction.targetRoleId === assignment.roleId &&
+          correction.correctedValue.rightsRecordId ===
+            assignment.rightsRecordId &&
+          correction.correctedValue.rightsRecordRevision ===
+            assignment.rightsRecordRevision
+      ),
+      `Phase 3B.1 restricted-rights correction for ${assignment.roleId}`
+    )
+  );
+
+  return {
+    voiceProfileId,
+    narratorRoleId: narrator.roleId,
+    characterRoleId: character.roleId,
+    assignmentIds: [assignments[0].assignmentId, assignments[1].assignmentId],
+    assignmentRevisions: [assignments[0].revision, assignments[1].revision],
+    restrictedRightsCorrectionIds: [
+      corrections[0].correctionId,
+      corrections[1].correctionId
+    ],
+    approvedCastSnapshotId: castSnapshot.snapshotId,
+    approvedCastSnapshotRevision: castSnapshot.revision,
+    approvedCastSnapshotFingerprint: castSnapshot.snapshotFingerprint
   };
 }
 
@@ -999,7 +1198,8 @@ async function readCastingWaitDiagnostic(page: Page): Promise<{
       expectedSnapshotRevision:
         run.prerequisites.analysisSnapshotRevision,
       expectedSnapshotFingerprint:
-        run.prerequisites.analysisSnapshotFingerprint
+        run.prerequisites.analysisSnapshotFingerprint,
+      expectedCastingProfileFingerprint: run.profile.fingerprint
     };
     const [roles, conflicts, assignments, corrections, reviews] =
       await Promise.all([
@@ -1178,7 +1378,8 @@ async function readPhase3RuntimeSnapshotAttempt(
       expectedSnapshotRevision:
         run.prerequisites.analysisSnapshotRevision,
       expectedSnapshotFingerprint:
-        run.prerequisites.analysisSnapshotFingerprint
+        run.prerequisites.analysisSnapshotFingerprint,
+      expectedCastingProfileFingerprint: run.profile.fingerprint
     };
     const [catalog, events, roles, conflicts, assignments, corrections, reviews] =
       await Promise.all([
@@ -1910,6 +2111,13 @@ function candidateIdentity(
       }))
     ])
   );
+}
+
+function sentenceCaseForE2e(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\b\w/gu, (character) => character.toUpperCase());
 }
 
 function effectiveAssignmentIdentity(

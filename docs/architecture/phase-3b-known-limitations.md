@@ -1,5 +1,10 @@
 # Phase 3B known limitations
 
+This file records the merged Phase 3B boundary. Phase 3B.1 adds a narrowly
+governed restricted product-audition binding without changing the historical
+Phase 3B claims below. See [Phase 3B.1 known limitations](phase-3b1-known-limitations.md)
+for the current additive boundary.
+
 - The real Kokoro adapter has a private component-only verification path; it is not available as
   a governed product audition provider. No Phase 3A voice profile, snapshot-selected cast
   assignment, or rights record binds provider-internal voice `af_heart`. Installation,

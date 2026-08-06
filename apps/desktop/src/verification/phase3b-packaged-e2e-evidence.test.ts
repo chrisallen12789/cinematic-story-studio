@@ -162,6 +162,32 @@ describe("Phase 3B packaged E2E evidence", () => {
     expect(() =>
       validatePhase3bPackagedE2eResult({
         ...result,
+        phase3b1SyntheticMetadata: {
+          ...result.phase3b1SyntheticMetadata,
+          restriction: {
+            ...result.phase3b1SyntheticMetadata.restriction,
+            realSynthesisClaimed: true
+          }
+        }
+      })
+    ).toThrow("restriction metadata");
+
+    expect(() =>
+      validatePhase3bPackagedE2eResult({
+        ...result,
+        phase3b1SyntheticMetadata: {
+          ...result.phase3b1SyntheticMetadata,
+          artifactBoundary: {
+            ...result.phase3b1SyntheticMetadata.artifactBoundary,
+            realModelBytesPresent: true
+          }
+        }
+      })
+    ).toThrow("artifact boundary");
+
+    expect(() =>
+      validatePhase3bPackagedE2eResult({
+        ...result,
         process: {
           launches: result.process.launches.map((launch) => ({
             ...launch,
@@ -501,6 +527,72 @@ function fixtureResult(): Phase3bPackagedE2eResult {
       naturalSpeechQualityProven: false,
       productionExportEligible: false,
       humanListeningClaimed: false
+    },
+    phase3b1SyntheticMetadata: {
+      catalog: {
+        catalogRevisionId: "governed-local-voice-catalog-v2@2.0.0",
+        catalogRevisionFingerprint:
+          "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc",
+        castingProfileId: "governed-voice-casting-v1@1.0.1",
+        castingProfileFingerprint:
+          "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97",
+        totalVoiceCount: 15,
+        deterministicFixtureVoiceCount: 14,
+        governedRealVoiceCount: 1
+      },
+      governedRealVoice: {
+        neutralDisplayLabel: "Local Voice 001",
+        providerId: "kokoro-local-onnx",
+        providerVersion: "1.0.0",
+        modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+        modelVersion: "1.0",
+        modelPackageId: "kokoro-82m-v1.0-onnx-q8-af-heart",
+        modelPackageVersion:
+          "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+        modelPackageFingerprint:
+          "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0",
+        voiceProfileId: "kokoro-local-voice-001",
+        voiceProfileVersion: "1.0.0",
+        voiceProfileFingerprint:
+          "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210",
+        providerVoiceId: "af_heart",
+        tensor: {
+          relativePath: "voices/af_heart.bin",
+          byteSize: 522240,
+          sha256:
+            "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+          scalarFormat: "float32_le",
+          shape: [510, 256],
+          elementCount: 130560
+        },
+        rights: {
+          rightsRecordId: "kokoro-local-voice-001-rights-v1",
+          rightsRecordRevision: 1,
+          rightsRecordFingerprint:
+            "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038",
+          rightsState: "restricted",
+          consentStatus: "unknown",
+          productionExportEligible: false
+        }
+      },
+      restriction: {
+        warningText:
+          "Private local audition only. This voice is not cleared by Cinematic Story Studio for production export, commercial distribution, marketplace resale, cloning, or real-person imitation.",
+        warningFingerprint:
+          "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645",
+        activationGovernance:
+          "restricted_audition_acknowledgement_required",
+        packagePresentInCi: false,
+        activationEligibleInCi: false,
+        failClosedReason: "model_package_absent",
+        humanListeningStatus: "pending",
+        humanListeningClaimed: false,
+        realSynthesisClaimed: false
+      },
+      artifactBoundary: {
+        realModelBytesPresent: false,
+        realProviderAudioPresent: false
+      }
     },
     runtime: {
       profileId: "deterministic-pcm-wav-fixture-windows",

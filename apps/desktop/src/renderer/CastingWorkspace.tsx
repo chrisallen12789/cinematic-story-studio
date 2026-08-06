@@ -2123,7 +2123,8 @@ function runEvidence(run: CastingRun): CastingRunEvidenceInput {
     expectedSnapshotId: run.prerequisites.analysisSnapshotId,
     expectedSnapshotRevision: run.prerequisites.analysisSnapshotRevision,
     expectedSnapshotFingerprint:
-      run.prerequisites.analysisSnapshotFingerprint
+      run.prerequisites.analysisSnapshotFingerprint,
+    expectedCastingProfileFingerprint: run.profile.fingerprint
   };
 }
 

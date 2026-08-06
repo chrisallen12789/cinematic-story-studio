@@ -76,6 +76,7 @@ describe("CastingWorkspace", () => {
         expectedRunFingerprint: hashD,
         expectedCatalogFingerprint: hashB,
         expectedSnapshotFingerprint: hashC,
+        expectedCastingProfileFingerprint: CASTING_PROFILE_FINGERPRINT,
         limit: 12
       })
     );

@@ -593,24 +593,31 @@
           "$ref": "#/$defs/NonblankText"
         },
         "agePresentationRange": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "minimum",
-            "maximum"
-          ],
-          "properties": {
-            "minimum": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 120
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "minimum",
+                "maximum"
+              ],
+              "properties": {
+                "minimum": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 120
+                },
+                "maximum": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 120
+                }
+              }
             },
-            "maximum": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 120
+            {
+              "type": "null"
             }
-          }
+          ]
         },
         "vocalPresentation": {
           "enum": [
@@ -652,24 +659,31 @@
           "$ref": "#/$defs/SpeakingRateRange"
         },
         "energyRange": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "minimum",
-            "maximum"
-          ],
-          "properties": {
-            "minimum": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "minimum",
+                "maximum"
+              ],
+              "properties": {
+                "minimum": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "maximum": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
             },
-            "maximum": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
+            {
+              "type": "null"
             }
-          }
+          ]
         },
         "expressiveRange": {
           "type": "array",
@@ -1406,7 +1420,7 @@
           ],
           "properties": {
             "profileId": {
-              "const": "governed-voice-casting-v1@1.0.0"
+              "const": "governed-voice-casting-v1@1.0.1"
             },
             "castingContractVersion": {
               "$ref": "#/$defs/ContractVersion"
@@ -1450,10 +1464,10 @@
           }
         },
         "canonicalJson": {
-          "const": "{\"castingContractVersion\":\"3.0.0\",\"compatibilityRules\":[\"hard_constraints_fail_closed\",\"soft_preferences_score_separately\",\"unknown_remains_unknown\",\"no_automatic_assignment\",\"declared_metadata_only\"],\"conflictRules\":[\"incompatible_voice_reuse\",\"narrator_major_character_reuse\",\"metadata_similarity_risk\",\"accent_or_locale_mismatch\",\"insufficient_expressive_range\",\"rights_conflict\",\"provider_or_model_unavailable\",\"deprecated_voice\",\"role_length_suitability\",\"unresolved_role_assignment\",\"voice_reuse_threshold_exceeded\"],\"deterministic\":true,\"explanationRequired\":true,\"externalSemanticDependency\":false,\"hardConstraints\":[\"language_support\",\"provider_available\",\"model_available\",\"rights_not_prohibited\",\"rights_known\",\"required_consent\",\"voice_not_blocked\",\"declared_capabilities\",\"role_length_suitability\"],\"limits\":{\"defaultPageSize\":50,\"maximumConflictsPerRun\":10000,\"maximumExplanationCodePoints\":2000,\"maximumFinalCandidatesPerRole\":12,\"maximumHardConstraintResults\":16,\"maximumPageSize\":200,\"maximumPreReductionCandidatesPerRole\":50,\"maximumProductionRoles\":300,\"maximumSoftPreferenceResults\":16,\"maximumVoiceProfiles\":5000,\"maximumVoiceReusePerProfile\":2,\"maximumWarningsPerEntity\":32},\"producerId\":\"voice-casting-orchestrator@1.0.0\",\"profileId\":\"governed-voice-casting-v1@1.0.0\",\"providerNeutral\":true,\"rightsEligibilityRules\":[\"verified_eligible\",\"restricted_requires_acknowledgement\",\"unknown_ineligible\",\"prohibited_ineligible\"],\"rightsPolicyId\":\"voice-rights-policy-v1\",\"softPreferences\":[\"locale_match\",\"narration_suitability\",\"dialogue_suitability\",\"expressive_range\",\"age_presentation\",\"vocal_presentation\",\"vocal_texture\",\"speaking_rate\",\"emotional_range\",\"long_form_preference\"]}"
+          "const": "{\"castingContractVersion\":\"3.0.0\",\"compatibilityRules\":[\"hard_constraints_fail_closed\",\"soft_preferences_score_separately\",\"unknown_remains_unknown\",\"no_automatic_assignment\",\"declared_metadata_only\"],\"conflictRules\":[\"incompatible_voice_reuse\",\"narrator_major_character_reuse\",\"metadata_similarity_risk\",\"accent_or_locale_mismatch\",\"insufficient_expressive_range\",\"rights_conflict\",\"provider_or_model_unavailable\",\"deprecated_voice\",\"role_length_suitability\",\"unresolved_role_assignment\",\"voice_reuse_threshold_exceeded\"],\"deterministic\":true,\"explanationRequired\":true,\"externalSemanticDependency\":false,\"hardConstraints\":[\"language_support\",\"provider_available\",\"model_available\",\"rights_not_prohibited\",\"rights_known\",\"required_consent\",\"voice_not_blocked\",\"declared_capabilities\",\"role_length_suitability\"],\"limits\":{\"defaultPageSize\":50,\"maximumConflictsPerRun\":10000,\"maximumExplanationCodePoints\":2000,\"maximumFinalCandidatesPerRole\":12,\"maximumHardConstraintResults\":16,\"maximumPageSize\":200,\"maximumPreReductionCandidatesPerRole\":50,\"maximumProductionRoles\":300,\"maximumSoftPreferenceResults\":16,\"maximumVoiceProfiles\":5000,\"maximumVoiceReusePerProfile\":2,\"maximumWarningsPerEntity\":32},\"producerId\":\"voice-casting-orchestrator@1.0.0\",\"profileId\":\"governed-voice-casting-v1@1.0.1\",\"providerNeutral\":true,\"rightsEligibilityRules\":[\"verified_eligible\",\"restricted_requires_acknowledgement\",\"unknown_ineligible\",\"prohibited_ineligible\",\"restricted_private_audition_pending_evidence\"],\"rightsPolicyId\":\"voice-rights-policy-v1\",\"softPreferences\":[\"locale_match\",\"narration_suitability\",\"dialogue_suitability\",\"expressive_range\",\"age_presentation\",\"vocal_presentation\",\"vocal_texture\",\"speaking_rate\",\"emotional_range\",\"long_form_preference\"]}"
         },
         "fingerprint": {
-          "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6"
+          "const": "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97"
         }
       }
     },
@@ -1538,8 +1552,8 @@
     },
     "CastingRightsEligibilityRules": {
       "type": "array",
-      "minItems": 4,
-      "maxItems": 4,
+      "minItems": 5,
+      "maxItems": 5,
       "prefixItems": [
         {
           "const": "verified_eligible"
@@ -1552,6 +1566,9 @@
         },
         {
           "const": "prohibited_ineligible"
+        },
+        {
+          "const": "restricted_private_audition_pending_evidence"
         }
       ],
       "items": false
@@ -1867,20 +1884,26 @@
           "$ref": "#/$defs/CastingPhase2Prerequisites"
         },
         "profile": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "profileId",
-            "fingerprint"
-          ],
-          "properties": {
-            "profileId": {
-              "const": "governed-voice-casting-v1@1.0.0"
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["profileId", "fingerprint"],
+              "properties": {
+                "profileId": { "const": "governed-voice-casting-v1@1.0.1" },
+                "fingerprint": { "const": "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97" }
+              }
             },
-            "fingerprint": {
-              "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6"
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["profileId", "fingerprint"],
+              "properties": {
+                "profileId": { "const": "governed-voice-casting-v1@1.0.0" },
+                "fingerprint": { "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6" }
+              }
             }
-          }
+          ]
         },
         "producerId": {
           "const": "voice-casting-orchestrator@1.0.0"
@@ -3759,16 +3782,16 @@
       ],
       "properties": {
         "profileId": {
-          "const": "governed-voice-casting-v1@1.0.0"
+          "const": "governed-voice-casting-v1@1.0.1"
         },
         "profileFingerprint": {
-          "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6"
+          "const": "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97"
         },
         "catalogRevisionId": {
-          "$ref": "#/$defs/Id"
+          "const": "governed-local-voice-catalog-v2@2.0.0"
         },
         "catalogFingerprint": {
-          "$ref": "#/$defs/Sha256"
+          "const": "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc"
         },
         "castingRunId": {
           "$ref": "#/$defs/Id"
@@ -4054,10 +4077,10 @@
           ],
           "properties": {
             "profileId": {
-              "const": "governed-voice-casting-v1@1.0.0"
+              "const": "governed-voice-casting-v1@1.0.1"
             },
             "fingerprint": {
-              "const": "3eaa6b4d1333b49e55707b1e9aa20606f262e1315a043bff2912a0fe77f97fa6"
+              "const": "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97"
             },
             "producerId": {
               "const": "voice-casting-orchestrator@1.0.0"
@@ -4090,14 +4113,13 @@
           ],
           "properties": {
             "catalogRevisionId": {
-              "$ref": "#/$defs/Id"
+              "const": "governed-local-voice-catalog-v2@2.0.0"
             },
             "revision": {
-              "type": "integer",
-              "minimum": 1
+              "const": 2
             },
             "fingerprint": {
-              "$ref": "#/$defs/Sha256"
+              "const": "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc"
             }
           }
         },
@@ -5498,6 +5520,247 @@
         }
       }
     },
+    "Phase3b1SyntheticMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog",
+        "governedRealVoice",
+        "restriction",
+        "artifactBoundary"
+      ],
+      "properties": {
+        "catalog": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "catalogRevisionId",
+            "catalogRevisionFingerprint",
+            "castingProfileId",
+            "castingProfileFingerprint",
+            "totalVoiceCount",
+            "deterministicFixtureVoiceCount",
+            "governedRealVoiceCount"
+          ],
+          "properties": {
+            "catalogRevisionId": {
+              "const": "governed-local-voice-catalog-v2@2.0.0"
+            },
+            "catalogRevisionFingerprint": {
+              "const": "994a2f77daed881cc4e24201d628ef32a732aa6ee0ff0815745a19772d2828cc"
+            },
+            "castingProfileId": {
+              "const": "governed-voice-casting-v1@1.0.1"
+            },
+            "castingProfileFingerprint": {
+              "const": "5377949573018b5d3a4f4cd343392155071640364d3ba36be80a1bf4ad58de97"
+            },
+            "totalVoiceCount": {
+              "const": 15
+            },
+            "deterministicFixtureVoiceCount": {
+              "const": 14
+            },
+            "governedRealVoiceCount": {
+              "const": 1
+            }
+          }
+        },
+        "governedRealVoice": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "neutralDisplayLabel",
+            "providerId",
+            "providerVersion",
+            "modelId",
+            "modelVersion",
+            "modelPackageId",
+            "modelPackageVersion",
+            "modelPackageFingerprint",
+            "voiceProfileId",
+            "voiceProfileVersion",
+            "voiceProfileFingerprint",
+            "providerVoiceId",
+            "tensor",
+            "rights"
+          ],
+          "properties": {
+            "neutralDisplayLabel": {
+              "const": "Local Voice 001"
+            },
+            "providerId": {
+              "const": "kokoro-local-onnx"
+            },
+            "providerVersion": {
+              "const": "1.0.0"
+            },
+            "modelId": {
+              "const": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            },
+            "modelVersion": {
+              "const": "1.0"
+            },
+            "modelPackageId": {
+              "const": "kokoro-82m-v1.0-onnx-q8-af-heart"
+            },
+            "modelPackageVersion": {
+              "const": "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231"
+            },
+            "modelPackageFingerprint": {
+              "const": "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0"
+            },
+            "voiceProfileId": {
+              "const": "kokoro-local-voice-001"
+            },
+            "voiceProfileVersion": {
+              "const": "1.0.0"
+            },
+            "voiceProfileFingerprint": {
+              "const": "dd81588a36a17b429e90ee9b21a80187c10368bab6bd5b8fa584ea01c455a210"
+            },
+            "providerVoiceId": {
+              "const": "af_heart"
+            },
+            "tensor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "relativePath",
+                "byteSize",
+                "sha256",
+                "scalarFormat",
+                "shape",
+                "elementCount"
+              ],
+              "properties": {
+                "relativePath": {
+                  "const": "voices/af_heart.bin"
+                },
+                "byteSize": {
+                  "const": 522240
+                },
+                "sha256": {
+                  "const": "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b"
+                },
+                "scalarFormat": {
+                  "const": "float32_le"
+                },
+                "shape": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "prefixItems": [
+                    {
+                      "const": 510
+                    },
+                    {
+                      "const": 256
+                    }
+                  ],
+                  "items": false
+                },
+                "elementCount": {
+                  "const": 130560
+                }
+              }
+            },
+            "rights": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "rightsRecordId",
+                "rightsRecordRevision",
+                "rightsRecordFingerprint",
+                "rightsState",
+                "consentStatus",
+                "productionExportEligible"
+              ],
+              "properties": {
+                "rightsRecordId": {
+                  "const": "kokoro-local-voice-001-rights-v1"
+                },
+                "rightsRecordRevision": {
+                  "const": 1
+                },
+                "rightsRecordFingerprint": {
+                  "const": "e801171e684b1125b54bfc4317ae17dac4ca5b92c1500b82b333dc6da357c038"
+                },
+                "rightsState": {
+                  "const": "restricted"
+                },
+                "consentStatus": {
+                  "const": "unknown"
+                },
+                "productionExportEligible": {
+                  "const": false
+                }
+              }
+            }
+          }
+        },
+        "restriction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "warningText",
+            "warningFingerprint",
+            "activationGovernance",
+            "packagePresentInCi",
+            "activationEligibleInCi",
+            "failClosedReason",
+            "humanListeningStatus",
+            "humanListeningClaimed",
+            "realSynthesisClaimed"
+          ],
+          "properties": {
+            "warningText": {
+              "const": "Private local audition only. This voice is not cleared by Cinematic Story Studio for production export, commercial distribution, marketplace resale, cloning, or real-person imitation."
+            },
+            "warningFingerprint": {
+              "const": "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645"
+            },
+            "activationGovernance": {
+              "const": "restricted_audition_acknowledgement_required"
+            },
+            "packagePresentInCi": {
+              "const": false
+            },
+            "activationEligibleInCi": {
+              "const": false
+            },
+            "failClosedReason": {
+              "const": "model_package_absent"
+            },
+            "humanListeningStatus": {
+              "const": "pending"
+            },
+            "humanListeningClaimed": {
+              "const": false
+            },
+            "realSynthesisClaimed": {
+              "const": false
+            }
+          }
+        },
+        "artifactBoundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "realModelBytesPresent",
+            "realProviderAudioPresent"
+          ],
+          "properties": {
+            "realModelBytesPresent": {
+              "const": false
+            },
+            "realProviderAudioPresent": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
     "Phase3bPackagedE2eResult": {
       "type": "object",
       "additionalProperties": false,
@@ -5507,6 +5770,7 @@
         "status",
         "evidenceClassification",
         "fixtureClaims",
+        "phase3b1SyntheticMetadata",
         "runtime",
         "fixtureProvider",
         "realProviderAdapter",
@@ -5523,7 +5787,7 @@
       ],
       "properties": {
         "schemaVersion": {
-          "const": "7.0.0"
+          "const": "8.0.0"
         },
         "completedAt": {
           "$ref": "#/$defs/Timestamp"
@@ -5536,6 +5800,9 @@
         },
         "fixtureClaims": {
           "$ref": "#/$defs/Phase3bFixtureClaims"
+        },
+        "phase3b1SyntheticMetadata": {
+          "$ref": "#/$defs/Phase3b1SyntheticMetadata"
         },
         "runtime": {
           "$ref": "#/$defs/Phase3bRuntimeEvidence"
@@ -5587,6 +5854,7 @@
         "completedAt",
         "evidenceClassification",
         "fixtureClaims",
+        "phase3b1SyntheticMetadata",
         "runtime",
         "fixtureProvider",
         "realProviderAdapter",
@@ -5606,7 +5874,7 @@
           "$ref": "#/$defs/Phase3bEvidenceFile"
         },
         "schemaVersion": {
-          "const": "7.0.0"
+          "const": "8.0.0"
         },
         "completedAt": {
           "$ref": "#/$defs/Timestamp"
@@ -5616,6 +5884,9 @@
         },
         "fixtureClaims": {
           "$ref": "#/$defs/Phase3bFixtureClaims"
+        },
+        "phase3b1SyntheticMetadata": {
+          "$ref": "#/$defs/Phase3b1SyntheticMetadata"
         },
         "runtime": {
           "$ref": "#/$defs/Phase3bRuntimeEvidence"
@@ -5658,6 +5929,124 @@
         }
       }
     },
+    "Phase3b1AbsentPackageEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "testCase",
+        "databaseIsolation",
+        "testResult",
+        "evidenceFile",
+        "proof"
+      ],
+      "properties": {
+        "testCase": {
+          "const": "apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py::test_real_provider_fails_closed_when_exact_package_is_absent"
+        },
+        "databaseIsolation": {
+          "const": "fresh_pytest_temporary_directory"
+        },
+        "testResult": {
+          "const": "passed"
+        },
+        "evidenceFile": {
+          "$ref": "../v2/definitions.schema.json#/$defs/BuildEvidenceRequiredFile"
+        },
+        "proof": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "classification",
+            "packagePresent",
+            "providerId",
+            "modelId",
+            "modelPackageId",
+            "modelPackageVersion",
+            "manifestFingerprint",
+            "runtimeBindingStatus",
+            "runtimeBindingReason",
+            "sessionEvidencePresent",
+            "generationRequestPresent",
+            "counts",
+            "fallbackUsed",
+            "productionExportEligible"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "classification": {
+              "const": "verified_absent_package_fail_closed"
+            },
+            "packagePresent": {
+              "const": false
+            },
+            "providerId": {
+              "const": "kokoro-local-onnx"
+            },
+            "modelId": {
+              "const": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            },
+            "modelPackageId": {
+              "const": "kokoro-82m-v1.0-onnx-q8-af-heart"
+            },
+            "modelPackageVersion": {
+              "const": "1.0.0+1939ad2a8e416c0acfeecc08a694d14ef25f2231"
+            },
+            "manifestFingerprint": {
+              "const": "03702762c09a71ee54b7ea3bfa4939d1c622b01d68709e2180a39ca62ec264b0"
+            },
+            "runtimeBindingStatus": {
+              "const": "unavailable"
+            },
+            "runtimeBindingReason": {
+              "const": "VERIFIED_ACTIVE_MODEL_PACKAGE_REQUIRED"
+            },
+            "sessionEvidencePresent": {
+              "const": false
+            },
+            "generationRequestPresent": {
+              "const": false
+            },
+            "counts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "auditionSessions",
+                "providerDispatches",
+                "runtimeInstances",
+                "audioArtifacts",
+                "auditionClips"
+              ],
+              "properties": {
+                "auditionSessions": {
+                  "const": 0
+                },
+                "providerDispatches": {
+                  "const": 0
+                },
+                "runtimeInstances": {
+                  "const": 0
+                },
+                "audioArtifacts": {
+                  "const": 0
+                },
+                "auditionClips": {
+                  "const": 0
+                }
+              }
+            },
+            "fallbackUsed": {
+              "const": false
+            },
+            "productionExportEligible": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
     "Phase3bBuildAssertions": {
       "type": "object",
       "additionalProperties": false,
@@ -5676,6 +6065,8 @@
         "phase2RestartDurabilityProven",
         "phase2WholeBookAnalysisProven",
         "phase3bLocalSpeechAuditionsProven",
+        "phase3b1RealProviderFailsClosedWithoutPackageProven",
+        "publicArtifactInventoryExcludesModelVoiceAndAudioData",
         "packagedE2eEvidenceComplete"
       ],
       "properties": {
@@ -5721,6 +6112,12 @@
         "phase3bLocalSpeechAuditionsProven": {
           "const": true
         },
+        "phase3b1RealProviderFailsClosedWithoutPackageProven": {
+          "const": true
+        },
+        "publicArtifactInventoryExcludesModelVoiceAndAudioData": {
+          "const": true
+        },
         "packagedE2eEvidenceComplete": {
           "const": true
         }
@@ -5743,12 +6140,13 @@
         "packagedE2e",
         "voiceCastingContract",
         "localSpeechAuditionsContract",
+        "phase3b1AbsentPackage",
         "testTimestamp",
         "runner"
       ],
       "properties": {
         "schemaVersion": {
-          "const": "6.0.0"
+          "const": "7.0.0"
         },
         "artifactPathScope": {
           "$ref": "../v2/definitions.schema.json#/$defs/Phase2BuildEvidenceManifest/properties/artifactPathScope"
@@ -5786,6 +6184,9 @@
         "localSpeechAuditionsContract": {
           "$ref": "#/$defs/Phase3bLocalSpeechAuditionsEvidence"
         },
+        "phase3b1AbsentPackage": {
+          "$ref": "#/$defs/Phase3b1AbsentPackageEvidence"
+        },
         "testTimestamp": {
           "$ref": "#/$defs/Timestamp"
         },
@@ -5822,7 +6223,7 @@
               "$ref": "#/$defs/Id"
             },
             "workflow": {
-              "const": "Phase 3B Windows CI"
+              "const": "Phase 3B.1 Windows CI"
             },
             "job": {
               "const": "verify-and-build"

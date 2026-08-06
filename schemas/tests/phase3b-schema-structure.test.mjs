@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +10,10 @@ const phase3Directory = path.resolve(testDirectory, "..", "v3");
 const definitionsPath = path.join(
   phase3Directory,
   "local-speech-auditions.schema.json",
+);
+const castingDefinitionsPath = path.join(
+  phase3Directory,
+  "definitions.schema.json",
 );
 
 const entries = {
@@ -23,6 +28,20 @@ const entries = {
   ModelInstallationRecord: "model-installation-record.schema.json",
   ModelVerificationRecord: "model-verification-record.schema.json",
   VoiceRuntimeBinding: "voice-runtime-binding.schema.json",
+  GovernedVoiceTensorBinding:
+    "governed-voice-tensor-binding.schema.json",
+  GovernedLocalVoiceRightsBinding:
+    "governed-local-voice-rights-binding.schema.json",
+  GovernedLocalVoiceInventoryRecord:
+    "governed-local-voice-inventory-record.schema.json",
+  GovernedLocalVoiceInventory:
+    "governed-local-voice-inventory.schema.json",
+  RestrictedLocalAuditionActivationRequest:
+    "restricted-local-audition-activation-request.schema.json",
+  RestrictedLocalAuditionActivationAcknowledgement:
+    "restricted-local-audition-activation-acknowledgement.schema.json",
+  GovernedLocalVoiceActivationBinding:
+    "governed-local-voice-activation-binding.schema.json",
   TextNormalizationPlan: "text-normalization-plan.schema.json",
   PronunciationDictionary: "pronunciation-dictionary.schema.json",
   PronunciationEntry: "pronunciation-entry.schema.json",
@@ -40,6 +59,14 @@ const entries = {
   AudioQualityRecord: "audio-quality-record.schema.json",
   AuditionReview: "audition-review.schema.json",
   AuditionReviewDecision: "audition-review-decision.schema.json",
+  HumanListeningAttestationRequest:
+    "human-listening-attestation-request.schema.json",
+  HumanListeningAttestation:
+    "human-listening-attestation.schema.json",
+  CreateAuditionSessionRequest:
+    "create-audition-session-request.schema.json",
+  DecideAuditionReviewRequest:
+    "decide-audition-review-request.schema.json",
   AuditionRoleStatus: "audition-role-status.schema.json",
   VoiceReadinessSnapshot: "voice-readiness-snapshot.schema.json",
 };
@@ -323,5 +350,166 @@ test("Phase 3B schemas expose no path, token, credential, or generic markup auth
   assert.match(
     definitions.$defs.PronunciationEntry.properties.pronunciation.pattern,
     /<>/,
+  );
+});
+
+test("Phase 3B.1 schemas bind restricted activation and exact listening evidence", async () => {
+  const { $defs: definitions } = await readJson(definitionsPath);
+  const { $defs: castingDefinitions } = await readJson(
+    castingDefinitionsPath,
+  );
+  const warning =
+    "Private local audition only. This voice is not cleared by Cinematic Story Studio for production export, commercial distribution, marketplace resale, cloning, or real-person imitation.";
+  const warningFingerprint = createHash("sha256")
+    .update(warning, "utf8")
+    .digest("hex");
+
+  assert.equal(
+    warningFingerprint,
+    "13b8747ea2ced9de9cc1d0f67b5c018b25de7de02359a1480744db4a37939645",
+  );
+  assert.equal(
+    definitions.GovernedLocalVoiceInventory.properties.warningText.const,
+    warning,
+  );
+  assert.equal(
+    definitions.GovernedLocalVoiceInventory.properties.warningFingerprint
+      .const,
+    warningFingerprint,
+  );
+  assert.deepEqual(
+    definitions.GovernedLocalVoiceInventoryRecord.properties.activationEligibility
+      .enum,
+    [
+      "restricted_private_audition",
+      "ineligible_unknown_rights",
+      "ineligible_prohibited",
+      "ineligible_unavailable",
+    ],
+  );
+  assert.equal(
+    definitions.GovernedLocalVoiceInventoryRecord.properties
+      .productionExportEligible.const,
+    false,
+  );
+  assert.deepEqual(
+    definitions.GovernedVoiceTensorBinding.required,
+    [
+      "relativePath",
+      "byteSize",
+      "sha256",
+      "scalarFormat",
+      "shape",
+      "elementCount",
+    ],
+  );
+  assert.equal(
+    definitions.GovernedVoiceTensorBinding.properties.scalarFormat.const,
+    "float32_le",
+  );
+
+  const activation =
+    definitions.RestrictedLocalAuditionActivationAcknowledgement;
+  assert.equal(activation.properties.warningText.const, warning);
+  assert.equal(
+    activation.properties.warningFingerprint.const,
+    warningFingerprint,
+  );
+  for (const field of [
+    "productionExportAuthorized",
+    "commercialDistributionAuthorized",
+    "marketplaceResaleAuthorized",
+    "cloningAuthorized",
+    "realPersonImitationAuthorized",
+  ]) {
+    assert.equal(activation.properties[field].const, false);
+  }
+  assert.equal(
+    definitions.GovernedLocalVoiceActivationBinding.properties
+      .privateLocalAuditionOnly.const,
+    true,
+  );
+  assert.equal(
+    definitions.GovernedLocalVoiceActivationBinding.properties
+      .productionExportEligible.const,
+    false,
+  );
+  assert.equal(
+    definitions.CreateAuditionSessionRequest.properties
+      .restrictedLocalAuditionActivation.$ref,
+    "#/$defs/RestrictedLocalAuditionActivationRequest",
+  );
+
+  const listeningRequest = definitions.HumanListeningAttestationRequest;
+  assert.deepEqual(listeningRequest.required, [
+    "auditionClipId",
+    "auditionClipRevision",
+    "auditionClipFingerprint",
+    "audioArtifactId",
+    "audioArtifactSha256",
+    "listened",
+    "disposition",
+  ]);
+  assert.equal(listeningRequest.properties.listened.const, true);
+  assert.deepEqual(listeningRequest.properties.disposition.enum, [
+    "acceptable",
+    "unacceptable",
+    "needs_changes",
+    "undecided",
+  ]);
+  assert.equal(
+    definitions.HumanListeningAttestation.properties.actor.properties
+      .classification.const,
+    "human",
+  );
+  assert.equal(
+    definitions.HumanListeningAttestation.properties.immutable.const,
+    true,
+  );
+  assert.equal(
+    definitions.DecideAuditionReviewRequest.properties.listeningAttestation
+      .$ref,
+    "#/$defs/HumanListeningAttestationRequest",
+  );
+  assert.equal(definitions.DecideAuditionReviewRequest.allOf.length, 4);
+  assert.equal(
+    definitions.DecideAuditionReviewRequest.allOf.at(-1).if.properties
+      .listeningAttestation.properties.disposition.const,
+    "undecided",
+  );
+  assert.equal(
+    definitions.DecideAuditionReviewRequest.allOf.at(-1).then.properties
+      .decision.const,
+    "request_changes",
+  );
+  assert.equal(definitions.AuditionReviewDecision.allOf.length, 5);
+  assert.equal(
+    definitions.AuditionReviewDecision.allOf.at(-1).if.properties
+      .listeningAttestation.properties.disposition.const,
+    "undecided",
+  );
+  assert.equal(
+    definitions.AuditionReviewDecision.allOf.at(-1).then.properties.decision
+      .const,
+    "changes_requested",
+  );
+
+  for (const field of ["agePresentationRange", "energyRange"]) {
+    assert.equal(
+      castingDefinitions.CastingVoiceProfile.properties[field].oneOf.some(
+        (entry) => entry.type === "null",
+      ),
+      true,
+      `${field} must preserve unknown metadata as null`,
+    );
+  }
+  assert.equal(
+    castingDefinitions.CastingProfile.properties.values.properties.profileId
+      .const,
+    "governed-voice-casting-v1@1.0.1",
+  );
+  assert.equal(
+    castingDefinitions.CastingRun.properties.profile.oneOf.length,
+    2,
   );
 });

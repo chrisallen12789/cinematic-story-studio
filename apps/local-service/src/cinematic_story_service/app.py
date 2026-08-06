@@ -1957,7 +1957,11 @@ def create_app(settings: ServiceSettings) -> FastAPI:
             )
         return {
             "correlationId": _correlation_id(request),
-            "session": auditions.create_session(project_id=project_id, request=body),
+            "session": auditions.create_session(
+                project_id=project_id,
+                request=body,
+                actor_id=_LOCAL_ACTOR_ID,
+            ),
         }
 
     @app.post("/api/v1/projects/{project_id}/audition-sessions/{audition_session_id}/scripts")

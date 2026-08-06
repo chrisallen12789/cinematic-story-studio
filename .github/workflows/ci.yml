@@ -1,4 +1,4 @@
-name: Phase 3B Windows CI
+name: Phase 3B.1 Windows CI
 
 on:
   push:
@@ -9,12 +9,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: phase-3b-windows-${{ github.workflow }}-${{ github.ref }}
+  group: phase-3b1-windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify-and-build:
-    name: Lint, test, build, and Phase 3B packaged E2E
+    name: Lint, test, build, and Phase 3B.1 packaged E2E
     runs-on: windows-latest
     timeout-minutes: 180
     env:
@@ -96,6 +96,15 @@ jobs:
         run: |
           node scripts/python.mjs exec -m pytest -q apps/local-service/tests/test_database_v5_migration.py apps/local-service/tests/test_audio_qc.py apps/local-service/tests/test_phase3b_api.py apps/local-service/tests/test_phase3b_model_packages.py apps/local-service/tests/test_phase3b_model_transaction_compensation.py apps/local-service/tests/test_phase3b_pronunciation.py apps/local-service/tests/test_phase3b_pronunciation_lineage.py apps/local-service/tests/test_phase3b_audition_jobs.py apps/local-service/tests/test_phase3b_audition_repository.py apps/local-service/tests/test_phase3b_auditions.py apps/local-service/tests/test_phase3b_app_shutdown.py apps/local-service/tests/test_phase3b_atomic_publication.py apps/local-service/tests/test_phase3b_generation_idempotency.py apps/local-service/tests/test_phase3b_integrity_closure.py apps/local-service/tests/test_phase3b_review_idempotency.py apps/local-service/tests/test_phase3b_review_integrity.py apps/local-service/tests/test_phase3b_invalidation_reconciliation.py apps/local-service/tests/test_phase3b_workflow.py apps/local-service/tests/test_phase3b_speech_runtime.py apps/local-service/tests/test_phase3b_runtime_repository_lifecycle.py apps/local-service/tests/test_phase3b_speech_providers.py apps/local-service/tests/test_phase3b_real_provider.py apps/local-service/tests/test_phase3b_real_provider_command.py apps/local-service/tests/test_phase3b_text_normalization.py apps/local-service/tests/test_phase3b_schemas.py apps/local-service/tests/test_phase3b_scale.py
 
+      - name: Run focused Phase 3B.1 governed real-voice backend suite
+        run: |
+          node scripts/python.mjs exec -m pytest -q apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py
+
+      - name: Run focused Phase 3B.1 desktop, schema, evidence, and repository-policy suites
+        run: |
+          pnpm --filter @cinematic-story-studio/desktop exec vitest run src/main/audition-validation.test.ts src/renderer/AuditionsWorkspace.test.tsx src/verification/phase3b-packaged-e2e-evidence.test.ts
+          node --test schemas/tests/schema-structure.test.mjs schemas/tests/phase3b-schema-structure.test.mjs tests/tooling/synthetic-voice-catalog.test.mjs tests/tooling/build-evidence.test.mjs tests/tooling/repository-policy.test.mjs
+
       - name: Prepare development Electron assets
         run: |
           pnpm --filter @cinematic-story-studio/contracts run build
@@ -161,6 +170,7 @@ jobs:
           $phase3ResultPath = Join-Path $releaseRoot "phase-3-packaged-e2e-result.json"
           $phase3VoiceCastingEvidencePath = Join-Path $releaseRoot "phase-3-voice-casting-evidence.json"
           $phase3bResultPath = Join-Path $releaseRoot "phase-3b-packaged-e2e-result.json"
+          $phase3b1AbsentPackageEvidencePath = Join-Path $releaseRoot "phase-3b1-absent-package-evidence.json"
           $manifestPath = Join-Path $releaseRoot "build-evidence.json"
           foreach ($generatedEvidence in @(
             $screenshotPath,
@@ -168,6 +178,7 @@ jobs:
             $phase3ResultPath,
             $phase3VoiceCastingEvidencePath,
             $phase3bResultPath,
+            $phase3b1AbsentPackageEvidencePath,
             $manifestPath
           )) {
             if (Test-Path -LiteralPath $generatedEvidence) {
@@ -184,8 +195,23 @@ jobs:
           "CSS_PHASE3_PACKAGED_E2E_RESULT_PATH=$phase3ResultPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CSS_PHASE3_VOICE_CASTING_EVIDENCE_PATH=$phase3VoiceCastingEvidencePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CSS_PHASE3B_PACKAGED_E2E_RESULT_PATH=$phase3bResultPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CSS_PHASE3B1_ABSENT_PACKAGE_EVIDENCE_PATH=$phase3b1AbsentPackageEvidencePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CSS_BUILD_EVIDENCE_MANIFEST_PATH=$manifestPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Prove exact real provider fails closed without model package
+        id: phase3b1_absent_package
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          node scripts/python.mjs exec -m pytest -q "apps/local-service/tests/test_phase3b1_governed_real_voice_activation.py::test_real_provider_fails_closed_when_exact_package_is_absent"
+          if ($LASTEXITCODE -ne 0) {
+            throw "The fresh-database absent-package test failed."
+          }
+          if (-not (Test-Path -LiteralPath $env:CSS_PHASE3B1_ABSENT_PACKAGE_EVIDENCE_PATH -PathType Leaf)) {
+            throw "The absent-package test did not publish its sanitized evidence."
+          }
 
       - name: Run exact packaged governed local-speech auditions persistence E2E
         id: packaged_e2e
@@ -201,6 +227,7 @@ jobs:
           CSS_BUILD_WORKFLOW_HEAD_SHA: ${{ github.sha }}
           CSS_BUILD_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
           CSS_PACKAGED_E2E_STEP_OUTCOME: ${{ steps.packaged_e2e.outcome }}
+          CSS_PHASE3B1_ABSENT_PACKAGE_STEP_OUTCOME: ${{ steps.phase3b1_absent_package.outcome }}
           CSS_BUILD_EVIDENCE_RUNNER_NAME: ${{ runner.name }}
           CSS_BUILD_EVIDENCE_RUNNER_OS: ${{ runner.os }}
           CSS_BUILD_EVIDENCE_RUNNER_ARCH: ${{ runner.arch }}
@@ -224,7 +251,7 @@ jobs:
           )
           node scripts/ci/build-evidence.mjs
 
-      - name: Validate schema-v7 Phase 3B result and schema-v6 build manifest
+      - name: Validate schema-v8 Phase 3B result and schema-v7 build manifest
         id: manifest_validation
         continue-on-error: true
         if: ${{ always() && !cancelled() && steps.build_evidence.outcome == 'success' }}
@@ -260,10 +287,10 @@ jobs:
           node scripts/ci/build-evidence.mjs --validate-manifest $env:CSS_BUILD_EVIDENCE_MANIFEST_PATH
 
       - name: Upload failure diagnostics without application binaries
-        if: ${{ always() && !cancelled() && (steps.development_e2e.outcome != 'success' || steps.packaged_e2e.outcome != 'success' || steps.build_evidence.outcome != 'success' || steps.manifest_validation.outcome != 'success' || steps.tracked_scan.outcome != 'success' || steps.clean_check.outcome != 'success' || steps.artifact_revalidation.outcome != 'success') }}
+        if: ${{ always() && !cancelled() && (steps.development_e2e.outcome != 'success' || steps.phase3b1_absent_package.outcome != 'success' || steps.packaged_e2e.outcome != 'success' || steps.build_evidence.outcome != 'success' || steps.manifest_validation.outcome != 'success' || steps.tracked_scan.outcome != 'success' || steps.clean_check.outcome != 'success' || steps.artifact_revalidation.outcome != 'success') }}
         uses: actions/upload-artifact@v6
         with:
-          name: cinematic-story-studio-phase-3b-ci-diagnostics-${{ github.event.pull_request.head.sha || github.sha }}
+          name: cinematic-story-studio-phase-3b1-ci-diagnostics-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             apps/desktop/test-results/**
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/build-evidence.json
@@ -271,16 +298,17 @@ jobs:
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3-packaged-e2e-result.json
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3-voice-casting-evidence.json
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3b-packaged-e2e-result.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3b1-absent-package-evidence.json
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/packaged-e2e.png
           if-no-files-found: warn
           compression-level: 6
           retention-days: 7
 
       - name: Upload short-lived development artifact
-        if: ${{ always() && !cancelled() && steps.development_e2e.outcome == 'success' && steps.build.outcome == 'success' && steps.packaged_e2e.outcome == 'success' && steps.build_evidence.outcome == 'success' && steps.manifest_validation.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' && steps.artifact_revalidation.outcome == 'success' }}
+        if: ${{ always() && !cancelled() && steps.development_e2e.outcome == 'success' && steps.build.outcome == 'success' && steps.phase3b1_absent_package.outcome == 'success' && steps.packaged_e2e.outcome == 'success' && steps.build_evidence.outcome == 'success' && steps.manifest_validation.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' && steps.artifact_revalidation.outcome == 'success' }}
         uses: actions/upload-artifact@v6
         with:
-          name: cinematic-story-studio-phase-3b-windows-unpacked-${{ github.event.pull_request.head.sha || github.sha }}
+          name: cinematic-story-studio-phase-3b1-windows-unpacked-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/win-unpacked/**
             apps/desktop/build-resources/service/cinematic-story-service.exe
@@ -289,6 +317,7 @@ jobs:
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3-packaged-e2e-result.json
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3-voice-casting-evidence.json
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3b-packaged-e2e-result.json
+            apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/phase-3b1-absent-package-evidence.json
             apps/desktop/release/${{ steps.resolve_evidence.outputs.version }}/packaged-e2e.png
           if-no-files-found: error
           compression-level: 0
@@ -299,15 +328,20 @@ jobs:
         shell: pwsh
         run: throw "The packaged governed local-speech auditions persistence E2E gate failed. Inspect the uploaded evidence."
 
+      - name: Enforce absent-package fail-closed result
+        if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.phase3b1_absent_package.outcome != 'success' }}
+        shell: pwsh
+        run: throw "The exact real provider did not prove fail-closed behavior against a fresh database without its model package."
+
       - name: Enforce build-evidence generation
         if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.build_evidence.outcome != 'success' }}
         shell: pwsh
-        run: throw "The Phase 3B build-evidence generator rejected the packaged proof."
+        run: throw "The Phase 3B.1 build-evidence generator rejected the packaged or absent-package proof."
 
       - name: Enforce build-evidence manifest validation
         if: ${{ always() && !cancelled() && steps.build_evidence.outcome == 'success' && steps.manifest_validation.outcome != 'success' }}
         shell: pwsh
-        run: throw "The schema-v7 Phase 3B result or schema-v6 build manifest failed validation."
+        run: throw "The schema-v8 Phase 3B result or schema-v7 build manifest failed validation."
 
       - name: Enforce exact artifact revalidation
         if: ${{ always() && !cancelled() && steps.manifest_validation.outcome == 'success' && steps.tracked_scan.outcome == 'success' && steps.clean_check.outcome == 'success' && steps.artifact_revalidation.outcome != 'success' }}

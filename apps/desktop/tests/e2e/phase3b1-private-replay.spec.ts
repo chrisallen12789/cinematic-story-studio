@@ -28,11 +28,14 @@ import type {
 
 import {
   buildPhase3b1PrivateReplayLauncher,
+  hasPhase3b1PrivateReplayOwnedProcess,
   Phase3b1PrivateReplayDuplicateIdentityError,
   phase3b1PrivateReplayContractFileName,
   observePhase3b1PrivateReplayDuplicate,
   phase3b1PrivateReplayDuplicatePathConfirmationWindowMs,
   phase3b1PrivateReplaySentinelFileName,
+  requirePhase3b1PrivateReplayServiceLineage,
+  requirePhase3b1PrivateReplayEmptyShutdownInventory,
   requirePhase3b1PrivateReplayPathBudget,
   resolvePhase3b1PrivateReplayStateDirectory,
   validatePhase3b1PrivateReplayContract,
@@ -376,7 +379,8 @@ async function proveStaleOwnedServiceRefusal(
   const output = captureBoundedOutput(child);
   const startedAt = Date.now();
   let identity: ProcessIdentity | null = null;
-  let gracefulExitRequested = false;
+  let ownedLineage: readonly ProcessIdentity[] = [];
+  let stdinEnded = false;
   try {
     const token = randomBytes(32).toString("hex");
     const nonce = randomBytes(24).toString("base64url");
@@ -411,29 +415,55 @@ async function proveStaleOwnedServiceRefusal(
     ) {
       throw new Error("The replay baseline refusal changed the test-owned stale service.");
     }
-    const actualReplayRefusal = await runRejectedReplayLauncher(replay, [
-      identity
-    ]);
+    ownedLineage = requirePhase3b1PrivateReplayServiceLineage({
+      current: afterRefusal,
+      root: identity,
+      expectedName: serviceExecutableName,
+      expectedExecutablePath: replay.paths.serviceExecutablePath
+    });
+    const actualReplayRefusal = await runRejectedReplayLauncher(
+      replay,
+      ownedLineage
+    );
     const afterActualReplayRefusal = await queryRelevantProcesses();
     if (
-      !afterActualReplayRefusal.some((item) => sameProcessIdentity(item, identity!)) ||
+      ownedLineage.some(
+        (owned) =>
+          !afterActualReplayRefusal.some((item) =>
+            sameProcessIdentity(item, owned)
+          )
+      ) ||
+      afterActualReplayRefusal.some(
+        (item) =>
+          !ownedLineage.some((owned) =>
+            sameProcessIdentity(item, owned)
+          )
+      ) ||
       child.exitCode !== null ||
       child.signalCode !== null
     ) {
       throw new Error("The actual replay refusal changed the test-owned stale service.");
     }
 
-    gracefulExitRequested = true;
     child.stdin.end();
+    stdinEnded = true;
     const exit = await waitForChildExit(child, shutdownTimeoutMs);
     if (exit.code !== 0 || exit.signal !== null || output().overflowed) {
       throw new Error("The exact stale service did not accept graceful stdin-EOF shutdown.");
     }
-    await requireIdentityGoneTwice(identity);
     return {
       pid: identity.pid,
       parentPid: identity.parentPid,
       creationIdentity: identity.creationDate,
+      ownedPids: ownedLineage.map((item) => item.pid),
+      ownedProcessIdentities: ownedLineage.map((item) => ({
+        pid: item.pid,
+        parentPid: item.parentPid,
+        executableName: item.name,
+        creationIdentity: item.creationDate,
+        exactExecutablePathConfirmed: item.executablePath !== null,
+        goneAfterShutdown: true
+      })),
       exactExecutablePathConfirmed: true,
       replayRefusedBeforeLaunch: true,
       refusalTerminatedProcess: false,
@@ -441,18 +471,32 @@ async function proveStaleOwnedServiceRefusal(
       shutdownMethod: "stdin_eof",
       exitCode: 0,
       signalCode: null,
-      twoAbsenceInventories: true
+      twoAbsenceInventories: true,
+      twoEmptyRelevantInventories: true,
+      lateDescendantObserved: false
     };
   } finally {
     if (
-      !gracefulExitRequested &&
+      !stdinEnded &&
       child.exitCode === null &&
-      child.signalCode === null &&
-      identity !== null
+      child.signalCode === null
     ) {
       child.stdin.end();
+    }
+    if (child.exitCode === null && child.signalCode === null) {
       await waitForChildExit(child, shutdownTimeoutMs);
-      await requireIdentityGoneTwice(identity);
+    }
+    const recoveryLineage =
+      identity === null
+        ? []
+        : ownedLineage.length === 0
+          ? [identity]
+          : ownedLineage;
+    if (recoveryLineage.length !== 0) {
+      await requireIdentitiesGoneTwice(recoveryLineage);
+      await requireTwoEmptyRelevantInventories(recoveryLineage);
+    } else {
+      await requireTwoEmptyRelevantInventories();
     }
   }
 }
@@ -1665,10 +1709,17 @@ async function requireEmptyReplayBaseline(): Promise<readonly ProcessIdentity[]>
   return baseline;
 }
 
-async function requireTwoEmptyRelevantInventories(): Promise<void> {
+async function requireTwoEmptyRelevantInventories(
+  owned: readonly ProcessIdentity[] | null = null
+): Promise<void> {
   for (let observation = 0; observation < 2; observation += 1) {
     const current = await queryRelevantProcesses();
-    if (current.length !== 0) {
+    if (owned !== null) {
+      requirePhase3b1PrivateReplayEmptyShutdownInventory(
+        current,
+        owned
+      );
+    } else if (current.length !== 0) {
       throw new Error("A relevant application or service process remained after exact-owned shutdown.");
     }
     if (observation === 0) await delay(200);
@@ -1676,16 +1727,27 @@ async function requireTwoEmptyRelevantInventories(): Promise<void> {
 }
 
 async function requireIdentityGoneTwice(identity: ProcessIdentity): Promise<void> {
+  await requireIdentitiesGoneTwice([identity]);
+}
+
+async function requireIdentitiesGoneTwice(
+  identities: readonly ProcessIdentity[]
+): Promise<void> {
+  if (identities.length === 0) {
+    throw new Error("No exact owned process identity was supplied for exit verification.");
+  }
   const deadline = now() + shutdownTimeoutMs;
   let absent = 0;
   while (now() < deadline) {
     const current = await queryRelevantProcesses(deadline);
-    if (current.some((item) => sameProcessIdentity(item, identity))) absent = 0;
+    if (hasPhase3b1PrivateReplayOwnedProcess(current, identities)) {
+      absent = 0;
+    }
     else absent += 1;
     if (absent >= 2) return;
     await delay(200);
   }
-  throw new Error("The exact owned process did not produce two absent inventories.");
+  throw new Error("The exact owned process lineage did not produce two absent inventories.");
 }
 
 async function requirePersistentStaleLockMarker(

@@ -6,8 +6,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildPhase3b1PrivateReplayLauncher,
   buildPhase3b1PrivateReplayInspectionArgumentsPowerShell,
+  hasPhase3b1PrivateReplayOwnedProcess,
   observePhase3b1PrivateReplayDuplicate,
   phase3b1PrivateReplayMaximumPathLength,
+  requirePhase3b1PrivateReplayServiceLineage,
+  requirePhase3b1PrivateReplayEmptyShutdownInventory,
   requirePhase3b1PrivateReplayPathBudget,
   resolvePhase3b1PrivateReplayStateDirectory,
   validatePhase3b1PrivateReplayContract,
@@ -591,6 +594,129 @@ describe("Phase 3B.1 private replay duplicate observation", () => {
   });
 });
 
+describe("Phase 3B.1 private replay stale-service lineage", () => {
+  const child: Phase3b1PrivateReplayProcessIdentity = {
+    ...duplicateBaseline,
+    pid: duplicateBaseline.pid + 1,
+    parentPid: duplicateBaseline.pid,
+    creationDate: "2026-08-06T14:55:01.000Z"
+  };
+  const grandchild: Phase3b1PrivateReplayProcessIdentity = {
+    ...child,
+    pid: child.pid + 1,
+    parentPid: child.pid,
+    creationDate: "2026-08-06T14:55:02.000Z"
+  };
+
+  it("binds an exact same-image lineage to the directly spawned service", () => {
+    expect(
+      requireStaleServiceLineage([
+        grandchild,
+        duplicateBaseline,
+        child
+      ])
+    ).toEqual([duplicateBaseline, child, grandchild]);
+  });
+
+  it("rejects an unrelated same-image service or missing root", () => {
+    const unrelated = {
+      ...child,
+      pid: child.pid + 10,
+      parentPid: 99_999
+    };
+    expect(() =>
+      requireStaleServiceLineage([
+        duplicateBaseline,
+        child,
+        unrelated
+      ])
+    ).toThrow("lineage was ambiguous");
+    expect(() => requireStaleServiceLineage([child])).toThrow(
+      "lineage was ambiguous"
+    );
+  });
+
+  it("rejects path loss, path drift, cycles, and pre-root creation", () => {
+    const cases: readonly (readonly Phase3b1PrivateReplayProcessIdentity[])[] = [
+      [duplicateBaseline, { ...child, executablePath: null }],
+      [
+        duplicateBaseline,
+        { ...child, executablePath: "C:\\Other\\service.exe" }
+      ],
+      [
+        duplicateBaseline,
+        { ...child, parentPid: child.pid }
+      ],
+      [
+        duplicateBaseline,
+        { ...child, creationDate: "2026-08-06T14:54:59.000Z" }
+      ],
+      [
+        duplicateBaseline,
+        { ...child, name: "Cinematic Story Studio.exe" }
+      ]
+    ];
+    for (const current of cases) {
+      expect(() => requireStaleServiceLineage(current)).toThrow(
+        "lineage was ambiguous"
+      );
+    }
+  });
+
+  it("tracks exact and pathless continuity without accepting path drift", () => {
+    const owned = [duplicateBaseline, child];
+    expect(
+      hasPhase3b1PrivateReplayOwnedProcess(owned, owned)
+    ).toBe(true);
+    expect(
+      hasPhase3b1PrivateReplayOwnedProcess(
+        [{ ...child, executablePath: null }],
+        owned
+      )
+    ).toBe(true);
+    expect(
+      hasPhase3b1PrivateReplayOwnedProcess(
+        [{ ...child, creationDate: "2026-08-06T15:10:00.000Z" }],
+        owned
+      )
+    ).toBe(false);
+    expect(() =>
+      hasPhase3b1PrivateReplayOwnedProcess(
+        [{ ...child, executablePath: "C:\\Other\\service.exe" }],
+        owned
+      )
+    ).toThrow("identity was ambiguous");
+  });
+
+  it("rejects an uncaptured late descendant after captured PIDs exit", () => {
+    const lateDescendant = {
+      ...grandchild,
+      pid: grandchild.pid + 1,
+      parentPid: grandchild.pid,
+      creationDate: "2026-08-06T14:55:03.000Z"
+    };
+    expect(() =>
+      requirePhase3b1PrivateReplayEmptyShutdownInventory(
+        [lateDescendant],
+        [duplicateBaseline, child, grandchild]
+      )
+    ).toThrow("relevant process remained");
+    expect(() =>
+      requirePhase3b1PrivateReplayEmptyShutdownInventory(
+        [{ ...child, executablePath: "C:\\Other\\service.exe" }],
+        [duplicateBaseline, child]
+      )
+    ).toThrow("identity was ambiguous");
+    expect(() =>
+      requirePhase3b1PrivateReplayEmptyShutdownInventory([], [
+        duplicateBaseline,
+        child,
+        grandchild
+      ])
+    ).not.toThrow();
+  });
+});
+
 const duplicatePid = 8_200;
 const duplicateParentPid = 7_100;
 const duplicateExecutablePath =
@@ -632,6 +758,17 @@ function observeDuplicate(
     startedAtUnixMs: duplicateStartedAtUnixMs,
     observedAtMs,
     serviceExecutableName: "cinematic-story-service.exe"
+  });
+}
+
+function requireStaleServiceLineage(
+  current: readonly Phase3b1PrivateReplayProcessIdentity[]
+): readonly Phase3b1PrivateReplayProcessIdentity[] {
+  return requirePhase3b1PrivateReplayServiceLineage({
+    current,
+    root: duplicateBaseline,
+    expectedName: duplicateBaseline.name,
+    expectedExecutablePath: duplicateBaseline.executablePath!
   });
 }
 

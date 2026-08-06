@@ -137,6 +137,153 @@ export interface ObservePhase3b1PrivateReplayDuplicateInput {
   readonly serviceExecutableName: string;
 }
 
+export interface RequirePhase3b1PrivateReplayServiceLineageInput {
+  readonly current: readonly Phase3b1PrivateReplayProcessIdentity[];
+  readonly root: Phase3b1PrivateReplayProcessIdentity;
+  readonly expectedName: string;
+  readonly expectedExecutablePath: string;
+}
+
+/**
+ * Bind every relevant stale-service process to the directly spawned root by
+ * exact executable path, creation identity, and an unbroken parent chain.
+ * The returned identities are safe to use as a no-delta baseline, but this
+ * helper grants no termination authority for partial or unrelated records.
+ */
+export function requirePhase3b1PrivateReplayServiceLineage({
+  current,
+  root,
+  expectedName,
+  expectedExecutablePath
+}: RequirePhase3b1PrivateReplayServiceLineageInput): readonly Phase3b1PrivateReplayProcessIdentity[] {
+  const invalid = () => {
+    throw new Error("The stale replay service lineage was ambiguous.");
+  };
+  if (
+    current.length === 0 ||
+    current.length > 8 ||
+    expectedName.length === 0 ||
+    !path.win32.isAbsolute(expectedExecutablePath) ||
+    root.name !== expectedName ||
+    root.executablePath === null ||
+    !sameReplayWindowsPath(
+      root.executablePath,
+      expectedExecutablePath
+    ) ||
+    !Number.isFinite(Date.parse(root.creationDate))
+  ) {
+    return invalid();
+  }
+
+  const byPid = new Map<number, Phase3b1PrivateReplayProcessIdentity>();
+  for (const item of current) {
+    if (
+      !Number.isSafeInteger(item.pid) ||
+      item.pid <= 0 ||
+      !Number.isSafeInteger(item.parentPid) ||
+      item.parentPid < 0 ||
+      byPid.has(item.pid) ||
+      item.name !== expectedName ||
+      item.executablePath === null ||
+      !sameReplayWindowsPath(
+        item.executablePath,
+        expectedExecutablePath
+      ) ||
+      !Number.isFinite(Date.parse(item.creationDate))
+    ) {
+      return invalid();
+    }
+    byPid.set(item.pid, item);
+  }
+  const observedRoot = byPid.get(root.pid);
+  if (
+    observedRoot === undefined ||
+    observedRoot.parentPid !== root.parentPid ||
+    observedRoot.creationDate !== root.creationDate
+  ) {
+    return invalid();
+  }
+
+  const rootCreationUnixMs = Date.parse(root.creationDate);
+  for (const item of current) {
+    if (Date.parse(item.creationDate) < rootCreationUnixMs) {
+      return invalid();
+    }
+    const visited = new Set<number>();
+    let cursor = item;
+    while (cursor.pid !== root.pid) {
+      if (visited.has(cursor.pid)) return invalid();
+      visited.add(cursor.pid);
+      const parent = byPid.get(cursor.parentPid);
+      if (
+        parent === undefined ||
+        Date.parse(cursor.creationDate) < Date.parse(parent.creationDate)
+      ) {
+        return invalid();
+      }
+      cursor = parent;
+    }
+  }
+  return [...current].sort((left, right) => left.pid - right.pid);
+}
+
+export function hasPhase3b1PrivateReplayOwnedProcess(
+  current: readonly Phase3b1PrivateReplayProcessIdentity[],
+  owned: readonly Phase3b1PrivateReplayProcessIdentity[]
+): boolean {
+  if (
+    owned.length === 0 ||
+    owned.some((item) => item.executablePath === null) ||
+    new Set(owned.map((item) => item.pid)).size !== owned.length
+  ) {
+    throw new Error("The private replay owned-process ledger was invalid.");
+  }
+  let present = false;
+  for (const identity of owned) {
+    const samePid = current.filter((item) => item.pid === identity.pid);
+    if (samePid.length > 1) {
+      throw new Error("A private replay owned-process identity was ambiguous.");
+    }
+    const candidate = samePid[0];
+    if (
+      candidate === undefined ||
+      candidate.creationDate !== identity.creationDate
+    ) {
+      continue;
+    }
+    if (candidate.name !== identity.name) {
+      throw new Error("A private replay owned-process identity was ambiguous.");
+    }
+    if (candidate.executablePath === null) {
+      present = true;
+      continue;
+    }
+    if (
+      identity.executablePath === null ||
+      !sameReplayWindowsPath(
+        candidate.executablePath,
+        identity.executablePath
+      )
+    ) {
+      throw new Error("A private replay owned-process identity was ambiguous.");
+    }
+    present = true;
+  }
+  return present;
+}
+
+export function requirePhase3b1PrivateReplayEmptyShutdownInventory(
+  current: readonly Phase3b1PrivateReplayProcessIdentity[],
+  owned: readonly Phase3b1PrivateReplayProcessIdentity[]
+): void {
+  void hasPhase3b1PrivateReplayOwnedProcess(current, owned);
+  if (current.length !== 0) {
+    throw new Error(
+      "A relevant process remained after private replay owned-process shutdown."
+    );
+  }
+}
+
 /**
  * Observe the one PID returned by the direct duplicate spawn without turning
  * an incomplete CIM snapshot into termination authority. A pathless process
